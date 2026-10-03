@@ -5,6 +5,8 @@ import random
 import numpy as np
 import pandas as pd
 import streamlit as st
+from scipy.optimize import milp, LinearConstraint, Bounds
+from scipy.sparse import lil_matrix, vstack, csr_matrix
 
 st.set_page_config(page_title="NFL Predictor Pro", page_icon="🏈", layout="wide")
 
@@ -324,134 +326,154 @@ def random_candidate(pool, min_salary, max_salary, strategy, own_weight, leverag
     return selected
 
 def build_portfolio(pool, n_lineups, max_exposure, min_unique, min_salary, max_salary,
-                    strategy, own_weight, leverage_weight, locks, excludes, projection_floor_pct=0.88, attempts=4000):
-    """V3.1.5 fast array-based portfolio search.
-
-    Candidate construction uses NumPy arrays and integer row IDs inside the hot
-    loop. Pandas DataFrames are created only for valid completed candidates.
-    This preserves the same roster, stack, DST-conflict, salary, exposure,
-    uniqueness, quality-floor and ranking rules while avoiding thousands of
-    DataFrame filters/concats during generation.
-    """
+                    strategy, own_weight, leverage_weight, locks, excludes, projection_floor_pct=0.88, attempts=50000):
+    lineups=[]
+    exposure={}
     max_count=max(1, math.floor(n_lineups*max_exposure+1e-9))
-    overlap_limit=9-int(min_unique)
-    p=pool[(pool["optimizer_eligible"] == True) & ~pool.Name.isin(excludes)].copy().reset_index(drop=True)
-    if not set(locks).issubset(set(p.Name)):
-        return [],{},max_count,0.0,0.0
 
-    names=p["Name"].astype(str).to_numpy()
-    pos=p["Position"].astype(str).to_numpy()
-    team=p["TeamAbbrev"].astype(str).to_numpy()
-    game=p["game"].astype(str).to_numpy()
-    salary=p["Salary"].astype(int).to_numpy()
-    proj=p["proj"].astype(float).to_numpy()
-    ceil=p["ceiling"].astype(float).to_numpy()
-    p95=p["p95_use"].astype(float).to_numpy()
-    p99=p["p99_use"].astype(float).to_numpy()
-    own=p["ownership_pct"].astype(float).to_numpy()
-    lev=p["leverage_score"].astype(float).to_numpy()
+    # V3.1.2 QUALITY FLOOR: estimate a strong reference projection from valid
+    # candidates, then require portfolio lineups to retain a chosen percentage
+    # of that scoring strength. This prevents ownership/leverage from rescuing
+    # lineups that give away too many expected DK points.
+    reference_projections=[]
+    calibration_attempts=min(6000, max(1500, attempts // 8))
+    for _ in range(calibration_attempts):
+        probe=random_candidate(pool,min_salary,max_salary,strategy,own_weight,leverage_weight,locks,excludes)
+        if probe is not None:
+            reference_projections.append(float(probe["proj"].sum()))
+    if reference_projections:
+        # 99th percentile is more stable than one lucky randomized maximum.
+        best_reference_projection=float(np.percentile(reference_projections,99))
+        min_projection_required=best_reference_projection*float(projection_floor_pct)
+    else:
+        best_reference_projection=0.0
+        min_projection_required=0.0
 
-    if strategy == "Median": base_w=np.maximum(proj,0.1)
-    elif strategy == "Balanced": base_w=np.maximum(0.55*proj+0.45*ceil,0.1)
-    else: base_w=np.maximum(0.30*proj+0.70*ceil+0.15*lev,0.1)
-    base_w=np.square(base_w)
+    for _ in range(attempts):
+        if len(lineups)>=n_lineups: break
+        cand=random_candidate(pool,min_salary,max_salary,strategy,own_weight,leverage_weight,locks,excludes)
+        if cand is None: continue
+        if float(cand["proj"].sum()) < min_projection_required: continue
+        names=set(cand.Name)
+        if any(exposure.get(n,0)>=max_count for n in names): continue
+        # 9-man lineup: at least min_unique different => overlap <= 9-min_unique
+        if any(len(names & set(x.Name)) > 9-min_unique for x in lineups): continue
+        score=lineup_score(cand,strategy,own_weight,leverage_weight)
+        # Accept strong candidates more often; keep random diversity.
+        if lineups and random.random() < 0.35 and score < np.median([lineup_score(x,strategy,own_weight,leverage_weight) for x in lineups]):
+            continue
+        lineups.append(cand.copy())
+        for n in names: exposure[n]=exposure.get(n,0)+1
+    return lineups, exposure, max_count, best_reference_projection, min_projection_required
 
-    by_pos={q:np.flatnonzero(pos==q) for q in ["QB","RB","WR","TE","DST"]}
-    skill_idx=np.flatnonzero(np.isin(pos,["RB","WR","TE"]))
-    lock_idx=[int(np.flatnonzero(names==n)[0]) for n in locks]
-    if len(set(lock_idx)) != len(lock_idx):
-        return [],{},max_count,0.0,0.0
-    rng=np.random.default_rng(315)
+def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
+                            own_weight, leverage_weight, locks, excludes,
+                            projection_floor_pct=0.88, attempts=120000):
+    """Generate a large bank of individually legal, deduplicated lineups.
 
-    def pick(candidates, selected):
-        if candidates.size==0: return None
-        if selected:
-            candidates=candidates[~np.isin(candidates,np.fromiter(selected,dtype=int))]
-        if candidates.size==0: return None
-        w=base_w[candidates]; sw=float(w.sum())
-        if not np.isfinite(sw) or sw<=0: return int(rng.choice(candidates))
-        return int(rng.choice(candidates,p=w/sw))
-
-    def make_candidate():
-        selected=set(lock_idx)
-        # Reject impossible lock structures early.
-        if sum(pos[i]=="QB" for i in selected)>1 or sum(pos[i]=="DST" for i in selected)>1: return None
-        if len(selected)>9: return None
-        qlocks=[i for i in selected if pos[i]=="QB"]
-        qi=qlocks[0] if qlocks else pick(by_pos["QB"],selected)
-        if qi is None:return None
-        selected.add(qi)
-        # Force QB pass catcher.
-        if not any(team[i]==team[qi] and pos[i] in ("WR","TE") for i in selected if i!=qi):
-            mates=np.flatnonzero((team==team[qi]) & np.isin(pos,["WR","TE"]))
-            mi=pick(mates,selected)
-            if mi is None:return None
-            selected.add(mi)
-        for q,minimum in (("RB",2),("WR",3),("TE",1),("DST",1)):
-            while sum(pos[i]==q for i in selected)<minimum:
-                j=pick(by_pos[q],selected)
-                if j is None:return None
-                selected.add(j)
-        while len(selected)<9:
-            j=pick(skill_idx,selected)
-            if j is None:return None
-            selected.add(j)
-        if len(selected)!=9:return None
-        ids=np.fromiter(selected,dtype=int)
-        counts={q:int(np.sum(pos[ids]==q)) for q in ["QB","RB","WR","TE","DST"]}
-        if counts["QB"]!=1 or counts["DST"]!=1 or counts["RB"]<2 or counts["WR"]<3 or counts["TE"]<1:return None
-        if counts["RB"]+counts["WR"]+counts["TE"]!=7:return None
-        sal=int(salary[ids].sum())
-        if sal<min_salary or sal>max_salary:return None
-        di=ids[pos[ids]=="DST"][0]
-        opp=opponent_from_game(game[di],team[di])
-        if opp and any(team[i]==opp and pos[i] in ("QB","RB","WR","TE") for i in ids):return None
-        # score directly from arrays
-        if strategy=="Median": base=float(proj[ids].sum())
-        elif strategy=="Balanced": base=float((0.50*proj[ids]+0.20*ceil[ids]+0.20*p95[ids]+0.10*p99[ids]).sum())
-        else: base=float((0.20*proj[ids]+0.25*ceil[ids]+0.30*p95[ids]+0.25*p99[ids]).sum())
-        score=base-own_weight*float(own[ids].sum())/10+leverage_weight*float(lev[ids].sum())
-        return tuple(sorted(ids.tolist())),float(proj[ids].sum()),float(score)
+    Unlike the legacy sequential builder, this stage intentionally does NOT
+    consume portfolio exposure or uniqueness capacity. Those rules are applied
+    simultaneously in select_portfolio_milp().
+    """
+    reference_projections=[]
+    calibration_attempts=min(6000, max(1500, attempts // 12))
+    for _ in range(calibration_attempts):
+        probe=random_candidate(pool,min_salary,max_salary,strategy,own_weight,leverage_weight,locks,excludes)
+        if probe is not None:
+            reference_projections.append(float(probe["proj"].sum()))
+    if reference_projections:
+        best_reference_projection=float(np.percentile(reference_projections,99))
+        min_projection_required=best_reference_projection*float(projection_floor_pct)
+    else:
+        best_reference_projection=0.0
+        min_projection_required=0.0
 
     bank={}
-    target_bank=max(1200,int(n_lineups)*50)
-    max_attempts=max(8000,int(n_lineups)*400)
-    for _ in range(max_attempts):
-        z=make_candidate()
-        if z is None:continue
-        key=z[0]
-        if key not in bank:bank[key]=z
-        if len(bank)>=target_bank:break
-    if not bank:return [],{},max_count,0.0,0.0
+    for _ in range(attempts):
+        if len(bank) >= int(bank_size):
+            break
+        cand=random_candidate(pool,min_salary,max_salary,strategy,own_weight,leverage_weight,locks,excludes)
+        if cand is None: continue
+        if float(cand["proj"].sum()) < min_projection_required: continue
+        key=tuple(sorted(cand["Name"].astype(str).tolist()))
+        score=lineup_score(cand,strategy,own_weight,leverage_weight)
+        prev=bank.get(key)
+        if prev is None or score > prev[1]:
+            bank[key]=(cand.copy(),score)
+    items=sorted(bank.values(), key=lambda z:z[1], reverse=True)
+    return items, best_reference_projection, min_projection_required
 
-    vals=np.array([v[1] for v in bank.values()],dtype=float)
-    reference_proj=float(np.percentile(vals,99))
-    min_projection_required=reference_proj*float(projection_floor_pct)
-    candidates=[v for v in bank.values() if v[1]>=min_projection_required]
-    candidates.sort(key=lambda z:(z[2],z[1]),reverse=True)
 
-    def greedy(order):
-        chosen=[]; chosen_sets=[]; exposure={}; total=0.0
-        for ids,pr,sc in order:
-            nset={names[i] for i in ids}
-            if any(exposure.get(n,0)>=max_count for n in nset):continue
-            if any(len(nset & prev)>overlap_limit for prev in chosen_sets):continue
-            chosen.append(ids);chosen_sets.append(nset);total+=sc
-            for n in nset:exposure[n]=exposure.get(n,0)+1
-            if len(chosen)>=n_lineups:break
-        return chosen,exposure,total
+def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, time_limit=20.0):
+    """Choose the entire portfolio simultaneously from a candidate bank."""
+    if len(candidate_items) < n_lineups:
+        return [], {"success":False,"message":"Candidate bank smaller than requested portfolio."}
+    lineups=[x[0] for x in candidate_items]
+    scores=np.array([x[1] for x in candidate_items],dtype=float)
+    n=len(lineups)
+    max_count=max(1, math.floor(n_lineups*max_exposure+1e-9))
+    sets=[set(x["Name"].astype(str)) for x in lineups]
 
-    best=greedy(candidates)
-    if len(best[0])<n_lineups and len(candidates)>n_lineups:
-        scores=np.array([z[2] for z in candidates]); scale=max(float(np.std(scores)),1.0)
-        for _ in range(180):
-            order=[candidates[i] for i in np.argsort(-(scores+rng.normal(0,0.16*scale,len(scores))))]
-            trial=greedy(order)
-            if len(trial[0])>len(best[0]) or (len(trial[0])==len(best[0]) and trial[2]>best[2]):best=trial
-            if len(best[0])>=n_lineups:break
+    # Rows: exact lineup count; per-player exposure; incompatible overlap pairs.
+    rows=[]; lbs=[]; ubs=[]
+    rows.append(np.ones(n)); lbs.append(float(n_lineups)); ubs.append(float(n_lineups))
 
-    lineups=[p.iloc[list(ids)].copy() for ids in best[0]]
-    return lineups,best[1],max_count,reference_proj,min_projection_required
+    players=sorted(set().union(*sets))
+    for player in players:
+        row=np.fromiter((1.0 if player in s else 0.0 for s in sets),dtype=float,count=n)
+        rows.append(row); lbs.append(-np.inf); ubs.append(float(max_count))
+
+    max_overlap=9-int(min_unique)
+    # Candidate bank is capped in UI because pairwise incompatibility constraints are O(N^2).
+    for i in range(n):
+        si=sets[i]
+        for j in range(i+1,n):
+            if len(si & sets[j]) > max_overlap:
+                row=np.zeros(n,dtype=float); row[i]=1.0; row[j]=1.0
+                rows.append(row); lbs.append(-np.inf); ubs.append(1.0)
+
+    A=csr_matrix(np.vstack(rows))
+    constraints=LinearConstraint(A,np.asarray(lbs),np.asarray(ubs))
+    res=milp(c=-scores, integrality=np.ones(n,dtype=int), bounds=Bounds(0,1),
+             constraints=constraints,
+             options={"time_limit":float(time_limit),"mip_rel_gap":0.001,"presolve":True})
+    if res.x is None:
+        return [], {"success":False,"message":str(res.message),"status":int(res.status)}
+    chosen=np.where(res.x > 0.5)[0].tolist()
+    selected=[lineups[i].copy() for i in chosen]
+    selected.sort(key=lambda x: lineup_score(x,"GPP Ceiling",0.0,0.0), reverse=True)
+    meta={"success":len(selected)==n_lineups,"message":str(res.message),"status":int(res.status),
+          "candidate_count":n,"constraint_count":len(rows),"max_count":max_count,
+          "objective_score":float(scores[chosen].sum()) if chosen else 0.0,
+          "mip_gap":getattr(res,"mip_gap",None)}
+    return selected, meta
+
+
+def validate_portfolio(lineups, n_lineups, max_exposure, min_unique, min_salary, max_salary):
+    issues=[]
+    if len(lineups) != int(n_lineups):
+        issues.append(f"Expected {int(n_lineups)} lineups; found {len(lineups)}.")
+    max_count=max(1, math.floor(n_lineups*max_exposure+1e-9))
+    counts={}
+    keys=[]
+    for i,l in enumerate(lineups,1):
+        if not lineup_valid(l,min_salary,max_salary,True):
+            issues.append(f"Lineup {i} fails lineup validity rules.")
+        names=set(l["Name"].astype(str)); keys.append(tuple(sorted(names)))
+        for name in names: counts[name]=counts.get(name,0)+1
+    over={k:v for k,v in counts.items() if v>max_count}
+    if over:
+        issues.append("Exposure violations: "+", ".join(f"{k} {v}/{n_lineups}" for k,v in sorted(over.items())))
+    if len(set(keys)) != len(keys): issues.append("Duplicate lineups detected.")
+    max_overlap=0; worst=None
+    sets=[set(k) for k in keys]
+    for i in range(len(sets)):
+        for j in range(i+1,len(sets)):
+            ov=len(sets[i]&sets[j])
+            if ov>max_overlap: max_overlap=ov; worst=(i+1,j+1)
+    if max_overlap > 9-int(min_unique):
+        issues.append(f"Uniqueness violation: lineups {worst[0]} and {worst[1]} overlap by {max_overlap} players.")
+    return {"pass":not issues,"issues":issues,"max_overlap":max_overlap,"max_count":max_count,"counts":counts}
 
 def lineups_to_df(lineups, strategy=None, own_weight=0.25, leverage_weight=0.35, stack_rank=False):
     rows=[]
@@ -492,7 +514,7 @@ def exposure_df(lineups):
 mc, comp, dst, own, games, matchups = load_base()
 pool = prepare_pool(mc,dst,own,matchups)
 
-st.title("🏈 NFL Predictor Pro")
+st.title("🏈 NFL Predictor Pro — V3.1.6")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
 st.warning("Week 4 model snapshot. V3 adds a bounded individual coverage-matchup layer on top of V2 role eligibility. Unresearched players remain neutral; re-check final injury news, salaries, coverage assignments and ownership before contest entry.")
 
@@ -568,27 +590,55 @@ elif view == "Lineup Builder":
     locks=st.multiselect("Lock players",names)
     excludes=st.multiselect("Exclude players",names)
 
-    st.info("Default portfolio rules: 15 lineups • 30% max exposure • 4 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V3.1.4 uses the same Mean + P90 + P95 + P99 GPP ranking with a faster reusable candidate-bank optimizer.")
+    portfolio_mode=st.radio("Portfolio construction",["V3.1.6 Portfolio Optimize","V3.1.5 Sequential (control)"],horizontal=True)
+    bank_size=st.slider("Candidate bank size",300,2000,1200,100,disabled=(portfolio_mode!="V3.1.6 Portfolio Optimize"),help="V3.1.6 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
+    solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,20,5,disabled=(portfolio_mode!="V3.1.6 Portfolio Optimize"))
+
+    st.info("Default portfolio rules: 15 lineups • 30% max exposure • 4 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V3.1.6 adds optional candidate-bank portfolio optimization. GPP ranking still uses Mean + P90 + P95 + P99 upside.")
 
     if st.button("Generate portfolio",type="primary"):
         with st.spinner("Generating diversified portfolio..."):
-            lineups, expo, max_count, reference_proj, min_proj_required=build_portfolio(
-                pool,int(n_lineups),float(max_exp),int(min_unique),int(min_salary),50000,
-                strategy,float(own_weight),float(leverage_weight),locks,excludes,float(projection_floor_pct)
-            )
+            solver_meta=None
+            if portfolio_mode == "V3.1.6 Portfolio Optimize":
+                candidate_items, reference_proj, min_proj_required = generate_candidate_bank(
+                    pool,int(bank_size),int(min_salary),50000,strategy,float(own_weight),
+                    float(leverage_weight),locks,excludes,float(projection_floor_pct),
+                    attempts=max(60000,int(bank_size)*120)
+                )
+                lineups, solver_meta = select_portfolio_milp(
+                    candidate_items,int(n_lineups),float(max_exp),int(min_unique),float(solver_seconds)
+                )
+                expo={}; max_count=max(1,math.floor(int(n_lineups)*float(max_exp)+1e-9))
+                for l in lineups:
+                    for nm in set(l.Name): expo[nm]=expo.get(nm,0)+1
+            else:
+                lineups, expo, max_count, reference_proj, min_proj_required=build_portfolio(
+                    pool,int(n_lineups),float(max_exp),int(min_unique),int(min_salary),50000,
+                    strategy,float(own_weight),float(leverage_weight),locks,excludes,float(projection_floor_pct)
+                )
         if not lineups:
             st.error("No valid portfolio found. Relax locks/exclusions, uniqueness, exposure, or salary floor.")
         else:
             st.session_state["nfl_lineups"]=lineups
             st.session_state["nfl_rank_settings"]={"strategy":strategy,"own_weight":float(own_weight),"leverage_weight":float(leverage_weight)}
-            st.success(f"Generated {len(lineups)} of {int(n_lineups)} requested lineups.")
+            qc=validate_portfolio(lineups,int(n_lineups),float(max_exp),int(min_unique),int(min_salary),50000)
+            if qc["pass"]:
+                st.success(f"Generated {len(lineups)} of {int(n_lineups)} requested lineups. FINAL QC: PASS")
+            else:
+                st.error("FINAL QC: FAIL — export is not considered tournament-ready.")
+                for issue in qc["issues"]: st.write("• "+issue)
+            if solver_meta is not None:
+                st.caption(f"V3.1.6 candidate bank: {solver_meta.get('candidate_count',0):,} • portfolio constraints: {solver_meta.get('constraint_count',0):,} • solver: {solver_meta.get('message','')}")
             st.caption(f"Projection quality guardrail: strong reference {reference_proj:.1f} DK points • minimum accepted {min_proj_required:.1f} ({projection_floor_pct:.0%}).")
             ldf=lineups_to_df(lineups,strategy,float(own_weight),float(leverage_weight),stack_rank=True)
             edf=exposure_df(lineups)
             st.markdown("#### Lineups — stack ranked best to worst")
-            st.caption("V3.1.4 GPP Rank blends Mean + P90 + P95 + P99 player-level upside, then applies the selected ownership fade and leverage weights. P90/P95/P99 Upside are comparison indexes (sums of player percentiles), not literal lineup percentiles.")
+            st.caption("V3.1.3 GPP Rank blends Mean + P90 + P95 + P99 player-level upside, then applies the selected ownership fade and leverage weights. P90/P95/P99 Upside are comparison indexes (sums of player percentiles), not literal lineup percentiles.")
             st.dataframe(ldf,use_container_width=True,hide_index=True)
-            st.download_button("Download lineups",ldf.to_csv(index=False),"nfl_lineups.csv","text/csv")
+            if qc["pass"]:
+                st.download_button("Download lineups",ldf.to_csv(index=False),"nfl_lineups_v316.csv","text/csv")
+            else:
+                st.warning("Download disabled until final portfolio QC passes.")
             st.markdown("#### Exposure")
             st.dataframe(edf,use_container_width=True,hide_index=True)
             st.download_button("Download exposure",edf.to_csv(index=False),"nfl_exposure.csv","text/csv")
