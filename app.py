@@ -368,40 +368,116 @@ def build_portfolio(pool, n_lineups, max_exposure, min_unique, min_salary, max_s
 
 def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
                             own_weight, leverage_weight, locks, excludes,
-                            projection_floor_pct=0.88, attempts=120000):
-    """Generate a large bank of individually legal, deduplicated lineups.
+                            projection_floor_pct=0.88, attempts=None):
+    """V3.1.6a: fast deduplicated candidate-bank generation.
 
-    Unlike the legacy sequential builder, this stage intentionally does NOT
-    consume portfolio exposure or uniqueness capacity. Those rules are applied
-    simultaneously in select_portfolio_milp().
+    The common no-lock/no-exclusion path constructs rosters with NumPy/index
+    operations and materializes a DataFrame only after a roster is legal.
+    Locks/exclusions retain the legacy generator for compatibility.
     """
-    reference_projections=[]
-    calibration_attempts=min(6000, max(1500, attempts // 12))
+    bank_size=int(bank_size)
+    p=pool[(pool["optimizer_eligible"] == True) & ~pool.Name.isin(excludes)].copy().reset_index(drop=True)
+
+    # Preserve full legacy behavior for special lock/exclusion builds.
+    if locks or excludes:
+        max_attempts = int(attempts or max(12000, bank_size*45))
+        calibration_attempts=min(1200, max(500, bank_size))
+        refs=[]
+        for _ in range(calibration_attempts):
+            probe=random_candidate(pool,min_salary,max_salary,strategy,own_weight,leverage_weight,locks,excludes)
+            if probe is not None: refs.append(float(probe["proj"].sum()))
+        ref=float(np.percentile(refs,99)) if refs else 0.0
+        floor=ref*float(projection_floor_pct)
+        bank={}
+        for _ in range(max_attempts):
+            if len(bank)>=bank_size: break
+            cand=random_candidate(pool,min_salary,max_salary,strategy,own_weight,leverage_weight,locks,excludes)
+            if cand is None or float(cand["proj"].sum()) < floor: continue
+            key=tuple(sorted(cand["Name"].astype(str)))
+            sc=lineup_score(cand,strategy,own_weight,leverage_weight)
+            if key not in bank or sc>bank[key][1]: bank[key]=(cand.copy(),sc)
+        return sorted(bank.values(),key=lambda z:z[1],reverse=True),ref,floor
+
+    names=p["Name"].astype(str).to_numpy()
+    pos=p["Position"].astype(str).to_numpy()
+    teams=p["TeamAbbrev"].astype(str).to_numpy()
+    games=p["game"].astype(str).to_numpy()
+    salary=p["Salary"].to_numpy(dtype=float)
+    proj=p["proj"].to_numpy(dtype=float)
+    ceil=p["ceiling"].to_numpy(dtype=float)
+    lev=p["leverage_score"].to_numpy(dtype=float)
+
+    if strategy == "Median": raw=np.clip(proj,0.1,None)
+    elif strategy == "Balanced": raw=np.clip(0.55*proj+0.45*ceil,0.1,None)
+    else: raw=np.clip(0.30*proj+0.70*ceil+0.15*lev,0.1,None)
+    weights=np.square(raw)
+
+    by_pos={k:np.where(pos==k)[0] for k in ["QB","RB","WR","TE","DST"]}
+    flex_idx=np.where(np.isin(pos,["RB","WR","TE"]))[0]
+    mates={}
+    for q in by_pos["QB"]:
+        mates[q]=np.where((teams==teams[q]) & np.isin(pos,["WR","TE"]))[0]
+
+    rng=np.random.default_rng()
+    def pick(candidates, selected):
+        if len(candidates)==0: return None
+        if selected:
+            candidates=candidates[~np.isin(candidates,np.fromiter(selected,dtype=int))]
+        if len(candidates)==0: return None
+        w=weights[candidates]; total=w.sum()
+        if not np.isfinite(total) or total<=0: return int(rng.choice(candidates))
+        return int(rng.choice(candidates,p=w/total))
+
+    def fast_roster():
+        sel=set()
+        q=pick(by_pos["QB"],sel)
+        if q is None: return None
+        sel.add(q)
+        m=pick(mates.get(q,np.array([],dtype=int)),sel)
+        if m is None: return None
+        sel.add(m)
+        requirements={"RB":2,"WR":3,"TE":1,"DST":1}
+        for k,need in requirements.items():
+            while sum(pos[i]==k for i in sel)<need:
+                z=pick(by_pos[k],sel)
+                if z is None: return None
+                sel.add(z)
+        while len(sel)<9:
+            z=pick(flex_idx,sel)
+            if z is None: return None
+            sel.add(z)
+        idx=np.fromiter(sel,dtype=int)
+        sal=float(salary[idx].sum())
+        if sal<min_salary or sal>max_salary: return None
+        d=idx[pos[idx]=="DST"]
+        if len(d)!=1: return None
+        di=int(d[0]); opp=opponent_from_game(games[di],teams[di])
+        if opp and any((teams[i]==opp and pos[i] in ("QB","RB","WR","TE")) for i in idx): return None
+        return idx
+
+    # Fast calibration: enough samples for a stable 99th-percentile reference,
+    # without thousands of expensive DataFrame builds.
+    refs=[]
+    calibration_attempts=max(500,min(1200,bank_size))
     for _ in range(calibration_attempts):
-        probe=random_candidate(pool,min_salary,max_salary,strategy,own_weight,leverage_weight,locks,excludes)
-        if probe is not None:
-            reference_projections.append(float(probe["proj"].sum()))
-    if reference_projections:
-        best_reference_projection=float(np.percentile(reference_projections,99))
-        min_projection_required=best_reference_projection*float(projection_floor_pct)
-    else:
-        best_reference_projection=0.0
-        min_projection_required=0.0
+        idx=fast_roster()
+        if idx is not None: refs.append(float(proj[idx].sum()))
+    ref=float(np.percentile(refs,99)) if refs else 0.0
+    floor=ref*float(projection_floor_pct)
 
     bank={}
-    for _ in range(attempts):
-        if len(bank) >= int(bank_size):
-            break
-        cand=random_candidate(pool,min_salary,max_salary,strategy,own_weight,leverage_weight,locks,excludes)
-        if cand is None: continue
-        if float(cand["proj"].sum()) < min_projection_required: continue
-        key=tuple(sorted(cand["Name"].astype(str).tolist()))
-        score=lineup_score(cand,strategy,own_weight,leverage_weight)
-        prev=bank.get(key)
-        if prev is None or score > prev[1]:
-            bank[key]=(cand.copy(),score)
-    items=sorted(bank.values(), key=lambda z:z[1], reverse=True)
-    return items, best_reference_projection, min_projection_required
+    max_attempts=int(attempts or max(10000,bank_size*35))
+    for _ in range(max_attempts):
+        if len(bank)>=bank_size: break
+        idx=fast_roster()
+        if idx is None or float(proj[idx].sum())<floor: continue
+        key=tuple(sorted(names[idx].tolist()))
+        if key in bank: continue
+        cand=p.iloc[idx].copy()
+        bank[key]=(cand,lineup_score(cand,strategy,own_weight,leverage_weight))
+
+    items=sorted(bank.values(),key=lambda z:z[1],reverse=True)
+    return items,ref,floor
 
 
 def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, time_limit=20.0):
@@ -590,16 +666,16 @@ elif view == "Lineup Builder":
     locks=st.multiselect("Lock players",names)
     excludes=st.multiselect("Exclude players",names)
 
-    portfolio_mode=st.radio("Portfolio construction",["V3.1.6 Portfolio Optimize","V3.1.5 Sequential (control)"],horizontal=True)
-    bank_size=st.slider("Candidate bank size",300,2000,1200,100,disabled=(portfolio_mode!="V3.1.6 Portfolio Optimize"),help="V3.1.6 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
-    solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,20,5,disabled=(portfolio_mode!="V3.1.6 Portfolio Optimize"))
+    portfolio_mode=st.radio("Portfolio construction",["V3.1.6a Portfolio Optimize","V3.1.5 Sequential (control)"],horizontal=True)
+    bank_size=st.slider("Candidate bank size",300,2000,1200,100,disabled=(portfolio_mode!="V3.1.6a Portfolio Optimize"),help="V3.1.6 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
+    solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,20,5,disabled=(portfolio_mode!="V3.1.6a Portfolio Optimize"))
 
     st.info("Default portfolio rules: 15 lineups • 30% max exposure • 4 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V3.1.6 adds optional candidate-bank portfolio optimization. GPP ranking still uses Mean + P90 + P95 + P99 upside.")
 
     if st.button("Generate portfolio",type="primary"):
         with st.spinner("Generating diversified portfolio..."):
             solver_meta=None
-            if portfolio_mode == "V3.1.6 Portfolio Optimize":
+            if portfolio_mode == "V3.1.6a Portfolio Optimize":
                 candidate_items, reference_proj, min_proj_required = generate_candidate_bank(
                     pool,int(bank_size),int(min_salary),50000,strategy,float(own_weight),
                     float(leverage_weight),locks,excludes,float(projection_floor_pct),
@@ -628,7 +704,7 @@ elif view == "Lineup Builder":
                 st.error("FINAL QC: FAIL — export is not considered tournament-ready.")
                 for issue in qc["issues"]: st.write("• "+issue)
             if solver_meta is not None:
-                st.caption(f"V3.1.6 candidate bank: {solver_meta.get('candidate_count',0):,} • portfolio constraints: {solver_meta.get('constraint_count',0):,} • solver: {solver_meta.get('message','')}")
+                st.caption(f"V3.1.6a candidate bank: {solver_meta.get('candidate_count',0):,} • portfolio constraints: {solver_meta.get('constraint_count',0):,} • solver: {solver_meta.get('message','')}")
             st.caption(f"Projection quality guardrail: strong reference {reference_proj:.1f} DK points • minimum accepted {min_proj_required:.1f} ({projection_floor_pct:.0%}).")
             ldf=lineups_to_df(lineups,strategy,float(own_weight),float(leverage_weight),stack_rank=True)
             edf=exposure_df(lineups)
