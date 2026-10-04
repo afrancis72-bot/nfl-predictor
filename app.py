@@ -769,21 +769,44 @@ def rank_showdown_candidates(cands, strategy):
             c["rank_score"]-=0.70*((unused-3000)/1000.0)
     return sorted(cands,key=lambda z:z["rank_score"],reverse=True)
 
+def _showdown_exposure_counts(n_lineups, max_player_exp, max_cpt_exp):
+    # Small portfolios are discrete: with 4 entries, 65% cannot literally be represented.
+    # Round UP to the nearest attainable lineup count so the UI percentage is a target,
+    # not an accidental hard floor that makes a requested portfolio impossible.
+    maxp=max(1, min(n_lineups, math.ceil(n_lineups*max_player_exp-1e-12)))
+    maxc=max(1, min(n_lineups, math.ceil(n_lineups*max_cpt_exp-1e-12)))
+    return maxp,maxc
+
 def select_showdown_portfolio(cands, players, n_lineups, max_player_exp, max_cpt_exp, min_unique, locks, excludes, cpt_excludes):
-    selected=[]; counts={}; cpt_counts={}; maxp=max(1,math.floor(n_lineups*max_player_exp+1e-9)); maxc=max(1,math.floor(n_lineups*max_cpt_exp+1e-9))
     lockset=set(locks); exset=set(excludes); cex=set(cpt_excludes)
-    for c in cands:
-        ids=[c["cpt"]]+list(c["flex"]); names=set(players.iloc[ids]["Name"]); cpt_name=players.iloc[c["cpt"]]["Name"]
-        if lockset and not lockset.issubset(names): continue
-        if names & exset or cpt_name in cex: continue
-        if counts.get(cpt_name,0)>=maxp or cpt_counts.get(cpt_name,0)>=maxc: continue
-        if any(counts.get(nm,0)>=maxp for nm in names): continue
-        if any(len(names & set(x["names"]))>6-int(min_unique) for x in selected): continue
-        c2=dict(c); c2["names"]=list(names); selected.append(c2)
-        for nm in names: counts[nm]=counts.get(nm,0)+1
-        cpt_counts[cpt_name]=cpt_counts.get(cpt_name,0)+1
-        if len(selected)>=n_lineups: break
-    return selected
+    base_maxp,base_maxc=_showdown_exposure_counts(n_lineups,max_player_exp,max_cpt_exp)
+
+    # Controlled relaxation order. Preserve uniqueness first; relax exposure only enough
+    # to fill the requested portfolio. Never relax locks/exclusions or lineup legality.
+    attempts=[]
+    for addp,addc in [(0,0),(1,0),(0,1),(1,1),(2,1),(2,2)]:
+        attempts.append((min(n_lineups,base_maxp+addp),min(n_lineups,base_maxc+addc)))
+    seen=set(); attempts=[x for x in attempts if not (x in seen or seen.add(x))]
+
+    best=[]; used_limits=(base_maxp,base_maxc); relaxed=False
+    for maxp,maxc in attempts:
+        selected=[]; counts={}; cpt_counts={}
+        for c in cands:
+            ids=[c["cpt"]]+list(c["flex"]); names=set(players.iloc[ids]["Name"]); cpt_name=players.iloc[c["cpt"]]["Name"]
+            if lockset and not lockset.issubset(names): continue
+            if names & exset or cpt_name in cex: continue
+            if cpt_counts.get(cpt_name,0)>=maxc: continue
+            if any(counts.get(nm,0)>=maxp for nm in names): continue
+            if any(len(names & set(x["names"]))>6-int(min_unique) for x in selected): continue
+            c2=dict(c); c2["names"]=list(names); selected.append(c2)
+            for nm in names: counts[nm]=counts.get(nm,0)+1
+            cpt_counts[cpt_name]=cpt_counts.get(cpt_name,0)+1
+            if len(selected)>=n_lineups: break
+        if len(selected)>len(best): best=selected; used_limits=(maxp,maxc)
+        if len(selected)>=n_lineups:
+            relaxed=(maxp,maxc)!=(base_maxp,base_maxc)
+            return selected,{"requested":n_lineups,"max_player_count":maxp,"max_cpt_count":maxc,"base_player_count":base_maxp,"base_cpt_count":base_maxc,"relaxed":relaxed}
+    return best,{"requested":n_lineups,"max_player_count":used_limits[0],"max_cpt_count":used_limits[1],"base_player_count":base_maxp,"base_cpt_count":base_maxc,"relaxed":used_limits!=(base_maxp,base_maxc)}
 
 def showdown_results_df(selected, players):
     rows=[]
@@ -804,7 +827,7 @@ def showdown_dk_export(selected, players):
 mc, comp, dst, own, games, matchups = load_base()
 pool = prepare_pool(mc,dst,own,matchups)
 
-st.title("🏈 NFL Predictor Pro — V3.1.6a + Showdown V1.1")
+st.title("🏈 NFL Predictor Pro — V3.1.6a + Showdown V1.2")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
 st.warning("Week 4 model snapshot. V3 adds a bounded individual coverage-matchup layer on top of V2 role eligibility. Unresearched players remain neutral; re-check final injury news, salaries, coverage assignments and ownership before contest entry.")
 
@@ -968,19 +991,26 @@ elif view == "Single Game Showdown":
             locks=st.multiselect("Lock player(s)",names,key="sd_locks")
             excludes=st.multiselect("Exclude player(s)",names,key="sd_excludes")
             cpt_excludes=st.multiselect("Exclude from Captain only",names,key="sd_cpt_excludes")
-            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups. Salary is allowed to remain unused when simulation upside supports it; V1.1 applies a soft sanity hurdle only when more than $3,000 is left unused.")
+            eff_p,eff_c=_showdown_exposure_counts(int(n_lineups),float(max_player),float(max_cpt))
+            st.caption(f"Effective small-portfolio limits: any player ≤ {eff_p}/{int(n_lineups)} lineups ({100*eff_p/int(n_lineups):.0f}%) • any Captain ≤ {eff_c}/{int(n_lineups)} ({100*eff_c/int(n_lineups):.0f}%). Percentages are rounded up to the nearest attainable lineup count.")
+            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups. Salary is allowed to remain unused when simulation upside supports it; V1.1+ applies a soft sanity hurdle only when more than $3,000 is left unused. V1.2 makes exposure limits discrete-aware for small portfolios and uses controlled exposure relaxation if needed to fill the requested lineup count.")
             if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate"):
                 with st.spinner("Simulating correlated game outcomes and optimizing Showdown lineups..."):
                     sim=simulate_showdown_players(players,sd_teams,int(n_sims))
                     cands=generate_showdown_candidates(players,sim,sd_teams,int(bank),int(min_salary),50000)
                     ranked=rank_showdown_candidates(cands,strategy)
-                    selected=select_showdown_portfolio(ranked,players,int(n_lineups),float(max_player),float(max_cpt),int(min_unique),locks,excludes,cpt_excludes)
+                    selected,sd_meta=select_showdown_portfolio(ranked,players,int(n_lineups),float(max_player),float(max_cpt),int(min_unique),locks,excludes,cpt_excludes)
                 if not selected:
-                    st.error("No valid Showdown portfolio found. Relax salary, exposure, uniqueness, locks, or exclusions.")
+                    st.error("No valid Showdown portfolio found. Relax salary, uniqueness, locks, or exclusions.")
                 else:
                     rdf=showdown_results_df(selected,players); dkdf=showdown_dk_export(selected,players)
                     st.session_state["showdown_selected"]=selected; st.session_state["showdown_players"]=players
-                    st.success(f"Built {len(selected)} Showdown lineups from {len(cands):,} legal simulated candidates.")
+                    if len(selected)<int(n_lineups):
+                        st.error(f"Requested {int(n_lineups)} lineups but only {len(selected)} could be built after controlled exposure relaxation. Increase candidate bank or relax minimum uniques / salary floor / locks before exporting.")
+                    else:
+                        st.success(f"Built all {len(selected)} requested Showdown lineups from {len(cands):,} legal simulated candidates.")
+                    if sd_meta.get("relaxed"):
+                        st.warning(f"To fill the portfolio, V1.2 relaxed exposure counts to player ≤ {sd_meta['max_player_count']}/{int(n_lineups)} and Captain ≤ {sd_meta['max_cpt_count']}/{int(n_lineups)}. Locks, exclusions, uniqueness and lineup legality were not relaxed.")
                     st.dataframe(rdf,use_container_width=True,hide_index=True,column_config={"Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"Optimal %":st.column_config.NumberColumn(format="%.3f")})
                     st.download_button("Download DraftKings Showdown CSV",dkdf.to_csv(index=False),"DK_Showdown_Lineups.csv","text/csv")
                     all_names=[]; all_cpt=[]
