@@ -678,10 +678,10 @@ def showdown_projection_table(flex, comp, mc, dst):
     sal=pd.to_numeric(x["FLEX Salary"],errors="coerce").fillna(0.0)
     skill_mask=x["Position"].isin(["RB","WR","TE"])
     role_mult=pd.Series(1.0,index=x.index)
-    role_mult.loc[skill_mask & (sal < 1000)] = 0.30
-    role_mult.loc[skill_mask & (sal >= 1000) & (sal < 2500)] = 0.48
-    role_mult.loc[skill_mask & (sal >= 2500) & (sal < 4000)] = 0.68
-    role_mult.loc[skill_mask & (sal >= 4000) & (sal < 6500)] = 0.85
+    role_mult.loc[skill_mask & (sal < 1000)] = 0.28
+    role_mult.loc[skill_mask & (sal >= 1000) & (sal < 2500)] = 0.38
+    role_mult.loc[skill_mask & (sal >= 2500) & (sal < 4000)] = 0.58
+    role_mult.loc[skill_mask & (sal >= 4000) & (sal < 6500)] = 0.82
     fallback_mean=dk_ppg*role_mult
     # Kickers/DST/QB use their slate scoring baseline directly; their roles are
     # less ambiguous than reserve RB/WR/TE roles in a salary-only fallback.
@@ -694,6 +694,19 @@ def showdown_projection_table(flex, comp, mc, dst):
     x.loc[fallback_mask & skill_mask & (sal>=2500) & (sal<4000),"Role Tier"]="Low-volume skill"
     x.loc[fallback_mask & skill_mask & (sal<2500),"Role Tier"]="Punt / TD-dependent"
     x.loc[fallback_mask & ~skill_mask,"Role Tier"]="Defined role"
+    # V1.3 opportunity/participation assumptions for salary-only fallback skill players.
+    # These are not exposure caps: they shape the simulated scoring distribution so
+    # low-volume players have realistic dud frequency and conditional upside.
+    x["Low Score Prob"]=0.0
+    x.loc[fallback_mask & skill_mask & (sal>=6500),"Low Score Prob"]=0.05
+    x.loc[fallback_mask & skill_mask & (sal>=4000) & (sal<6500),"Low Score Prob"]=0.14
+    x.loc[fallback_mask & skill_mask & (sal>=2500) & (sal<4000),"Low Score Prob"]=0.32
+    x.loc[fallback_mask & skill_mask & (sal<2500),"Low Score Prob"]=0.50
+    x["Spike Prob"]=0.0
+    x.loc[fallback_mask & skill_mask & (sal>=6500),"Spike Prob"]=0.03
+    x.loc[fallback_mask & skill_mask & (sal>=4000) & (sal<6500),"Spike Prob"]=0.04
+    x.loc[fallback_mask & skill_mask & (sal>=2500) & (sal<4000),"Spike Prob"]=0.06
+    x.loc[fallback_mask & skill_mask & (sal<2500),"Spike Prob"]=0.08
     pos_floor={"QB":2.0,"RB":0.10,"WR":0.10,"TE":0.10,"K":2.0,"DST":1.0,"D":1.0}
     x["Base Mean"]=x.apply(lambda r: max(float(r["Base Mean"]) if pd.notna(r["Base Mean"]) else 0.0,pos_floor.get(r["Position"],0.10)),axis=1)
     p90=pd.to_numeric(x["p90"],errors="coerce")
@@ -727,8 +740,41 @@ def simulate_showdown_players(players, teams, n_sims=20000, seed=315):
         else: z=.15*pace+.30*team_off[t]+.78*idio
         # Normalize factor variance so Sim SD remains interpretable.
         z=(z-z.mean())/(z.std()+1e-9)
-        out[:,j]=np.clip(float(r["Base Mean"])+float(r["Sim SD"])*z,0,None)
+        score=np.clip(float(r["Base Mean"])+float(r["Sim SD"])*z,0,None)
+        # V1.3: low-volume fallback skill players are mixture distributions, not
+        # smooth bell curves. Most retain normal opportunity, but a role-tier-based
+        # share of simulations are true low-opportunity/dud outcomes. Rare spike
+        # branches preserve the legitimate TD/broken-play ceiling.
+        if r.get("Projection Source","")=="DK slate fallback" and pos in ["RB","WR","TE"]:
+            q=float(r.get("Low Score Prob",0.0) or 0.0)
+            sp=float(r.get("Spike Prob",0.0) or 0.0)
+            if q>0:
+                dud=rng.random(ns)<q
+                score[dud]*=rng.uniform(0.05,0.35,size=int(dud.sum()))
+                live=~dud
+                # Modest live-branch lift keeps upside conditional on actually
+                # earning opportunity without making salary itself create ceiling.
+                score[live]*=(1.0+0.20*q)
+            if sp>0:
+                spike=(rng.random(ns)<sp) & (~dud if q>0 else np.ones(ns,dtype=bool))
+                if spike.any():
+                    score[spike]+=rng.gamma(shape=2.0,scale=2.0,size=int(spike.sum()))
+        out[:,j]=score.astype(np.float32)
     return out
+
+def showdown_value_diagnostics(players, sims):
+    rows=[]
+    for j,r in players.iterrows():
+        v=sims[:,j]
+        rows.append({
+            "Name":r["Name"],"Pos":r["Position"],"Team":r["TeamAbbrev"],
+            "Salary":int(r["FLEX Salary"]),"Role Tier":r.get("Role Tier",""),
+            "Sim Mean":float(np.mean(v)),"P75":float(np.percentile(v,75)),
+            "P90":float(np.percentile(v,90)),"P95":float(np.percentile(v,95)),
+            "≤3 pts %":100*float(np.mean(v<=3.0)),"10+ pts %":100*float(np.mean(v>=10.0)),
+            "Source":r.get("Projection Source","")
+        })
+    return pd.DataFrame(rows)
 
 def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salary=44000, max_salary=50000, seed=316):
     rng=np.random.default_rng(seed); n=len(players); seen=set(); rows=[]; tries=0; target=int(bank_size)
@@ -827,7 +873,7 @@ def showdown_dk_export(selected, players):
 mc, comp, dst, own, games, matchups = load_base()
 pool = prepare_pool(mc,dst,own,matchups)
 
-st.title("🏈 NFL Predictor Pro — V3.1.6a + Showdown V1.2")
+st.title("🏈 NFL Predictor Pro — V3.1.6a + Showdown V1.3")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
 st.warning("Week 4 model snapshot. V3 adds a bounded individual coverage-matchup layer on top of V2 role eligibility. Unresearched players remain neutral; re-check final injury news, salaries, coverage assignments and ownership before contest entry.")
 
@@ -993,12 +1039,13 @@ elif view == "Single Game Showdown":
             cpt_excludes=st.multiselect("Exclude from Captain only",names,key="sd_cpt_excludes")
             eff_p,eff_c=_showdown_exposure_counts(int(n_lineups),float(max_player),float(max_cpt))
             st.caption(f"Effective small-portfolio limits: any player ≤ {eff_p}/{int(n_lineups)} lineups ({100*eff_p/int(n_lineups):.0f}%) • any Captain ≤ {eff_c}/{int(n_lineups)} ({100*eff_c/int(n_lineups):.0f}%). Percentages are rounded up to the nearest attainable lineup count.")
-            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups. Salary is allowed to remain unused when simulation upside supports it; V1.1+ applies a soft sanity hurdle only when more than $3,000 is left unused. V1.2 makes exposure limits discrete-aware for small portfolios and uses controlled exposure relaxation if needed to fill the requested lineup count.")
+            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups. V1.3 keeps the V1.2 discrete-aware portfolio engine and adds role-based fallback opportunity, realistic dud probability, conditional spike upside, and value-player diagnostics. No player-specific exposure cap is imposed.")
             if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate"):
                 with st.spinner("Simulating correlated game outcomes and optimizing Showdown lineups..."):
                     sim=simulate_showdown_players(players,sd_teams,int(n_sims))
                     cands=generate_showdown_candidates(players,sim,sd_teams,int(bank),int(min_salary),50000)
                     ranked=rank_showdown_candidates(cands,strategy)
+                    diagnostics=showdown_value_diagnostics(players,sim)
                     selected,sd_meta=select_showdown_portfolio(ranked,players,int(n_lineups),float(max_player),float(max_cpt),int(min_unique),locks,excludes,cpt_excludes)
                 if not selected:
                     st.error("No valid Showdown portfolio found. Relax salary, uniqueness, locks, or exclusions.")
@@ -1013,6 +1060,10 @@ elif view == "Single Game Showdown":
                         st.warning(f"To fill the portfolio, V1.2 relaxed exposure counts to player ≤ {sd_meta['max_player_count']}/{int(n_lineups)} and Captain ≤ {sd_meta['max_cpt_count']}/{int(n_lineups)}. Locks, exclusions, uniqueness and lineup legality were not relaxed.")
                     st.dataframe(rdf,use_container_width=True,hide_index=True,column_config={"Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"Optimal %":st.column_config.NumberColumn(format="%.3f")})
                     st.download_button("Download DraftKings Showdown CSV",dkdf.to_csv(index=False),"DK_Showdown_Lineups.csv","text/csv")
+                    st.markdown("#### Showdown value diagnostics")
+                    st.caption("Use this to audit why salary-relief players are entering lineups. Low-volume fallback players should show meaningful dud probability while retaining a smaller conditional ceiling path.")
+                    diag_show=diagnostics.sort_values(["Salary","Sim Mean"],ascending=[True,False])
+                    st.dataframe(diag_show,use_container_width=True,hide_index=True,column_config={"Sim Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"≤3 pts %":st.column_config.NumberColumn(format="%.1f%%"),"10+ pts %":st.column_config.NumberColumn(format="%.1f%%")})
                     all_names=[]; all_cpt=[]
                     for z in selected:
                         ids=[z["cpt"]]+list(z["flex"]); all_names.extend(players.iloc[ids]["Name"].tolist()); all_cpt.append(players.iloc[z["cpt"]]["Name"])
