@@ -604,6 +604,7 @@ SHOWDOWN_DEFAULTS = {
     "sd_n_lineups": 20, "sd_max_player_exp": 0.65, "sd_max_cpt_exp": 0.35,
     "sd_min_unique": 2, "sd_min_salary": 44000, "sd_sims": 20000,
     "sd_candidate_bank": 6000, "sd_strategy": "Tournament Ceiling",
+    "sd_min_standard": "Balanced GPP", "sd_allow_deep_punt": True,
     "sd_locks": [], "sd_excludes": [], "sd_cpt_excludes": [],
 }
 
@@ -776,13 +777,40 @@ def showdown_value_diagnostics(players, sims):
         })
     return pd.DataFrame(rows)
 
-def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salary=44000, max_salary=50000, seed=316):
+def showdown_viability_flags(players, sims, standard="Balanced GPP"):
+    # V1.4 minimum-viability screen. Salary never determines eligibility.
+    # A player qualifies from the simulated scoring distribution; a marginal sixth
+    # player can still be used when Allow one deep punt is enabled.
+    presets={
+        "Loose GPP":   {"mean":1.25,"p75":1.75,"p90":3.5,"p3":0.18,"p5":0.08,"need":2},
+        "Balanced GPP":{"mean":2.00,"p75":3.00,"p90":5.0,"p3":0.25,"p5":0.12,"need":3},
+        "Strong Floor":{"mean":3.00,"p75":4.00,"p90":6.5,"p3":0.40,"p5":0.20,"need":3},
+    }
+    rows=[]
+    if standard=="Off":
+        return pd.DataFrame({"Viable":[True]*len(players),"Deep Punt OK":[True]*len(players),"Viability Tests":[5]*len(players)},index=players.index)
+    cfg=presets.get(standard,presets["Balanced GPP"])
+    for j,r in players.iterrows():
+        v=sims[:,j]; mean=float(np.mean(v)); p75=float(np.percentile(v,75)); p90=float(np.percentile(v,90))
+        prob3=float(np.mean(v>=3.0)); prob5=float(np.mean(v>=5.0)); prob10=float(np.mean(v>=10.0))
+        tests=sum([mean>=cfg["mean"],p75>=cfg["p75"],p90>=cfg["p90"],prob3>=cfg["p3"],prob5>=cfg["p5"]])
+        viable=tests>=cfg["need"]
+        # A deep punt must still own a plausible scoring path. This prevents the
+        # optimizer from using essentially dead players solely to unlock five studs.
+        deep_ok=(p90>=max(3.0,cfg["p90"]*.70)) or (prob5>=max(.06,cfg["p5"]*.60)) or (prob10>=.025)
+        rows.append({"Viable":bool(viable),"Deep Punt OK":bool(deep_ok),"Viability Tests":int(tests)})
+    return pd.DataFrame(rows,index=players.index)
+
+def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salary=44000, max_salary=50000, seed=316, min_standard="Balanced GPP", allow_deep_punt=True):
     rng=np.random.default_rng(seed); n=len(players); seen=set(); rows=[]; tries=0; target=int(bank_size)
+    flags=showdown_viability_flags(players,sims,min_standard)
     weights=np.maximum(players["Base Mean"].to_numpy()/np.maximum(players["FLEX Salary"].to_numpy()/1000,1),.05)
     weights=weights/weights.sum()
-    while len(rows)<target and tries<target*80:
+    while len(rows)<target and tries<target*100:
         tries+=1
         c=int(rng.choice(n,p=weights))
+        # Captain must meet the full viability standard.
+        if not bool(flags.loc[c,"Viable"]): continue
         avail=np.array([i for i in range(n) if i!=c])
         pw=weights[avail]; pw=pw/pw.sum()
         flex_idx=tuple(sorted(rng.choice(avail,size=5,replace=False,p=pw).tolist()))
@@ -791,10 +819,18 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
         ids=[c]+list(flex_idx); salary=int(players.iloc[c]["CPT Salary"]+players.iloc[list(flex_idx)]["FLEX Salary"].sum())
         if salary<min_salary or salary>max_salary: continue
         if len(set(players.iloc[ids]["TeamAbbrev"]))<2: continue
+        viable_count=int(flags.loc[ids,"Viable"].sum())
+        nonviable=[i for i in ids if not bool(flags.loc[i,"Viable"])]
+        if min_standard!="Off":
+            if allow_deep_punt:
+                if viable_count<5 or len(nonviable)>1: continue
+                if nonviable and not bool(flags.loc[nonviable[0],"Deep Punt OK"]): continue
+            elif viable_count<6:
+                continue
         seen.add(key)
         pts=1.5*sims[:,c]+sims[:,list(flex_idx)].sum(axis=1)
-        rows.append({"cpt":c,"flex":flex_idx,"salary":salary,"mean":float(pts.mean()),"p75":float(np.percentile(pts,75)),"p90":float(np.percentile(pts,90)),"p95":float(np.percentile(pts,95)),"sim":pts})
-    return rows
+        rows.append({"cpt":c,"flex":flex_idx,"salary":salary,"mean":float(pts.mean()),"p75":float(np.percentile(pts,75)),"p90":float(np.percentile(pts,90)),"p95":float(np.percentile(pts,95)),"sim":pts,"viable_count":viable_count})
+    return rows,flags
 
 def rank_showdown_candidates(cands, strategy):
     if not cands: return cands
@@ -873,7 +909,7 @@ def showdown_dk_export(selected, players):
 mc, comp, dst, own, games, matchups = load_base()
 pool = prepare_pool(mc,dst,own,matchups)
 
-st.title("🏈 NFL Predictor Pro — V3.1.6a + Showdown V1.3")
+st.title("🏈 NFL Predictor Pro — V3.1.6a + Showdown V1.4")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
 st.warning("Week 4 model snapshot. V3 adds a bounded individual coverage-matchup layer on top of V2 role eligibility. Unresearched players remain neutral; re-check final injury news, salaries, coverage assignments and ownership before contest entry.")
 
@@ -1033,19 +1069,23 @@ elif view == "Single Game Showdown":
             n_sims=f.select_slider("Game simulations",options=[5000,10000,20000,30000,50000],key="sd_sims")
             bank=g.select_slider("Candidate bank",options=[1000,2000,4000,6000,8000,10000],key="sd_candidate_bank")
             strategy=h.selectbox("Ranking",["Tournament Ceiling","Balanced","Median / Mean"],key="sd_strategy")
+            q1,q2=st.columns(2)
+            min_standard=q1.selectbox("Minimum player standard",["Off","Loose GPP","Balanced GPP","Strong Floor"],key="sd_min_standard",help="Screens players by their simulated scoring distribution, not salary. Captain must pass the selected standard.")
+            allow_deep_punt=q2.checkbox("Allow one deep punt",key="sd_allow_deep_punt",help="Allows at most one player who misses the full standard, but only if the simulation still shows a legitimate scoring path.")
             names=players["Name"].tolist()
             locks=st.multiselect("Lock player(s)",names,key="sd_locks")
             excludes=st.multiselect("Exclude player(s)",names,key="sd_excludes")
             cpt_excludes=st.multiselect("Exclude from Captain only",names,key="sd_cpt_excludes")
             eff_p,eff_c=_showdown_exposure_counts(int(n_lineups),float(max_player),float(max_cpt))
             st.caption(f"Effective small-portfolio limits: any player ≤ {eff_p}/{int(n_lineups)} lineups ({100*eff_p/int(n_lineups):.0f}%) • any Captain ≤ {eff_c}/{int(n_lineups)} ({100*eff_c/int(n_lineups):.0f}%). Percentages are rounded up to the nearest attainable lineup count.")
-            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups. V1.3 keeps the V1.2 discrete-aware portfolio engine and adds role-based fallback opportunity, realistic dud probability, conditional spike upside, and value-player diagnostics. No player-specific exposure cap is imposed.")
+            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups • Balanced GPP minimum standard • one deep punt allowed. V1.4 filters near-dead roster spots by simulated scoring viability while preserving legitimate salary-relief plays, kickers and DST.")
             if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate"):
                 with st.spinner("Simulating correlated game outcomes and optimizing Showdown lineups..."):
                     sim=simulate_showdown_players(players,sd_teams,int(n_sims))
-                    cands=generate_showdown_candidates(players,sim,sd_teams,int(bank),int(min_salary),50000)
+                    cands,viability=generate_showdown_candidates(players,sim,sd_teams,int(bank),int(min_salary),50000,min_standard=min_standard,allow_deep_punt=bool(allow_deep_punt))
                     ranked=rank_showdown_candidates(cands,strategy)
                     diagnostics=showdown_value_diagnostics(players,sim)
+                    diagnostics=diagnostics.join(viability[["Viable","Deep Punt OK","Viability Tests"]])
                     selected,sd_meta=select_showdown_portfolio(ranked,players,int(n_lineups),float(max_player),float(max_cpt),int(min_unique),locks,excludes,cpt_excludes)
                 if not selected:
                     st.error("No valid Showdown portfolio found. Relax salary, uniqueness, locks, or exclusions.")
@@ -1061,7 +1101,7 @@ elif view == "Single Game Showdown":
                     st.dataframe(rdf,use_container_width=True,hide_index=True,column_config={"Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"Optimal %":st.column_config.NumberColumn(format="%.3f")})
                     st.download_button("Download DraftKings Showdown CSV",dkdf.to_csv(index=False),"DK_Showdown_Lineups.csv","text/csv")
                     st.markdown("#### Showdown value diagnostics")
-                    st.caption("Use this to audit why salary-relief players are entering lineups. Low-volume fallback players should show meaningful dud probability while retaining a smaller conditional ceiling path.")
+                    st.caption("V1.4 shows whether each player passes the selected minimum standard. A deep punt may miss the full standard, but must still show a legitimate simulated scoring path. Captain always must be Viable.")
                     diag_show=diagnostics.sort_values(["Salary","Sim Mean"],ascending=[True,False])
                     st.dataframe(diag_show,use_container_width=True,hide_index=True,column_config={"Sim Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"≤3 pts %":st.column_config.NumberColumn(format="%.1f%%"),"10+ pts %":st.column_config.NumberColumn(format="%.1f%%")})
                     all_names=[]; all_cpt=[]
