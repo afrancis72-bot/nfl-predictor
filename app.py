@@ -669,16 +669,43 @@ def showdown_projection_table(flex, comp, mc, dst):
     dst_mask=x["Position"].isin(["DST","D"])
     x.loc[dst_mask,"Base Mean"]=x.loc[dst_mask,"Base Mean"].fillna(pd.to_numeric(x.loc[dst_mask,"dst_mean"],errors="coerce"))
     x["Projection Source"]=np.where(x["Base Mean"].notna(),"NFL weekly model","DK slate fallback")
-    # Fallback is intentionally transparent for standalone games absent from Classic data.
-    x["Base Mean"]=x["Base Mean"].fillna(pd.to_numeric(x["AvgPointsPerGame"],errors="coerce"))
-    pos_floor={"QB":2.0,"RB":0.25,"WR":0.25,"TE":0.25,"K":2.0,"DST":1.0,"D":1.0}
-    x["Base Mean"]=x.apply(lambda r: max(float(r["Base Mean"]) if pd.notna(r["Base Mean"]) else 0.0,pos_floor.get(r["Position"],1.0)),axis=1)
+    # V1.1 role-aware fallback. DK PPG is useful, but it can overstate tiny-sample
+    # backups. Discount the median for low-salary skill players while preserving
+    # enough variance for legitimate TD-dependent punt outcomes. Weekly-model rows
+    # are never altered by this fallback calibration.
+    fallback_mask=x["Base Mean"].isna()
+    dk_ppg=pd.to_numeric(x["AvgPointsPerGame"],errors="coerce").fillna(0.0)
+    sal=pd.to_numeric(x["FLEX Salary"],errors="coerce").fillna(0.0)
+    skill_mask=x["Position"].isin(["RB","WR","TE"])
+    role_mult=pd.Series(1.0,index=x.index)
+    role_mult.loc[skill_mask & (sal < 1000)] = 0.30
+    role_mult.loc[skill_mask & (sal >= 1000) & (sal < 2500)] = 0.48
+    role_mult.loc[skill_mask & (sal >= 2500) & (sal < 4000)] = 0.68
+    role_mult.loc[skill_mask & (sal >= 4000) & (sal < 6500)] = 0.85
+    fallback_mean=dk_ppg*role_mult
+    # Kickers/DST/QB use their slate scoring baseline directly; their roles are
+    # less ambiguous than reserve RB/WR/TE roles in a salary-only fallback.
+    fallback_mean.loc[~skill_mask]=dk_ppg.loc[~skill_mask]
+    x.loc[fallback_mask,"Base Mean"]=fallback_mean.loc[fallback_mask]
+    x["Fallback Role Multiplier"]=np.where(fallback_mask,role_mult,1.0)
+    x["Role Tier"]="Weekly model"
+    x.loc[fallback_mask & skill_mask & (sal>=6500),"Role Tier"]="Core skill"
+    x.loc[fallback_mask & skill_mask & (sal>=4000) & (sal<6500),"Role Tier"]="Secondary skill"
+    x.loc[fallback_mask & skill_mask & (sal>=2500) & (sal<4000),"Role Tier"]="Low-volume skill"
+    x.loc[fallback_mask & skill_mask & (sal<2500),"Role Tier"]="Punt / TD-dependent"
+    x.loc[fallback_mask & ~skill_mask,"Role Tier"]="Defined role"
+    pos_floor={"QB":2.0,"RB":0.10,"WR":0.10,"TE":0.10,"K":2.0,"DST":1.0,"D":1.0}
+    x["Base Mean"]=x.apply(lambda r: max(float(r["Base Mean"]) if pd.notna(r["Base Mean"]) else 0.0,pos_floor.get(r["Position"],0.10)),axis=1)
     p90=pd.to_numeric(x["p90"],errors="coerce")
     p90=np.where(dst_mask,pd.to_numeric(x["dst_p90"],errors="coerce"),p90)
-    # Convert tail information into a practical per-player simulation sigma; fallback by position.
-    fallback_sd=x["Base Mean"]*x["Position"].map({"QB":0.42,"RB":0.65,"WR":0.75,"TE":0.75,"K":0.42,"DST":0.70,"D":0.70}).fillna(0.65)
+    # Preserve a long right tail for cheap skill players, but don't let the cheap
+    # salary itself create a high median projection.
+    base_sd=x["Base Mean"]*x["Position"].map({"QB":0.42,"RB":0.65,"WR":0.75,"TE":0.75,"K":0.42,"DST":0.70,"D":0.70}).fillna(0.65)
+    punt_boost=pd.Series(1.0,index=x.index)
+    punt_boost.loc[fallback_mask & skill_mask & (sal<4000)] = 1.35
+    fallback_sd=(base_sd*punt_boost).clip(lower=np.where(fallback_mask & skill_mask & (sal<4000),1.15,1.5))
     tail_sd=(pd.Series(p90,index=x.index)-x["Base Mean"])/1.2816
-    x["Sim SD"]=tail_sd.where(tail_sd>1.0,fallback_sd).fillna(fallback_sd).clip(lower=1.5)
+    x["Sim SD"]=tail_sd.where((~fallback_mask) & (tail_sd>1.0),fallback_sd).fillna(fallback_sd)
     return x.reset_index(drop=True)
 
 def simulate_showdown_players(players, teams, n_sims=20000, seed=315):
@@ -733,6 +760,13 @@ def rank_showdown_candidates(cands, strategy):
         if strategy=="Median / Mean": c["rank_score"]=c["mean"]
         elif strategy=="Balanced": c["rank_score"]=.55*c["mean"]+.20*c["p90"]+.25*c["p95"]
         else: c["rank_score"]=.25*c["mean"]+.30*c["p90"]+.35*c["p95"]+10*c["optimal_rate"]
+        # V1.1 salary-efficiency sanity check. This is deliberately a soft hurdle,
+        # not a hard spend rule: unusual low-salary builds can still win if their
+        # simulated ceiling is strong enough to overcome the penalty.
+        unused=max(0,50000-c["salary"])
+        c["unused_salary"]=unused
+        if unused>3000:
+            c["rank_score"]-=0.70*((unused-3000)/1000.0)
     return sorted(cands,key=lambda z:z["rank_score"],reverse=True)
 
 def select_showdown_portfolio(cands, players, n_lineups, max_player_exp, max_cpt_exp, min_unique, locks, excludes, cpt_excludes):
@@ -770,7 +804,7 @@ def showdown_dk_export(selected, players):
 mc, comp, dst, own, games, matchups = load_base()
 pool = prepare_pool(mc,dst,own,matchups)
 
-st.title("🏈 NFL Predictor Pro — V3.1.6a + Showdown")
+st.title("🏈 NFL Predictor Pro — V3.1.6a + Showdown V1.1")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
 st.warning("Week 4 model snapshot. V3 adds a bounded individual coverage-matchup layer on top of V2 role eligibility. Unresearched players remain neutral; re-check final injury news, salaries, coverage assignments and ownership before contest entry.")
 
@@ -918,7 +952,7 @@ elif view == "Single Game Showdown":
             if model_matches==0:
                 st.warning("This standalone game is not present in the current Classic weekly model dataset. Showdown will use DraftKings slate scoring baselines plus position-aware correlated simulation for this game. The app labels this fallback explicitly rather than inventing weekly-model projections.")
             with st.expander("Player matching / projection audit"):
-                st.dataframe(players[["Name","Position","TeamAbbrev","FLEX Salary","CPT Salary","Status","Base Mean","Sim SD","Projection Source"]].sort_values("FLEX Salary",ascending=False),use_container_width=True,hide_index=True)
+                st.dataframe(players[["Name","Position","TeamAbbrev","FLEX Salary","CPT Salary","Status","Base Mean","Sim SD","Role Tier","Projection Source"]].sort_values("FLEX Salary",ascending=False),use_container_width=True,hide_index=True)
             st.button("Reset Showdown to Recommended Defaults",key="sd_reset_btn",on_click=_reset_defaults,args=(SHOWDOWN_DEFAULTS,))
             a,b,c,d=st.columns(4)
             n_lineups=a.number_input("Showdown lineups",1,150,key="sd_n_lineups",step=1)
@@ -934,7 +968,7 @@ elif view == "Single Game Showdown":
             locks=st.multiselect("Lock player(s)",names,key="sd_locks")
             excludes=st.multiselect("Exclude player(s)",names,key="sd_excludes")
             cpt_excludes=st.multiselect("Exclude from Captain only",names,key="sd_cpt_excludes")
-            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups. Salary is allowed to remain unused when simulation upside supports it.")
+            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups. Salary is allowed to remain unused when simulation upside supports it; V1.1 applies a soft sanity hurdle only when more than $3,000 is left unused.")
             if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate"):
                 with st.spinner("Simulating correlated game outcomes and optimizing Showdown lineups..."):
                     sim=simulate_showdown_players(players,sd_teams,int(n_sims))
