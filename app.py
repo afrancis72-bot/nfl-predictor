@@ -763,7 +763,7 @@ def exposure_df(lineups):
 
 
 # -------------------------
-# Single-Game Showdown V1
+# Single-Game Showdown V1.5
 # -------------------------
 CLASSIC_DEFAULTS = {
     "classic_n_lineups": 15, "classic_max_exp": 0.30, "classic_min_unique": 4,
@@ -982,8 +982,14 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
     while len(rows)<target and tries<target*100:
         tries+=1
         c=int(rng.choice(n,p=weights))
-        # Captain must meet the full viability standard.
+        # V1.5 Captain standard: merely being viable is not enough. Captain must
+        # own a meaningful median/ceiling path so cheap or fragile role players do
+        # not become CPT solely because they unlock five stronger FLEX plays.
         if not bool(flags.loc[c,"Viable"]): continue
+        cv=sims[:,c]
+        c_mean=float(np.mean(cv)); c_p75=float(np.percentile(cv,75)); c_p90=float(np.percentile(cv,90)); c_prob10=float(np.mean(cv>=10.0))
+        c_pos=str(players.iloc[c]["Position"])
+        if c_pos in ["RB","WR","TE"] and not (c_mean>=4.0 and c_p75>=5.0 and c_p90>=8.0 and c_prob10>=0.10): continue
         avail=np.array([i for i in range(n) if i!=c])
         pw=weights[avail]; pw=pw/pw.sum()
         flex_idx=tuple(sorted(rng.choice(avail,size=5,replace=False,p=pw).tolist()))
@@ -1000,6 +1006,38 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
                 if nonviable and not bool(flags.loc[nonviable[0],"Deep Punt OK"]): continue
             elif viable_count<6:
                 continue
+
+        # V1.5 LINEUP-LEVEL ROLE QUALITY GATE. V1.4 evaluated players one at a
+        # time, which still allowed five strong plays plus a technically viable but
+        # extremely thin sixth man. These checks evaluate the construction itself.
+        lineup=players.iloc[ids]
+        positions=lineup["Position"].astype(str)
+        skill_ids=[i for i in ids if str(players.iloc[i]["Position"]) in ["RB","WR","TE"]]
+
+        # Three-TE builds are usually a salary-allocation artifact in a six-man
+        # single-game roster. Two remain legal for genuine TE-heavy game scripts.
+        if int((positions=="TE").sum())>2: continue
+
+        # A thin skill punt is defined by opportunity/ceiling, NOT merely salary.
+        # Permit at most one, and require even that player to retain a credible
+        # scoring path. This is the direct fix for the repeated salary-dump pattern.
+        thin=[]
+        for i in skill_ids:
+            v=sims[:,i]
+            m=float(np.mean(v)); p75i=float(np.percentile(v,75)); p90i=float(np.percentile(v,90)); pr5=float(np.mean(v>=5.0))
+            is_thin=(m<2.5) or (p75i<3.0) or (p90i<5.5) or (pr5<0.10)
+            if is_thin: thin.append(i)
+        if len(thin)>1: continue
+        if thin:
+            tv=sims[:,thin[0]]
+            if float(np.percentile(tv,90))<4.5 or float(np.mean(tv>=5.0))<0.07: continue
+
+        # Require four roster spots to carry a real scoring median. Kickers/DST can
+        # satisfy this naturally; the rule simply stops a lineup from concentrating
+        # too much of its probability mass in fragile ancillary roles.
+        solid=sum(float(np.mean(sims[:,i]))>=4.0 for i in ids)
+        if solid<4: continue
+
         seen.add(key)
         pts=1.5*sims[:,c]+sims[:,list(flex_idx)].sum(axis=1)
         rows.append({"cpt":c,"flex":flex_idx,"salary":salary,"mean":float(pts.mean()),"p75":float(np.percentile(pts,75)),"p90":float(np.percentile(pts,90)),"p95":float(np.percentile(pts,95)),"sim":pts,"viable_count":viable_count})
@@ -1085,7 +1123,7 @@ if "classic_uploaded_pool" not in st.session_state:
     st.session_state["classic_uploaded_pool"]=None
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — V3.1.6 + Showdown V1.4")
+st.title("🏈 NFL Predictor Pro — V3.1.7 + Showdown V1.5")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
 st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
@@ -1285,7 +1323,7 @@ elif view == "Single Game Showdown":
             cpt_excludes=st.multiselect("Exclude from Captain only",names,key="sd_cpt_excludes")
             eff_p,eff_c=_showdown_exposure_counts(int(n_lineups),float(max_player),float(max_cpt))
             st.caption(f"Effective small-portfolio limits: any player ≤ {eff_p}/{int(n_lineups)} lineups ({100*eff_p/int(n_lineups):.0f}%) • any Captain ≤ {eff_c}/{int(n_lineups)} ({100*eff_c/int(n_lineups):.0f}%). Percentages are rounded up to the nearest attainable lineup count.")
-            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups • Balanced GPP minimum standard • one deep punt allowed. V1.4 filters near-dead roster spots by simulated scoring viability while preserving legitimate salary-relief plays, kickers and DST.")
+            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups • Balanced GPP minimum standard • one deep punt allowed. V1.5 adds lineup-level role-quality guardrails on top of V1.4 player viability: no multi-punt salary dumps, no three-TE constructions, and stricter Captain ceiling standards while preserving legitimate kickers, DST and one viable salary-relief play.")
             if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate"):
                 with st.spinner("Simulating correlated game outcomes and optimizing Showdown lineups..."):
                     sim=simulate_showdown_players(players,sd_teams,int(n_sims))
@@ -1308,7 +1346,7 @@ elif view == "Single Game Showdown":
                     st.dataframe(rdf,use_container_width=True,hide_index=True,column_config={"Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"Optimal %":st.column_config.NumberColumn(format="%.3f")})
                     st.download_button("Download DraftKings Showdown CSV",dkdf.to_csv(index=False),"DK_Showdown_Lineups.csv","text/csv")
                     st.markdown("#### Showdown value diagnostics")
-                    st.caption("V1.4 shows whether each player passes the selected minimum standard. A deep punt may miss the full standard, but must still show a legitimate simulated scoring path. Captain always must be Viable.")
+                    st.caption("V1.5 shows whether each player passes the selected minimum standard. Candidate lineups also must pass lineup-level role-quality rules: at most one thin skill punt, at most two TEs, and Captain must clear a stronger ceiling threshold.")
                     diag_show=diagnostics.sort_values(["Salary","Sim Mean"],ascending=[True,False])
                     st.dataframe(diag_show,use_container_width=True,hide_index=True,column_config={"Sim Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"≤3 pts %":st.column_config.NumberColumn(format="%.1f%%"),"10+ pts %":st.column_config.NumberColumn(format="%.1f%%")})
                     all_names=[]; all_cpt=[]
