@@ -40,7 +40,7 @@ def load_base():
 def parse_classic_dk_csv(uploaded):
     """Parse a DraftKings NFL Classic salary CSV and normalize it for slate ingestion."""
     dk=pd.read_csv(uploaded)
-    required={"Position","Name","ID","Salary","Game Info","TeamAbbrev","AvgPointsPerGame"}
+    required={"Position","Name","ID","Salary","Game Info","TeamAbbrev","AvgPointsPerGame","Status"}
     missing=required-set(dk.columns)
     if missing:
         raise ValueError("Missing DraftKings columns: "+", ".join(sorted(missing)))
@@ -49,6 +49,7 @@ def parse_classic_dk_csv(uploaded):
     x["TeamAbbrev"]=x["TeamAbbrev"].map(normalize_team)
     x["Salary"]=pd.to_numeric(x["Salary"],errors="coerce")
     x["AvgPointsPerGame"]=pd.to_numeric(x["AvgPointsPerGame"],errors="coerce").fillna(0.0)
+    x["Status"]=x["Status"].fillna("").astype(str).str.strip().str.upper()
     x["game"]=x["Game Info"].astype(str).str.split().str[0].str.upper()
     x=x[x["Position"].isin(["QB","RB","WR","TE","DST"])].dropna(subset=["Name","Salary","TeamAbbrev"])
     x=x[x["Salary"]>0].drop_duplicates(["Name","Position","TeamAbbrev"],keep="first")
@@ -81,7 +82,10 @@ def classic_pool_from_upload(dk, base_pool):
     # Fallback eligibility requires a non-trivial DK scoring history; QB/DST remain usable.
     fallback_ok=(merged["Position"].isin(["QB","DST"])) | (ppg>=2.0)
     existing_ok=merged.get("optimizer_eligible",pd.Series(False,index=merged.index)).fillna(False).astype(bool)
-    merged["optimizer_eligible"]=np.where(matched,existing_ok,fallback_ok)
+    merged["Status"]=merged["Status"].fillna("").astype(str).str.strip().str.upper()
+blocked_statuses={"OUT","IR","INACTIVE","SUSPENDED","PUP","NFI"}
+status_ok=~merged["Status"].isin(blocked_statuses)
+merged["optimizer_eligible"]=np.where(matched,existing_ok,fallback_ok) & status_ok
     merged["role_status"]=merged.get("role_status",pd.Series("",index=merged.index)).fillna("")
     merged.loc[~matched,"role_status"]="DK Fallback"
     for c,default in {"coverage_matchup_grade":"Neutral / Uploaded Slate","individual_matchup_factor":1.0,"individual_matchup_delta":0.0,"expected_primary_coverage":"","projection_repaired":False}.items():
@@ -1050,6 +1054,14 @@ if view == "Slate Setup":
             matched=int((uploaded_pool["projection_source"]=="Weekly researched model").sum())
             fallback=len(uploaded_pool)-matched
             st.success(f"Activated {len(uploaded_pool):,} DK players • {matched} weekly-model matches • {fallback} DK fallback rows.")
+            blocked=uploaded_pool[~uploaded_pool["optimizer_eligible"] & uploaded_pool["Status"].isin(["OUT","IR","INACTIVE","SUSPENDED","PUP","NFI"])]
+if len(blocked):
+    blocked_names=", ".join(f"{r['Name']} ({r['Status']})" for _,r in blocked.iterrows())
+    st.error(f"INJURY STATUS GATE: {len(blocked)} player(s) automatically excluded: {blocked_names}")
+questionable=uploaded_pool[uploaded_pool["Status"].isin(["Q","D","QUESTIONABLE","DOUBTFUL"])]
+if len(questionable):
+    q_names=", ".join(f"{r['Name']} ({r['Status']})" for _,r in questionable.iterrows())
+    st.warning(f"INJURY WATCH: {q_names}")
             if fallback:
                 st.warning("Fallback rows do not have refreshed usage/air-yards/red-zone research. They remain clearly labeled and should not be treated as equivalent to weekly researched projections.")
             st.dataframe(uploaded_pool[["Name","Position","TeamAbbrev","game","Salary","ID","proj","projection_source","optimizer_eligible"]].sort_values(["Position","Salary"],ascending=[True,False]),use_container_width=True,hide_index=True)
