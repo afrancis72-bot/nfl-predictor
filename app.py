@@ -763,7 +763,7 @@ def exposure_df(lineups):
 
 
 # -------------------------
-# Single-Game Showdown V1.6
+# Single-Game Showdown V1.7
 # -------------------------
 CLASSIC_DEFAULTS = {
     "classic_n_lineups": 15, "classic_max_exp": 0.30, "classic_min_unique": 4,
@@ -862,6 +862,25 @@ def showdown_projection_table(flex, comp, mc, dst):
     fallback_mean.loc[~skill_mask]=dk_ppg.loc[~skill_mask]
     x.loc[fallback_mask,"Base Mean"]=fallback_mean.loc[fallback_mask]
     x["Fallback Role Multiplier"]=np.where(fallback_mask,role_mult,1.0)
+
+    # V1.7 weekly-model role calibration.  Showdown is especially sensitive to a
+    # stale or over-aggressive one-game projection because the optimizer can turn
+    # that error into 60-70% exposure.  DK's current slate PPG is NOT a projection
+    # and never replaces our weekly model; it is used only as a bounded role sanity
+    # anchor.  Large model-vs-role disagreements are partially shrunk rather than
+    # accepted at full strength.  Salary is deliberately absent from this step.
+    x["Raw Weekly Mean"]=x["Base Mean"]
+    x["DK Role Baseline"]=dk_ppg
+    weekly_skill=(~fallback_mask) & skill_mask & (dk_ppg>0)
+    role_anchor=0.80*x["Base Mean"] + 0.20*dk_ppg
+    upper_guard=np.maximum(dk_ppg*1.45, dk_ppg+3.5)
+    lower_guard=np.minimum(dk_ppg*0.60, np.maximum(dk_ppg-3.5,0.10))
+    calibrated=np.minimum(role_anchor,upper_guard)
+    calibrated=np.maximum(calibrated,lower_guard)
+    x.loc[weekly_skill,"Base Mean"]=calibrated.loc[weekly_skill]
+    x["Role Calibration"]="None"
+    x.loc[weekly_skill,"Role Calibration"]="Weekly model + bounded DK role anchor"
+
     x["Role Tier"]="Weekly model"
     x.loc[fallback_mask & skill_mask & (sal>=6500),"Role Tier"]="Core skill"
     x.loc[fallback_mask & skill_mask & (sal>=4000) & (sal<6500),"Role Tier"]="Secondary skill"
@@ -943,6 +962,9 @@ def showdown_value_diagnostics(players, sims):
         rows.append({
             "Name":r["Name"],"Pos":r["Position"],"Team":r["TeamAbbrev"],
             "Salary":int(r["FLEX Salary"]),"Role Tier":r.get("Role Tier",""),
+            "Raw Weekly Mean":float(r.get("Raw Weekly Mean",r.get("Base Mean",0.0))),
+            "DK Role Baseline":float(r.get("DK Role Baseline",0.0)),
+            "Calibrated Mean":float(r.get("Base Mean",0.0)),
             "Sim Mean":float(np.mean(v)),"P75":float(np.percentile(v,75)),
             "P90":float(np.percentile(v,90)),"P95":float(np.percentile(v,95)),
             "≤3 pts %":100*float(np.mean(v<=3.0)),"10+ pts %":100*float(np.mean(v>=10.0)),
@@ -975,7 +997,7 @@ def showdown_viability_flags(players, sims, standard="Balanced GPP"):
     return pd.DataFrame(rows,index=players.index)
 
 def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salary=44000, max_salary=50000, seed=316, min_standard="Balanced GPP", allow_deep_punt=True):
-    """V1.6: opportunity-first Showdown candidate generation.
+    """V1.7: role-calibrated, opportunity-first Showdown candidate generation.
 
     Salary is a lineup constraint, not the primary reason a player is sampled. The
     candidate pool is seeded from simulated scoring quality/ceiling first, with one
@@ -995,7 +1017,7 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
     prob5=np.mean(sims>=5.0,axis=0).astype(float)
     prob10=np.mean(sims>=10.0,axis=0).astype(float)
 
-    # V1.6 core-role standard. QB/K/DST have defined scoring roles; RB/WR/TE must
+    # V1.7 core-role standard. QB/K/DST have defined scoring roles; RB/WR/TE must
     # demonstrate both usable central tendency and a real ceiling. A player can miss
     # this standard and still occupy ONE relief slot if the tail remains credible.
     core=np.zeros(n,dtype=bool); relief=np.zeros(n,dtype=bool); captain_ok=np.zeros(n,dtype=bool)
@@ -1054,15 +1076,19 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
         lineup=players.iloc[ids]; positions=lineup["Position"].astype(str)
         if int((positions=="TE").sum())>2: continue
 
-        # V1.6 lineup role floor: at least five players must clear the stronger
+        # V1.7 lineup role floor: at least five players must clear the stronger
         # core-role standard. The sixth may be salary relief only if it passes the
         # explicit relief ceiling test above. This is evaluated BEFORE ranking.
         noncore=[i for i in ids if not core[i]]
         if len(noncore)>1: continue
         if noncore and (not allow_deep_punt or not relief[noncore[0]]): continue
 
-        # Avoid fragile builds dominated by ancillary defined-role scoring. Two
-        # kicker/DST pieces remain legal; three or more are rejected.
+        # V1.7 game-script guardrails.  A Showdown lineup must tell a plausible
+        # offensive story rather than using multiple low-ceiling defined-role slots
+        # merely to make salary work.  These are structural rules, not player rules.
+        if int((positions=="QB").sum())<1: continue
+        if int((positions=="K").sum())>1: continue
+        if int(positions.isin(["DST","D"]).sum())>1: continue
         ancillary=int(positions.isin(["K","DST","D"]).sum())
         if ancillary>2: continue
 
@@ -1151,7 +1177,7 @@ if "classic_uploaded_pool" not in st.session_state:
     st.session_state["classic_uploaded_pool"]=None
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — V3.1.7 + Showdown V1.6")
+st.title("🏈 NFL Predictor Pro — V3.1.7 + Showdown V1.7")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
 st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
@@ -1330,7 +1356,7 @@ elif view == "Single Game Showdown":
             if model_matches==0:
                 st.warning("This standalone game is not present in the current Classic weekly model dataset. Showdown will use DraftKings slate scoring baselines plus position-aware correlated simulation for this game. The app labels this fallback explicitly rather than inventing weekly-model projections.")
             with st.expander("Player matching / projection audit"):
-                st.dataframe(players[["Name","Position","TeamAbbrev","FLEX Salary","CPT Salary","Status","Base Mean","Sim SD","Role Tier","Projection Source"]].sort_values("FLEX Salary",ascending=False),use_container_width=True,hide_index=True)
+                st.dataframe(players[["Name","Position","TeamAbbrev","FLEX Salary","CPT Salary","Status","Raw Weekly Mean","DK Role Baseline","Base Mean","Sim SD","Role Tier","Role Calibration","Projection Source"]].sort_values("FLEX Salary",ascending=False),use_container_width=True,hide_index=True)
             st.button("Reset Showdown to Recommended Defaults",key="sd_reset_btn",on_click=_reset_defaults,args=(SHOWDOWN_DEFAULTS,))
             a,b,c,d=st.columns(4)
             n_lineups=a.number_input("Showdown lineups",1,150,key="sd_n_lineups",step=1)
@@ -1351,7 +1377,7 @@ elif view == "Single Game Showdown":
             cpt_excludes=st.multiselect("Exclude from Captain only",names,key="sd_cpt_excludes")
             eff_p,eff_c=_showdown_exposure_counts(int(n_lineups),float(max_player),float(max_cpt))
             st.caption(f"Effective small-portfolio limits: any player ≤ {eff_p}/{int(n_lineups)} lineups ({100*eff_p/int(n_lineups):.0f}%) • any Captain ≤ {eff_c}/{int(n_lineups)} ({100*eff_c/int(n_lineups):.0f}%). Percentages are rounded up to the nearest attainable lineup count.")
-            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups • Balanced GPP minimum standard • one deep punt allowed. V1.6 uses opportunity-first candidate generation: salary no longer boosts sampling probability, at least five roster spots must clear a stronger simulated role/ceiling standard, only one credible salary-relief player is allowed, and Captain eligibility requires a genuine upper-tail scoring profile.")
+            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups • Balanced GPP minimum standard • one deep punt allowed. V1.7 keeps opportunity-first candidate generation and adds a bounded role sanity calibration for weekly-model skill players. DK PPG is used only as a 20% role anchor when available; it never replaces the weekly projection. Lineups also require a QB and may use at most one kicker and one DST, preventing double-kicker salary-dump constructions.")
             if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate"):
                 with st.spinner("Simulating correlated game outcomes and optimizing Showdown lineups..."):
                     sim=simulate_showdown_players(players,sd_teams,int(n_sims))
@@ -1374,7 +1400,7 @@ elif view == "Single Game Showdown":
                     st.dataframe(rdf,use_container_width=True,hide_index=True,column_config={"Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"Optimal %":st.column_config.NumberColumn(format="%.3f")})
                     st.download_button("Download DraftKings Showdown CSV",dkdf.to_csv(index=False),"DK_Showdown_Lineups.csv","text/csv")
                     st.markdown("#### Showdown value diagnostics")
-                    st.caption("V1.6 generates candidates from simulated opportunity and ceiling rather than points-per-dollar. Candidate lineups require at least five core-role players; the optional sixth relief player must retain a credible scoring tail. Captain eligibility uses a separate ceiling standard.")
+                    st.caption("V1.7 generates candidates from simulated opportunity and ceiling rather than points-per-dollar. Weekly-model skill projections receive a bounded 20% DK-role sanity anchor before simulation; salary is not part of that calibration. Candidate lineups require at least five core-role players, at least one QB, and no more than one kicker or one DST.")
                     diag_show=diagnostics.sort_values(["Salary","Sim Mean"],ascending=[True,False])
                     st.dataframe(diag_show,use_container_width=True,hide_index=True,column_config={"Sim Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"≤3 pts %":st.column_config.NumberColumn(format="%.1f%%"),"10+ pts %":st.column_config.NumberColumn(format="%.1f%%")})
                     all_names=[]; all_cpt=[]
