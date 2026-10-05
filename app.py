@@ -1055,13 +1055,13 @@ if view == "Slate Setup":
             fallback=len(uploaded_pool)-matched
             st.success(f"Activated {len(uploaded_pool):,} DK players • {matched} weekly-model matches • {fallback} DK fallback rows.")
             blocked=uploaded_pool[~uploaded_pool["optimizer_eligible"] & uploaded_pool["Status"].isin(["OUT","IR","INACTIVE","SUSPENDED","PUP","NFI"])]
-if len(blocked):
-    blocked_names=", ".join(f"{r['Name']} ({r['Status']})" for _,r in blocked.iterrows())
-    st.error(f"INJURY STATUS GATE: {len(blocked)} player(s) automatically excluded: {blocked_names}")
-questionable=uploaded_pool[uploaded_pool["Status"].isin(["Q","D","QUESTIONABLE","DOUBTFUL"])]
-if len(questionable):
-    q_names=", ".join(f"{r['Name']} ({r['Status']})" for _,r in questionable.iterrows())
-    st.warning(f"INJURY WATCH: {q_names}")
+            if len(blocked):
+               blocked_names=", ".join(f"{r['Name']} ({r['Status']})" for _,r in blocked.iterrows())
+               st.error(f"INJURY STATUS GATE: {len(blocked)} player(s) automatically excluded: {blocked_names}")
+            questionable=uploaded_pool[uploaded_pool["Status"].isin(["Q","D","QUESTIONABLE","DOUBTFUL"])]
+            if len(questionable):
+               q_names=", ".join(f"{r['Name']} ({r['Status']})" for _,r in questionable.iterrows())
+               st.warning(f"INJURY WATCH: {q_names}")
             if fallback:
                 st.warning("Fallback rows do not have refreshed usage/air-yards/red-zone research. They remain clearly labeled and should not be treated as equivalent to weekly researched projections.")
             st.dataframe(uploaded_pool[["Name","Position","TeamAbbrev","game","Salary","ID","proj","projection_source","optimizer_eligible"]].sort_values(["Position","Salary"],ascending=[True,False]),use_container_width=True,hide_index=True)
