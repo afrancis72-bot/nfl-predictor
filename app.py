@@ -763,7 +763,7 @@ def exposure_df(lineups):
 
 
 # -------------------------
-# Single-Game Showdown V1.7
+# Single-Game Showdown V1.7aa
 # -------------------------
 CLASSIC_DEFAULTS = {
     "classic_n_lineups": 15, "classic_max_exp": 0.30, "classic_min_unique": 4,
@@ -997,19 +997,16 @@ def showdown_viability_flags(players, sims, standard="Balanced GPP"):
     return pd.DataFrame(rows,index=players.index)
 
 def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salary=44000, max_salary=50000, seed=316, min_standard="Balanced GPP", allow_deep_punt=True):
-    """V1.7: role-calibrated, opportunity-first Showdown candidate generation.
+    """V1.7a performance fix: same V1.7 construction logic, precomputed arrays.
 
-    Salary is a lineup constraint, not the primary reason a player is sampled. The
-    candidate pool is seeded from simulated scoring quality/ceiling first, with one
-    controlled salary-relief slot allowed when that player still owns a credible
-    scoring path. This prevents cheap technically-viable players from dominating the
-    candidate bank simply because BaseMean/$1K is large.
+    The expensive player metrics and roster metadata are calculated once. Candidate
+    attempts use NumPy arrays instead of repeated pandas slicing. Simulation quality,
+    bank-size target, role thresholds, salary rules and lineup rules are unchanged.
     """
     rng=np.random.default_rng(seed); n=len(players); seen=set(); rows=[]; tries=0; target=int(bank_size)
     flags=showdown_viability_flags(players,sims,min_standard)
 
-    # Compute slate-specific opportunity/ceiling metrics once. These are derived
-    # from the same correlated simulations used to score lineups.
+    # Player distribution metrics: calculate ONCE.
     sim_mean=np.mean(sims,axis=0).astype(float)
     sim_p75=np.percentile(sims,75,axis=0).astype(float)
     sim_p90=np.percentile(sims,90,axis=0).astype(float)
@@ -1017,84 +1014,76 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
     prob5=np.mean(sims>=5.0,axis=0).astype(float)
     prob10=np.mean(sims>=10.0,axis=0).astype(float)
 
-    # V1.7 core-role standard. QB/K/DST have defined scoring roles; RB/WR/TE must
-    # demonstrate both usable central tendency and a real ceiling. A player can miss
-    # this standard and still occupy ONE relief slot if the tail remains credible.
+    # Convert all roster metadata to NumPy once; do not use DataFrame.iloc in the hot loop.
+    pos=players["Position"].astype(str).to_numpy()
+    team=players["TeamAbbrev"].astype(str).to_numpy()
+    flex_salary=pd.to_numeric(players["FLEX Salary"],errors="coerce").fillna(0).to_numpy(dtype=np.int32)
+    cpt_salary=pd.to_numeric(players["CPT Salary"],errors="coerce").fillna(0).to_numpy(dtype=np.int32)
+    viable=flags["Viable"].to_numpy(dtype=bool)
+    deep_ok=flags["Deep Punt OK"].to_numpy(dtype=bool)
+
     core=np.zeros(n,dtype=bool); relief=np.zeros(n,dtype=bool); captain_ok=np.zeros(n,dtype=bool)
-    for i,r in players.iterrows():
-        pos=str(r["Position"])
-        if pos in ["QB","K","DST","D"]:
+    for i in range(n):
+        if pos[i] in ["QB","K","DST","D"]:
             core[i]=(sim_mean[i]>=3.0 and sim_p75[i]>=4.0 and sim_p90[i]>=6.0)
         else:
             core[i]=(sim_mean[i]>=3.25 and sim_p75[i]>=4.0 and sim_p90[i]>=7.0 and prob5[i]>=0.20)
         relief[i]=(sim_p90[i]>=6.0 and prob5[i]>=0.15 and sim_mean[i]>=1.75)
-        # Captain is intentionally ceiling-first. Cheap ancillary players no longer
-        # qualify merely by passing the ordinary FLEX viability screen.
         captain_ok[i]=(sim_mean[i]>=6.0 and sim_p90[i]>=11.0 and sim_p95[i]>=13.0 and prob10[i]>=0.22)
 
-    # Opportunity-first sampling. Crucially there is NO mean/salary ratio here.
-    # Salary still matters through the $50K roster constraint, but cannot manufacture
-    # candidate probability for a thin player.
-    mean_scale=np.maximum(sim_mean,0.10)
-    p90_scale=np.maximum(sim_p90,0.10)
-    ceiling_scale=np.maximum(sim_p95,0.10)
+    mean_scale=np.maximum(sim_mean,0.10); p90_scale=np.maximum(sim_p90,0.10); ceiling_scale=np.maximum(sim_p95,0.10)
     weights=(0.40*mean_scale/mean_scale.max()+0.40*p90_scale/p90_scale.max()+0.20*ceiling_scale/ceiling_scale.max())
     weights=np.maximum(weights,0.005)
-    # Non-core players remain reachable for one legitimate salary-relief outcome,
-    # but are deliberately uncommon in the candidate bank.
     weights=np.where(core,weights,weights*0.18)
     weights=np.where((~core)&(~relief),weights*0.05,weights)
     weights=weights/weights.sum()
-
     cpt_weights=weights*captain_ok.astype(float)
     if cpt_weights.sum()>0: cpt_weights=cpt_weights/cpt_weights.sum()
 
-    while len(rows)<target and tries<target*140:
+    all_idx=np.arange(n,dtype=np.int16)
+    # Same generous search ceiling as V1.7, but the hot path is now array-only.
+    max_tries=target*140
+    while len(rows)<target and tries<max_tries:
         tries+=1
         if cpt_weights.sum()<=0: break
         c=int(rng.choice(n,p=cpt_weights))
         if not captain_ok[c]: continue
-        avail=np.array([i for i in range(n) if i!=c])
+        avail=all_idx[all_idx!=c]
         pw=weights[avail]; pw=pw/pw.sum()
-        flex_idx=tuple(sorted(rng.choice(avail,size=5,replace=False,p=pw).tolist()))
-        key=(c,flex_idx)
+        flex_idx=np.sort(rng.choice(avail,size=5,replace=False,p=pw)).astype(int)
+        key=(c,tuple(flex_idx.tolist()))
         if key in seen: continue
-        ids=[c]+list(flex_idx)
-        salary=int(players.iloc[c]["CPT Salary"]+players.iloc[list(flex_idx)]["FLEX Salary"].sum())
-        if salary<min_salary or salary>max_salary: continue
-        if len(set(players.iloc[ids]["TeamAbbrev"]))<2: continue
+        ids=np.concatenate(([c],flex_idx))
 
-        # Keep the selected user-facing viability preset active.
-        viable_count=int(flags.loc[ids,"Viable"].sum())
-        nonviable=[i for i in ids if not bool(flags.loc[i,"Viable"])]
+        salary=int(cpt_salary[c]+flex_salary[flex_idx].sum())
+        if salary<min_salary or salary>max_salary: continue
+        if len(np.unique(team[ids]))<2: continue
+
+        viable_count=int(viable[ids].sum())
+        nonviable=ids[~viable[ids]]
         if min_standard!="Off":
             if allow_deep_punt:
                 if viable_count<5 or len(nonviable)>1: continue
-                if nonviable and not bool(flags.loc[nonviable[0],"Deep Punt OK"]): continue
+                if len(nonviable) and not deep_ok[nonviable[0]]: continue
             elif viable_count<6: continue
 
-        lineup=players.iloc[ids]; positions=lineup["Position"].astype(str)
-        if int((positions=="TE").sum())>2: continue
-
-        # V1.7 lineup role floor: at least five players must clear the stronger
-        # core-role standard. The sixth may be salary relief only if it passes the
-        # explicit relief ceiling test above. This is evaluated BEFORE ranking.
-        noncore=[i for i in ids if not core[i]]
+        p=pos[ids]
+        if np.count_nonzero(p=="TE")>2: continue
+        noncore=ids[~core[ids]]
         if len(noncore)>1: continue
-        if noncore and (not allow_deep_punt or not relief[noncore[0]]): continue
-
-        # V1.7 game-script guardrails.  A Showdown lineup must tell a plausible
-        # offensive story rather than using multiple low-ceiling defined-role slots
-        # merely to make salary work.  These are structural rules, not player rules.
-        if int((positions=="QB").sum())<1: continue
-        if int((positions=="K").sum())>1: continue
-        if int(positions.isin(["DST","D"]).sum())>1: continue
-        ancillary=int(positions.isin(["K","DST","D"]).sum())
-        if ancillary>2: continue
+        if len(noncore) and (not allow_deep_punt or not relief[noncore[0]]): continue
+        if np.count_nonzero(p=="QB")<1: continue
+        if np.count_nonzero(p=="K")>1: continue
+        if np.count_nonzero(np.isin(p,["DST","D"]))>1: continue
+        if np.count_nonzero(np.isin(p,["K","DST","D"]))>2: continue
 
         seen.add(key)
-        pts=1.5*sims[:,c]+sims[:,list(flex_idx)].sum(axis=1)
-        rows.append({"cpt":c,"flex":flex_idx,"salary":salary,"mean":float(pts.mean()),"p75":float(np.percentile(pts,75)),"p90":float(np.percentile(pts,90)),"p95":float(np.percentile(pts,95)),"sim":pts,"viable_count":viable_count,"core_count":int(sum(core[i] for i in ids))})
+        pts=(1.5*sims[:,c]+sims[:,flex_idx].sum(axis=1)).astype(np.float32,copy=False)
+        # One percentile call instead of three full passes.
+        q75,q90,q95=np.percentile(pts,[75,90,95])
+        rows.append({"cpt":c,"flex":tuple(flex_idx.tolist()),"salary":salary,
+                     "mean":float(pts.mean()),"p75":float(q75),"p90":float(q90),"p95":float(q95),
+                     "sim":pts,"viable_count":viable_count,"core_count":int(core[ids].sum())})
     return rows,flags
 
 def rank_showdown_candidates(cands, strategy):
@@ -1177,7 +1166,7 @@ if "classic_uploaded_pool" not in st.session_state:
     st.session_state["classic_uploaded_pool"]=None
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — V3.1.7 + Showdown V1.7")
+st.title("🏈 NFL Predictor Pro — V3.1.7 + Showdown V1.7a")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
 st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
