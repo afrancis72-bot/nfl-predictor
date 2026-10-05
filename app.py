@@ -40,7 +40,7 @@ def load_base():
 def parse_classic_dk_csv(uploaded):
     """Parse a DraftKings NFL Classic salary CSV and normalize it for slate ingestion."""
     dk=pd.read_csv(uploaded)
-    required={"Position","Name","ID","Salary","Game Info","TeamAbbrev","AvgPointsPerGame","Status"}
+    required={"Position","Name","ID","Salary","Game Info","TeamAbbrev","AvgPointsPerGame"}
     missing=required-set(dk.columns)
     if missing:
         raise ValueError("Missing DraftKings columns: "+", ".join(sorted(missing)))
@@ -49,7 +49,18 @@ def parse_classic_dk_csv(uploaded):
     x["TeamAbbrev"]=x["TeamAbbrev"].map(normalize_team)
     x["Salary"]=pd.to_numeric(x["Salary"],errors="coerce")
     x["AvgPointsPerGame"]=pd.to_numeric(x["AvgPointsPerGame"],errors="coerce").fillna(0.0)
-    x["Status"]=x["Status"].fillna("").astype(str).str.strip().str.upper()
+    # V3.1.6b: DraftKings availability status is part of Classic eligibility.
+    # DK commonly uses Status, but tolerate alternate export labels.
+    status_col=next((c for c in ["Status","Injury Status","InjuryStatus","Roster Status"] if c in x.columns),None)
+    if status_col is None:
+        x["dk_status"]=""
+    else:
+        x["dk_status"]=x[status_col].fillna("").astype(str).str.strip().str.upper()
+    # Normalize common variants/abbreviations without treating Q/D as automatic outs.
+    x["dk_status"]=x["dk_status"].replace({
+        "O":"OUT","I.R.":"IR","INJURED RESERVE":"IR","RESERVE/INJURED":"IR",
+        "INACT":"INACTIVE","INA":"INACTIVE","QUESTIONABLE":"Q","DOUBTFUL":"D"
+    })
     x["game"]=x["Game Info"].astype(str).str.split().str[0].str.upper()
     x=x[x["Position"].isin(["QB","RB","WR","TE","DST"])].dropna(subset=["Name","Salary","TeamAbbrev"])
     x=x[x["Salary"]>0].drop_duplicates(["Name","Position","TeamAbbrev"],keep="first")
@@ -68,6 +79,9 @@ def classic_pool_from_upload(dk, base_pool):
     merged=dk.merge(b[model_cols],on=key,how="left",suffixes=("","_model"))
     matched=merged["proj"].notna()
     merged["projection_source"]=np.where(matched,"Weekly researched model","DK PPG fallback")
+    # V3.1.7 projection confidence: fallback data remains usable, but it should not
+    # compete one-for-one with refreshed weekly research during candidate generation.
+    merged["projection_confidence"]=np.where(matched,1.00,0.82)
     ppg=merged["AvgPointsPerGame"].fillna(0.0).astype(float)
     # Conservative fallback: DK season scoring baseline, with restrained tournament tails.
     fallback_mean=np.maximum(0.0,0.95*ppg)
@@ -82,10 +96,16 @@ def classic_pool_from_upload(dk, base_pool):
     # Fallback eligibility requires a non-trivial DK scoring history; QB/DST remain usable.
     fallback_ok=(merged["Position"].isin(["QB","DST"])) | (ppg>=2.0)
     existing_ok=merged.get("optimizer_eligible",pd.Series(False,index=merged.index)).fillna(False).astype(bool)
-    merged["Status"]=merged["Status"].fillna("").astype(str).str.strip().str.upper()
+    merged["optimizer_eligible"]=np.where(matched,existing_ok,fallback_ok)
+    # V3.1.6b: hard availability gate from the uploaded DK slate.
+    # OUT/IR/Inactive players stay visible for audit but can never reach optimization.
+    if "dk_status" not in merged.columns:
+        merged["dk_status"]=""
+    merged["dk_status"]=merged["dk_status"].fillna("").astype(str).str.strip().str.upper()
     blocked_statuses={"OUT","IR","INACTIVE","SUSPENDED","PUP","NFI"}
-    status_ok=~merged["Status"].isin(blocked_statuses)
-    merged["optimizer_eligible"]=np.where(matched,existing_ok,fallback_ok) & status_ok
+    merged["injury_blocked"]=merged["dk_status"].isin(blocked_statuses)
+    merged["injury_flagged"]=merged["dk_status"].isin({"Q","D"})
+    merged.loc[merged["injury_blocked"],"optimizer_eligible"]=False
     merged["role_status"]=merged.get("role_status",pd.Series("",index=merged.index)).fillna("")
     merged.loc[~matched,"role_status"]="DK Fallback"
     for c,default in {"coverage_matchup_grade":"Neutral / Uploaded Slate","individual_matchup_factor":1.0,"individual_matchup_delta":0.0,"expected_primary_coverage":"","projection_repaired":False}.items():
@@ -374,10 +394,24 @@ def lineup_score(df, strategy, own_weight, leverage_weight):
         base = (0.35*df["proj"] + 0.30*df["ceiling"] + 0.30*df["p95_use"] + 0.05*df["p99_use"]).sum()
     env,corr=lineup_context_scores(df)
     context_bonus=(env-5.0)*0.80 + corr
-    return float(base + context_bonus - own_weight*df["ownership_pct"].sum()/10 + leverage_weight*df["leverage_score"].sum())
+    # Confidence is deliberately a modest lineup-level adjustment. Weekly research
+    # gets full credit; DK-PPG fallback rows carry uncertainty without being banned.
+    conf=pd.to_numeric(df.get("projection_confidence",pd.Series(1.0,index=df.index)),errors="coerce").fillna(1.0)
+    confidence_penalty=float((1.0-conf).sum())*1.50
+    return float(base + context_bonus - confidence_penalty - own_weight*df["ownership_pct"].sum()/10 + leverage_weight*df["leverage_score"].sum())
 
 def random_candidate(pool, min_salary, max_salary, strategy, own_weight, leverage_weight, locks, excludes):
     p = pool[(pool["optimizer_eligible"] == True) & ~pool.Name.isin(excludes)].copy()
+    # V3.1.7 upstream tournament signals. These affect candidate opportunity, not
+    # final exposure requirements, so stars are represented without being forced.
+    p["projection_confidence"]=pd.to_numeric(p.get("projection_confidence",1.0),errors="coerce").fillna(1.0).clip(0.70,1.0)
+    p["game_env_score"]=pd.to_numeric(p.get("game_env_score",5.0),errors="coerce").fillna(5.0).clip(0,10)
+    eligible_skill=p[p.Position.isin(["RB","WR","TE"])]
+    elite_cut=float(eligible_skill["p95_use"].quantile(0.85)) if len(eligible_skill) else float("inf")
+    slate_cut=float(eligible_skill["p95_use"].quantile(0.95)) if len(eligible_skill) else float("inf")
+    p["elite_ceiling_mult"]=1.0
+    p.loc[p["p95_use"]>=elite_cut,"elite_ceiling_mult"]=1.18
+    p.loc[p["p95_use"]>=slate_cut,"elite_ceiling_mult"]=1.35
     locked = p[p.Name.isin(locks)].drop_duplicates("Name")
     if len(locked) != len(set(locks)): return None
 
@@ -390,6 +424,10 @@ def random_candidate(pool, min_salary, max_salary, strategy, own_weight, leverag
             w = (0.55*df["proj"]+0.45*df["ceiling"]).clip(lower=0.1)
         else:
             w = (0.30*df["proj"]+0.70*df["ceiling"]+0.15*df["leverage_score"]).clip(lower=0.1)
+        # V3.1.7: move bounded game environment, projection confidence and elite
+        # ceiling representation upstream into candidate sampling.
+        env_mult=(0.85+0.03*df["game_env_score"]).clip(0.85,1.15)
+        w=w*env_mult*df["projection_confidence"]*df["elite_ceiling_mult"]
         # Randomized softmax-ish weights to generate diverse candidate portfolios.
         w = np.power(w.to_numpy(), 2.0)
         w = w / w.sum()
@@ -485,6 +523,16 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
     """
     bank_size=int(bank_size)
     p=pool[(pool["optimizer_eligible"] == True) & ~pool.Name.isin(excludes)].copy().reset_index(drop=True)
+    # V3.1.7 candidate-opportunity signals. They alter sampling probability only;
+    # the MILP still decides the final portfolio under the existing exposure/QC rules.
+    p["projection_confidence"]=pd.to_numeric(p.get("projection_confidence",1.0),errors="coerce").fillna(1.0).clip(0.70,1.0)
+    p["game_env_score"]=pd.to_numeric(p.get("game_env_score",5.0),errors="coerce").fillna(5.0).clip(0,10)
+    skill_mask=p["Position"].isin(["RB","WR","TE"])
+    elite_cut=float(p.loc[skill_mask,"p95_use"].quantile(0.85)) if skill_mask.any() else float("inf")
+    slate_cut=float(p.loc[skill_mask,"p95_use"].quantile(0.95)) if skill_mask.any() else float("inf")
+    p["elite_ceiling_mult"]=1.0
+    p.loc[skill_mask & (p["p95_use"]>=elite_cut),"elite_ceiling_mult"]=1.18
+    p.loc[skill_mask & (p["p95_use"]>=slate_cut),"elite_ceiling_mult"]=1.35
 
     # Preserve full legacy behavior for special lock/exclusion builds.
     if locks or excludes:
@@ -514,11 +562,16 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
     proj=p["proj"].to_numpy(dtype=float)
     ceil=p["ceiling"].to_numpy(dtype=float)
     lev=p["leverage_score"].to_numpy(dtype=float)
+    env=p["game_env_score"].to_numpy(dtype=float)
+    conf=p["projection_confidence"].to_numpy(dtype=float)
+    elite=p["elite_ceiling_mult"].to_numpy(dtype=float)
 
     if strategy == "Median": raw=np.clip(proj,0.1,None)
     elif strategy == "Balanced": raw=np.clip(0.55*proj+0.45*ceil,0.1,None)
     else: raw=np.clip(0.30*proj+0.70*ceil+0.15*lev,0.1,None)
-    weights=np.square(raw)
+    # 5.0 environment is neutral; 10.0 earns only a 15% opportunity boost.
+    env_mult=np.clip(0.85+0.03*env,0.85,1.15)
+    weights=np.square(raw*env_mult*conf*elite)
 
     by_pos={k:np.where(pos==k)[0] for k in ["QB","RB","WR","TE","DST"]}
     flex_idx=np.where(np.isin(pos,["RB","WR","TE"]))[0]
@@ -544,6 +597,14 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
         m=pick(mates.get(q,np.array([],dtype=int)),sel)
         if m is None: return None
         sel.add(m)
+        # V3.1.7 game-stack seeding: in strong environments, some candidates get
+        # an opponent bring-back before generic slots are filled. This creates more
+        # correlated shootout candidates without requiring them in every lineup.
+        if env[q] >= 7.0 and rng.random() < 0.40:
+            opp=opponent_from_game(games[q],teams[q])
+            bring=np.where((teams==opp) & np.isin(pos,["RB","WR","TE"]))[0] if opp else np.array([],dtype=int)
+            b=pick(bring,sel)
+            if b is not None: sel.add(b)
         requirements={"RB":2,"WR":3,"TE":1,"DST":1}
         for k,need in requirements.items():
             while sum(pos[i]==k for i in sel)<need:
@@ -708,7 +769,7 @@ CLASSIC_DEFAULTS = {
     "classic_n_lineups": 15, "classic_max_exp": 0.30, "classic_min_unique": 4,
     "classic_min_salary": 47500, "classic_strategy": "GPP Ceiling",
     "classic_own_weight": 0.15, "classic_leverage_weight": 0.35,
-    "classic_projection_floor": 0.88, "classic_portfolio_mode": "V3.1.6 Portfolio Optimize",
+    "classic_projection_floor": 0.88, "classic_portfolio_mode": "V3.1.7 Portfolio Optimize",
     "classic_bank_size": 1200, "classic_solver_seconds": 20,
     "classic_locks": [], "classic_excludes": [],
 }
@@ -1026,7 +1087,7 @@ pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_up
 
 st.title("🏈 NFL Predictor Pro — V3.1.6 + Showdown V1.4")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
-st.warning("Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
+st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
 view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Portfolio Analysis"])
 
@@ -1053,18 +1114,19 @@ if view == "Slate Setup":
             st.session_state["classic_uploaded_pool"]=uploaded_pool
             matched=int((uploaded_pool["projection_source"]=="Weekly researched model").sum())
             fallback=len(uploaded_pool)-matched
-            st.success(f"Activated {len(uploaded_pool):,} DK players • {matched} weekly-model matches • {fallback} DK fallback rows.")
-            blocked=uploaded_pool[~uploaded_pool["optimizer_eligible"] & uploaded_pool["Status"].isin(["OUT","IR","INACTIVE","SUSPENDED","PUP","NFI"])]
+            blocked=uploaded_pool[uploaded_pool["injury_blocked"]].copy()
+            flagged=uploaded_pool[uploaded_pool["injury_flagged"]].copy()
+            eligible_n=int(uploaded_pool["optimizer_eligible"].sum())
+            st.success(f"Activated {len(uploaded_pool):,} DK players • {eligible_n} optimizer-eligible • {matched} weekly-model matches • {fallback} DK fallback rows.")
             if len(blocked):
-               blocked_names=", ".join(f"{r['Name']} ({r['Status']})" for _,r in blocked.iterrows())
-               st.error(f"INJURY STATUS GATE: {len(blocked)} player(s) automatically excluded: {blocked_names}")
-            questionable=uploaded_pool[uploaded_pool["Status"].isin(["Q","D","QUESTIONABLE","DOUBTFUL"])]
-            if len(questionable):
-               q_names=", ".join(f"{r['Name']} ({r['Status']})" for _,r in questionable.iterrows())
-               st.warning(f"INJURY WATCH: {q_names}")
+                st.warning(f"Injury-status gate excluded {len(blocked)} player(s) from optimization: "+", ".join(blocked["Name"].astype(str)+" ("+blocked["dk_status"].astype(str)+")"))
+            else:
+                st.success("Injury-status gate: no OUT / IR / inactive players detected in this upload.")
+            if len(flagged):
+                st.info("Availability watch (not automatically excluded): "+", ".join(flagged["Name"].astype(str)+" ("+flagged["dk_status"].astype(str)+")"))
             if fallback:
                 st.warning("Fallback rows do not have refreshed usage/air-yards/red-zone research. They remain clearly labeled and should not be treated as equivalent to weekly researched projections.")
-            st.dataframe(uploaded_pool[["Name","Position","TeamAbbrev","game","Salary","ID","proj","projection_source","optimizer_eligible"]].sort_values(["Position","Salary"],ascending=[True,False]),use_container_width=True,hide_index=True)
+            st.dataframe(uploaded_pool[["Name","Position","TeamAbbrev","game","Salary","ID","dk_status","injury_blocked","proj","projection_source","projection_confidence","optimizer_eligible"]].sort_values(["Position","Salary"],ascending=[True,False]),use_container_width=True,hide_index=True)
         except Exception as e:
             st.error(f"Could not activate DraftKings slate: {e}")
     if u1.button("Use built-in weekly model slate"):
@@ -1132,16 +1194,16 @@ elif view == "Lineup Builder":
     locks=st.multiselect("Lock players",names,key="classic_locks")
     excludes=st.multiselect("Exclude players",names,key="classic_excludes")
 
-    portfolio_mode=st.radio("Portfolio construction",["V3.1.6 Portfolio Optimize","V3.1.5 Sequential (control)"],horizontal=True,key="classic_portfolio_mode")
-    bank_size=st.slider("Candidate bank size",300,2000,key="classic_bank_size",step=100,disabled=(portfolio_mode!="V3.1.6 Portfolio Optimize"),help="V3.1.6 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
-    solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,key="classic_solver_seconds",step=5,disabled=(portfolio_mode!="V3.1.6 Portfolio Optimize"))
+    portfolio_mode=st.radio("Portfolio construction",["V3.1.7 Portfolio Optimize","V3.1.5 Sequential (control)"],horizontal=True,key="classic_portfolio_mode")
+    bank_size=st.slider("Candidate bank size",300,2000,key="classic_bank_size",step=100,disabled=(portfolio_mode!="V3.1.7 Portfolio Optimize"),help="V3.1.7 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
+    solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,key="classic_solver_seconds",step=5,disabled=(portfolio_mode!="V3.1.7 Portfolio Optimize"))
 
-    st.info("Default portfolio rules: 15 lineups • 30% max exposure • 4 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V3.1.6 uses candidate-bank portfolio optimization, calibrated tails, a small P99 signal, and bounded game-environment + stack-correlation bonuses.")
+    st.info("Default portfolio rules: 15 lineups • 30% max exposure • 4 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V3.1.7 keeps the calibrated tails and small P99 signal, and now moves bounded game-environment, elite-ceiling representation, and projection-confidence signals upstream into candidate generation.")
 
     if st.button("Generate portfolio",type="primary"):
         with st.spinner("Generating diversified portfolio..."):
             solver_meta=None
-            if portfolio_mode == "V3.1.6 Portfolio Optimize":
+            if portfolio_mode == "V3.1.7 Portfolio Optimize":
                 candidate_items, reference_proj, min_proj_required = generate_candidate_bank(
                     pool,int(bank_size),int(min_salary),50000,strategy,float(own_weight),
                     float(leverage_weight),locks,excludes,float(projection_floor_pct),
