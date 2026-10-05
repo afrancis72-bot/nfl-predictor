@@ -763,7 +763,7 @@ def exposure_df(lineups):
 
 
 # -------------------------
-# Single-Game Showdown V1.7aa
+# Single-Game Showdown V1.8a
 # -------------------------
 CLASSIC_DEFAULTS = {
     "classic_n_lineups": 15, "classic_max_exp": 0.30, "classic_min_unique": 4,
@@ -818,6 +818,57 @@ def parse_showdown_csv(uploaded):
     flex=flex.dropna(subset=["CPT Salary","CPT ID","FLEX Salary","FLEX ID"])
     flex["key"]=flex["Name"].map(_clean_name)+"|"+flex["TeamAbbrev"]
     return flex.reset_index(drop=True),game,teams
+
+
+def apply_showdown_current_role_layer(x):
+    """V1.8 current-opportunity layer.
+
+    Role status is independent of salary and is applied before simulation.
+    The mapping is intentionally isolated so it can be refreshed for each
+    single-game slate without changing model weights or optimizer rules.
+    """
+    y=x.copy()
+    # Verified current depth-chart roles for ATL @ NO, 2026-10-05.
+    # Multipliers represent expected NORMAL-GAME opportunity, not talent.
+    role_map={
+        "Michael Penix Jr.":("Starter",1.00,True),
+        "Cooper Rush":("Reserve QB",0.03,False),
+        "Bijan Robinson":("Starter",1.00,True),
+        "Brian Robinson Jr.":("RB2 / rotation",0.72,True),
+        "Drake London":("Starter",1.00,True),
+        "Kyle Pitts":("TE1",1.00,True),
+        "Austin Hooper":("Reserve TE",0.42,False),
+        "Tyler Shough":("Starter",1.00,True),
+        "Chris Olave":("Starter",1.00,True),
+        "Devaughn Vele":("Starter",1.00,True),
+        "Juwan Johnson":("TE1",1.00,True),
+        "Noah Fant":("TE2 / questionable",0.58,False),
+        "Alvin Kamara":("RB1",1.00,True),
+        "Kendre Miller":("RB2 / expanded role",0.76,True),
+    }
+    y["Current Role"]="Unverified / model role"
+    y["Opportunity Multiplier"]=1.0
+    y["Role CPT Eligible"]=True
+    for i,r in y.iterrows():
+        name=str(r["Name"])
+        if name in role_map:
+            label,mult,cpt_ok=role_map[name]
+            y.at[i,"Current Role"]=label
+            y.at[i,"Opportunity Multiplier"]=float(mult)
+            y.at[i,"Role CPT Eligible"]=bool(cpt_ok)
+
+    # Apply only to skill/QB projections. K/DST keep their defined team roles.
+    affected=y["Position"].isin(["QB","RB","WR","TE"])
+    y.loc[affected,"Base Mean"]=y.loc[affected,"Base Mean"]*y.loc[affected,"Opportunity Multiplier"]
+
+    # Compress reserve distributions as well as means. This prevents stale P90/P95
+    # tails from making a reserve look like a normal starter after mean adjustment.
+    reserve=affected & (y["Opportunity Multiplier"]<0.90)
+    y.loc[reserve,"Sim SD"]=y.loc[reserve,"Sim SD"]*np.sqrt(y.loc[reserve,"Opportunity Multiplier"].clip(lower=.05))
+
+    # Keep a small contingent ceiling for reserves, but never a normal starter floor.
+    y.loc[reserve,"Base Mean"]=y.loc[reserve,"Base Mean"].clip(lower=0.10)
+    return y
 
 def showdown_projection_table(flex, comp, mc, dst):
     x=flex.copy()
@@ -912,6 +963,7 @@ def showdown_projection_table(flex, comp, mc, dst):
     fallback_sd=(base_sd*punt_boost).clip(lower=np.where(fallback_mask & skill_mask & (sal<4000),1.15,1.5))
     tail_sd=(pd.Series(p90,index=x.index)-x["Base Mean"])/1.2816
     x["Sim SD"]=tail_sd.where((~fallback_mask) & (tail_sd>1.0),fallback_sd).fillna(fallback_sd)
+    x=apply_showdown_current_role_layer(x)
     return x.reset_index(drop=True)
 
 def simulate_showdown_players(players, teams, n_sims=20000, seed=315):
@@ -964,7 +1016,7 @@ def showdown_value_diagnostics(players, sims):
             "Salary":int(r["FLEX Salary"]),"Role Tier":r.get("Role Tier",""),
             "Raw Weekly Mean":float(r.get("Raw Weekly Mean",r.get("Base Mean",0.0))),
             "DK Role Baseline":float(r.get("DK Role Baseline",0.0)),
-            "Calibrated Mean":float(r.get("Base Mean",0.0)),
+            "Calibrated Mean":float(r.get("Base Mean",0.0)),"Current Role":r.get("Current Role",""),"Opportunity Multiplier":float(r.get("Opportunity Multiplier",1.0)),
             "Sim Mean":float(np.mean(v)),"P75":float(np.percentile(v,75)),
             "P90":float(np.percentile(v,90)),"P95":float(np.percentile(v,95)),
             "≤3 pts %":100*float(np.mean(v<=3.0)),"10+ pts %":100*float(np.mean(v>=10.0)),
@@ -1029,7 +1081,8 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
         else:
             core[i]=(sim_mean[i]>=3.25 and sim_p75[i]>=4.0 and sim_p90[i]>=7.0 and prob5[i]>=0.20)
         relief[i]=(sim_p90[i]>=6.0 and prob5[i]>=0.15 and sim_mean[i]>=1.75)
-        captain_ok[i]=(sim_mean[i]>=6.0 and sim_p90[i]>=11.0 and sim_p95[i]>=13.0 and prob10[i]>=0.22)
+        role_cpt_ok=bool(players.iloc[i].get("Role CPT Eligible",True))
+        captain_ok[i]=(role_cpt_ok and sim_mean[i]>=6.0 and sim_p90[i]>=11.0 and sim_p95[i]>=13.0 and prob10[i]>=0.22)
 
     mean_scale=np.maximum(sim_mean,0.10); p90_scale=np.maximum(sim_p90,0.10); ceiling_scale=np.maximum(sim_p95,0.10)
     weights=(0.40*mean_scale/mean_scale.max()+0.40*p90_scale/p90_scale.max()+0.20*ceiling_scale/ceiling_scale.max())
@@ -1166,7 +1219,7 @@ if "classic_uploaded_pool" not in st.session_state:
     st.session_state["classic_uploaded_pool"]=None
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — V3.1.7 + Showdown V1.7a")
+st.title("🏈 NFL Predictor Pro — V3.1.7 + Showdown V1.8")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
 st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
@@ -1345,7 +1398,7 @@ elif view == "Single Game Showdown":
             if model_matches==0:
                 st.warning("This standalone game is not present in the current Classic weekly model dataset. Showdown will use DraftKings slate scoring baselines plus position-aware correlated simulation for this game. The app labels this fallback explicitly rather than inventing weekly-model projections.")
             with st.expander("Player matching / projection audit"):
-                st.dataframe(players[["Name","Position","TeamAbbrev","FLEX Salary","CPT Salary","Status","Raw Weekly Mean","DK Role Baseline","Base Mean","Sim SD","Role Tier","Role Calibration","Projection Source"]].sort_values("FLEX Salary",ascending=False),use_container_width=True,hide_index=True)
+                st.dataframe(players[["Name","Position","TeamAbbrev","FLEX Salary","CPT Salary","Status","Current Role","Opportunity Multiplier","Raw Weekly Mean","DK Role Baseline","Base Mean","Sim SD","Role Tier","Role Calibration","Projection Source"]].sort_values("FLEX Salary",ascending=False),use_container_width=True,hide_index=True)
             st.button("Reset Showdown to Recommended Defaults",key="sd_reset_btn",on_click=_reset_defaults,args=(SHOWDOWN_DEFAULTS,))
             a,b,c,d=st.columns(4)
             n_lineups=a.number_input("Showdown lineups",1,150,key="sd_n_lineups",step=1)
