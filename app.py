@@ -83,9 +83,9 @@ def classic_pool_from_upload(dk, base_pool):
     fallback_ok=(merged["Position"].isin(["QB","DST"])) | (ppg>=2.0)
     existing_ok=merged.get("optimizer_eligible",pd.Series(False,index=merged.index)).fillna(False).astype(bool)
     merged["Status"]=merged["Status"].fillna("").astype(str).str.strip().str.upper()
-blocked_statuses={"OUT","IR","INACTIVE","SUSPENDED","PUP","NFI"}
-status_ok=~merged["Status"].isin(blocked_statuses)
-merged["optimizer_eligible"]=np.where(matched,existing_ok,fallback_ok) & status_ok
+    blocked_statuses={"OUT","IR","INACTIVE","SUSPENDED","PUP","NFI"}
+    status_ok=~merged["Status"].isin(blocked_statuses)
+    merged["optimizer_eligible"]=np.where(matched,existing_ok,fallback_ok) & status_ok
     merged["role_status"]=merged.get("role_status",pd.Series("",index=merged.index)).fillna("")
     merged.loc[~matched,"role_status"]="DK Fallback"
     for c,default in {"coverage_matchup_grade":"Neutral / Uploaded Slate","individual_matchup_factor":1.0,"individual_matchup_delta":0.0,"expected_primary_coverage":"","projection_repaired":False}.items():
