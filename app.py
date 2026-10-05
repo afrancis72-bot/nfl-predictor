@@ -35,6 +35,109 @@ def load_base():
     matchups = load_csv(MATCHUP_FILE)
     return mc, comp, dst, own, games, matchups
 
+
+
+def parse_classic_dk_csv(uploaded):
+    """Parse a DraftKings NFL Classic salary CSV and normalize it for slate ingestion."""
+    dk=pd.read_csv(uploaded)
+    required={"Position","Name","ID","Salary","Game Info","TeamAbbrev","AvgPointsPerGame"}
+    missing=required-set(dk.columns)
+    if missing:
+        raise ValueError("Missing DraftKings columns: "+", ".join(sorted(missing)))
+    x=dk.copy()
+    x["Position"]=x["Position"].astype(str).str.upper().replace({"D":"DST","DEF":"DST"})
+    x["TeamAbbrev"]=x["TeamAbbrev"].map(normalize_team)
+    x["Salary"]=pd.to_numeric(x["Salary"],errors="coerce")
+    x["AvgPointsPerGame"]=pd.to_numeric(x["AvgPointsPerGame"],errors="coerce").fillna(0.0)
+    x["game"]=x["Game Info"].astype(str).str.split().str[0].str.upper()
+    x=x[x["Position"].isin(["QB","RB","WR","TE","DST"])].dropna(subset=["Name","Salary","TeamAbbrev"])
+    x=x[x["Salary"]>0].drop_duplicates(["Name","Position","TeamAbbrev"],keep="first")
+    x["opponent"]=[opponent_from_game(g,t) for g,t in zip(x["game"],x["TeamAbbrev"])]
+    return x
+
+def classic_pool_from_upload(dk, base_pool):
+    """Use uploaded DK slate as the source of truth for roster, salary, IDs and games.
+    Weekly researched projections are matched when available; otherwise a clearly
+    labeled DK-PPG fallback is used so stale players can never leak into a new slate.
+    """
+    key=["Name","Position","TeamAbbrev"]
+    b=base_pool.copy()
+    # Prevent stale salary/game fields from surviving the merge.
+    model_cols=[c for c in b.columns if c not in ["Salary","game","opponent","AvgPointsPerGame"]]
+    merged=dk.merge(b[model_cols],on=key,how="left",suffixes=("","_model"))
+    matched=merged["proj"].notna()
+    merged["projection_source"]=np.where(matched,"Weekly researched model","DK PPG fallback")
+    ppg=merged["AvgPointsPerGame"].fillna(0.0).astype(float)
+    # Conservative fallback: DK season scoring baseline, with restrained tournament tails.
+    fallback_mean=np.maximum(0.0,0.95*ppg)
+    pos_mult=merged["Position"].map({"QB":1.00,"RB":1.00,"WR":1.00,"TE":1.00,"DST":0.90}).fillna(1.0)
+    fallback_mean=fallback_mean*pos_mult
+    merged["proj"]=merged["proj"].fillna(pd.Series(fallback_mean,index=merged.index))
+    merged["ceiling"]=merged["ceiling"].fillna(merged["proj"]*1.55)
+    merged["p95_use"]=merged["p95_use"].fillna(merged["proj"]*1.85)
+    merged["p99_use"]=merged["p99_use"].fillna(merged["proj"]*2.25)
+    merged["ownership_pct"]=pd.to_numeric(merged.get("ownership_pct",8.0),errors="coerce").fillna(8.0)
+    merged["leverage_score"]=pd.to_numeric(merged.get("leverage_score",0.0),errors="coerce").fillna(0.0)
+    # Fallback eligibility requires a non-trivial DK scoring history; QB/DST remain usable.
+    fallback_ok=(merged["Position"].isin(["QB","DST"])) | (ppg>=2.0)
+    existing_ok=merged.get("optimizer_eligible",pd.Series(False,index=merged.index)).fillna(False).astype(bool)
+    merged["optimizer_eligible"]=np.where(matched,existing_ok,fallback_ok)
+    merged["role_status"]=merged.get("role_status",pd.Series("",index=merged.index)).fillna("")
+    merged.loc[~matched,"role_status"]="DK Fallback"
+    for c,default in {"coverage_matchup_grade":"Neutral / Uploaded Slate","individual_matchup_factor":1.0,"individual_matchup_delta":0.0,"expected_primary_coverage":"","projection_repaired":False}.items():
+        if c not in merged: merged[c]=default
+        merged[c]=merged[c].fillna(default)
+    return merged
+
+def calibrate_classic_tails(pool):
+    """V3.1.6: bound pathological player tails while preserving ordering and upside."""
+    x=pool.copy()
+    mean=pd.to_numeric(x["proj"],errors="coerce").clip(lower=0.01)
+    p90=pd.to_numeric(x["ceiling"],errors="coerce").fillna(mean)
+    p95=pd.to_numeric(x["p95_use"],errors="coerce").fillna(p90)
+    p99=pd.to_numeric(x["p99_use"],errors="coerce").fillna(p95)
+    # Caps are intentionally broad; they stop corrupted/extreme tails, not legitimate ceilings.
+    p90=np.minimum(np.maximum(p90,mean),mean*2.00)
+    p95=np.minimum(np.maximum(p95,p90),mean*2.45)
+    p99=np.minimum(np.maximum(p99,p95),mean*2.90)
+    x["ceiling"],x["p95_use"],x["p99_use"]=p90,p95,p99
+    x["tail_ratio_p99"]=x["p99_use"]/mean
+    return x
+
+def attach_game_environment(pool, games):
+    """Attach a bounded 0-10 game environment score from weekly game research when available."""
+    x=pool.copy(); x["game_env_score"]=5.0
+    if games is None or len(games)==0 or "game" not in games.columns: return x
+    g=games.copy(); g["game"]=g["game"].astype(str).str.upper()
+    total_col=next((c for c in ["game_total","total","vegas_total","over_under"] if c in g.columns),None)
+    spread_col=next((c for c in ["spread","home_spread","line"] if c in g.columns),None)
+    if total_col is None: return x
+    total=pd.to_numeric(g[total_col],errors="coerce")
+    if total.notna().sum()==0: return x
+    # 38 -> ~2, 44 -> ~5, 50 -> ~8, 54+ -> 10. Competitive games get a small boost.
+    env=5.0+(total-44.0)*0.50
+    if spread_col is not None:
+        spread=pd.to_numeric(g[spread_col],errors="coerce").abs()
+        env += np.clip((7.0-spread)/7.0,0,1)*0.75
+    g["game_env_score"]=np.clip(env,0,10)
+    return x.merge(g[["game","game_env_score"]].drop_duplicates("game"),on="game",how="left",suffixes=("","_weekly")).assign(
+        game_env_score=lambda z:z.get("game_env_score_weekly",z["game_env_score"]).fillna(z["game_env_score"])
+    ).drop(columns=[c for c in ["game_env_score_weekly"] if c in x.merge(g[["game","game_env_score"]].drop_duplicates("game"),on="game",how="left",suffixes=("","_weekly")).columns])
+
+def lineup_context_scores(df):
+    """Bounded game-environment and correlation diagnostics for a Classic lineup."""
+    env=float(pd.to_numeric(df.get("game_env_score",5.0),errors="coerce").fillna(5.0).mean())
+    qb=df[df.Position=="QB"]
+    corr=0.0
+    if len(qb):
+        q=qb.iloc[0]
+        mates=df[(df.TeamAbbrev==q.TeamAbbrev)&df.Position.isin(["WR","TE"])]
+        corr += min(2,len(mates))*1.25
+        opp=opponent_from_game(q.get("game",""),q.TeamAbbrev)
+        bring=df[(df.TeamAbbrev==opp)&df.Position.isin(["RB","WR","TE"])] if opp else df.iloc[0:0]
+        if len(bring): corr += 1.0
+    return env,float(min(corr,3.5))
+
 def prepare_pool(mc, dst, own, matchups):
     skill = mc.copy()
     skill["Position"] = skill["Position"].astype(str).str.upper()
@@ -257,16 +360,17 @@ def lineup_valid(df, min_salary, max_salary, stack_required=True):
     return True
 
 def lineup_score(df, strategy, own_weight, leverage_weight):
-    # V3.1.3: tournament ranking uses more of the simulated right tail.
-    # These are sums of PLAYER percentile outcomes (an upside index), not claims
-    # that the resulting totals are true lineup-level P90/P95/P99 percentiles.
+    # V3.1.6: P99 is a small tail signal, not a primary ranking engine.
+    # Game environment and stack correlation are explicit, bounded bonuses.
     if strategy == "Median":
         base = df["proj"].sum()
     elif strategy == "Balanced":
-        base = (0.50*df["proj"] + 0.20*df["ceiling"] + 0.20*df["p95_use"] + 0.10*df["p99_use"]).sum()
+        base = (0.60*df["proj"] + 0.22*df["ceiling"] + 0.15*df["p95_use"] + 0.03*df["p99_use"]).sum()
     else:
-        base = (0.20*df["proj"] + 0.25*df["ceiling"] + 0.30*df["p95_use"] + 0.25*df["p99_use"]).sum()
-    return float(base - own_weight*df["ownership_pct"].sum()/10 + leverage_weight*df["leverage_score"].sum())
+        base = (0.35*df["proj"] + 0.30*df["ceiling"] + 0.30*df["p95_use"] + 0.05*df["p99_use"]).sum()
+    env,corr=lineup_context_scores(df)
+    context_bonus=(env-5.0)*0.80 + corr
+    return float(base + context_bonus - own_weight*df["ownership_pct"].sum()/10 + leverage_weight*df["leverage_score"].sum())
 
 def random_candidate(pool, min_salary, max_salary, strategy, own_weight, leverage_weight, locks, excludes):
     p = pool[(pool["optimizer_eligible"] == True) & ~pool.Name.isin(excludes)].copy()
@@ -572,12 +676,16 @@ def lineups_to_df(lineups, strategy=None, own_weight=0.25, leverage_weight=0.35,
             "Ownership Sum":round(float(x.ownership_pct.sum()),1),
             "Players":" | ".join(names)
         }
+        env,corr=lineup_context_scores(x)
+        row["Game Env"] = round(env,2)
+        row["Correlation"] = round(corr,2)
+        row["P99/Mean"] = round(float(x.p99_use.sum()/max(x.proj.sum(),0.01)),2)
         if strategy is not None:
             row["GPP Score"] = round(lineup_score(x,strategy,own_weight,leverage_weight),2)
         rows.append(row)
     out=pd.DataFrame(rows)
     if stack_rank and "GPP Score" in out.columns:
-        out=out.sort_values(["GPP Score","P99 Upside","Projection"],ascending=[False,False,False]).reset_index(drop=True)
+        out=out.sort_values(["GPP Score","P95 Upside","Projection"],ascending=[False,False,False]).reset_index(drop=True)
         out.insert(0,"Rank",range(1,len(out)+1))
     return out
 
@@ -596,7 +704,7 @@ CLASSIC_DEFAULTS = {
     "classic_n_lineups": 15, "classic_max_exp": 0.30, "classic_min_unique": 4,
     "classic_min_salary": 47500, "classic_strategy": "GPP Ceiling",
     "classic_own_weight": 0.15, "classic_leverage_weight": 0.35,
-    "classic_projection_floor": 0.88, "classic_portfolio_mode": "V3.1.6a Portfolio Optimize",
+    "classic_projection_floor": 0.88, "classic_portfolio_mode": "V3.1.6 Portfolio Optimize",
     "classic_bank_size": 1200, "classic_solver_seconds": 20,
     "classic_locks": [], "classic_excludes": [],
 }
@@ -907,11 +1015,14 @@ def showdown_dk_export(selected, players):
     return pd.DataFrame(rows)
 
 mc, comp, dst, own, games, matchups = load_base()
-pool = prepare_pool(mc,dst,own,matchups)
+base_pool = attach_game_environment(calibrate_classic_tails(prepare_pool(mc,dst,own,matchups)),games)
+if "classic_uploaded_pool" not in st.session_state:
+    st.session_state["classic_uploaded_pool"]=None
+pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — V3.1.6a + Showdown V1.4")
+st.title("🏈 NFL Predictor Pro — V3.1.6 + Showdown V1.4")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
-st.warning("Week 4 model snapshot. V3 adds a bounded individual coverage-matchup layer on top of V2 role eligibility. Unresearched players remain neutral; re-check final injury news, salaries, coverage assignments and ownership before contest entry.")
+st.warning("Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
 view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Portfolio Analysis"])
 
@@ -924,12 +1035,34 @@ if view == "Slate Setup":
     c4.metric("Games", f"{pool['game'].nunique()}")
     st.markdown("#### Verified game environment")
     st.dataframe(games, use_container_width=True, hide_index=True)
-    st.markdown("#### Weekly DraftKings upload")
-    up=st.file_uploader("Optional: upload a new DraftKings salary CSV for slate review", type=["csv"])
+    st.markdown("#### Weekly DraftKings Main Slate upload")
+    st.caption("Upload the DraftKings Classic salary CSV here each week. The uploaded file becomes the active roster, salary, player-ID and game source for Classic projections and lineup construction.")
+    up=st.file_uploader("Upload DraftKings NFL Classic salary CSV", type=["csv"], key="classic_salary_upload")
+    u1,u2=st.columns([1,1])
     if up is not None:
-        dk=pd.read_csv(up)
-        st.success(f"Loaded {len(dk):,} salary rows. This build keeps the current Week 4 model projections until the weekly model refresh is run.")
-        st.dataframe(dk.head(50),use_container_width=True,hide_index=True)
+        try:
+            dk=parse_classic_dk_csv(up)
+            uploaded_pool=classic_pool_from_upload(dk,base_pool)
+            uploaded_pool=calibrate_classic_tails(uploaded_pool)
+            # Preserve researched environment only for games represented by the weekly model.
+            uploaded_pool=attach_game_environment(uploaded_pool,games)
+            st.session_state["classic_uploaded_pool"]=uploaded_pool
+            matched=int((uploaded_pool["projection_source"]=="Weekly researched model").sum())
+            fallback=len(uploaded_pool)-matched
+            st.success(f"Activated {len(uploaded_pool):,} DK players • {matched} weekly-model matches • {fallback} DK fallback rows.")
+            if fallback:
+                st.warning("Fallback rows do not have refreshed usage/air-yards/red-zone research. They remain clearly labeled and should not be treated as equivalent to weekly researched projections.")
+            st.dataframe(uploaded_pool[["Name","Position","TeamAbbrev","game","Salary","ID","proj","projection_source","optimizer_eligible"]].sort_values(["Position","Salary"],ascending=[True,False]),use_container_width=True,hide_index=True)
+        except Exception as e:
+            st.error(f"Could not activate DraftKings slate: {e}")
+    if u1.button("Use built-in weekly model slate"):
+        st.session_state["classic_uploaded_pool"]=None
+        st.rerun()
+    active=st.session_state.get("classic_uploaded_pool")
+    if active is not None:
+        st.info(f"ACTIVE CLASSIC SLATE: uploaded DraftKings CSV • {len(active)} players • {active['game'].nunique()} games")
+    else:
+        st.info("ACTIVE CLASSIC SLATE: built-in researched weekly model")
 
 elif view == "Player Projections":
     st.subheader("Player Projections")
@@ -987,16 +1120,16 @@ elif view == "Lineup Builder":
     locks=st.multiselect("Lock players",names,key="classic_locks")
     excludes=st.multiselect("Exclude players",names,key="classic_excludes")
 
-    portfolio_mode=st.radio("Portfolio construction",["V3.1.6a Portfolio Optimize","V3.1.5 Sequential (control)"],horizontal=True,key="classic_portfolio_mode")
-    bank_size=st.slider("Candidate bank size",300,2000,key="classic_bank_size",step=100,disabled=(portfolio_mode!="V3.1.6a Portfolio Optimize"),help="V3.1.6 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
-    solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,key="classic_solver_seconds",step=5,disabled=(portfolio_mode!="V3.1.6a Portfolio Optimize"))
+    portfolio_mode=st.radio("Portfolio construction",["V3.1.6 Portfolio Optimize","V3.1.5 Sequential (control)"],horizontal=True,key="classic_portfolio_mode")
+    bank_size=st.slider("Candidate bank size",300,2000,key="classic_bank_size",step=100,disabled=(portfolio_mode!="V3.1.6 Portfolio Optimize"),help="V3.1.6 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
+    solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,key="classic_solver_seconds",step=5,disabled=(portfolio_mode!="V3.1.6 Portfolio Optimize"))
 
-    st.info("Default portfolio rules: 15 lineups • 30% max exposure • 4 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V3.1.6 adds optional candidate-bank portfolio optimization. GPP ranking still uses Mean + P90 + P95 + P99 upside.")
+    st.info("Default portfolio rules: 15 lineups • 30% max exposure • 4 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V3.1.6 uses candidate-bank portfolio optimization, calibrated tails, a small P99 signal, and bounded game-environment + stack-correlation bonuses.")
 
     if st.button("Generate portfolio",type="primary"):
         with st.spinner("Generating diversified portfolio..."):
             solver_meta=None
-            if portfolio_mode == "V3.1.6a Portfolio Optimize":
+            if portfolio_mode == "V3.1.6 Portfolio Optimize":
                 candidate_items, reference_proj, min_proj_required = generate_candidate_bank(
                     pool,int(bank_size),int(min_salary),50000,strategy,float(own_weight),
                     float(leverage_weight),locks,excludes,float(projection_floor_pct),
@@ -1025,12 +1158,12 @@ elif view == "Lineup Builder":
                 st.error("FINAL QC: FAIL — export is not considered tournament-ready.")
                 for issue in qc["issues"]: st.write("• "+issue)
             if solver_meta is not None:
-                st.caption(f"V3.1.6a candidate bank: {solver_meta.get('candidate_count',0):,} • portfolio constraints: {solver_meta.get('constraint_count',0):,} • solver: {solver_meta.get('message','')}")
+                st.caption(f"V3.1.6 candidate bank: {solver_meta.get('candidate_count',0):,} • portfolio constraints: {solver_meta.get('constraint_count',0):,} • solver: {solver_meta.get('message','')}")
             st.caption(f"Projection quality guardrail: strong reference {reference_proj:.1f} DK points • minimum accepted {min_proj_required:.1f} ({projection_floor_pct:.0%}).")
             ldf=lineups_to_df(lineups,strategy,float(own_weight),float(leverage_weight),stack_rank=True)
             edf=exposure_df(lineups)
             st.markdown("#### Lineups — stack ranked best to worst")
-            st.caption("V3.1.3 GPP Rank blends Mean + P90 + P95 + P99 player-level upside, then applies the selected ownership fade and leverage weights. P90/P95/P99 Upside are comparison indexes (sums of player percentiles), not literal lineup percentiles.")
+            st.caption("V3.1.6 GPP Rank emphasizes Mean + P90 + P95, uses P99 only as a small tail signal, then adds bounded game-environment and stack-correlation bonuses before ownership/leverage adjustments. Percentile columns are player-upside indexes, not literal lineup percentiles.")
             st.dataframe(ldf,use_container_width=True,hide_index=True)
             if qc["pass"]:
                 st.download_button("Download lineups",ldf.to_csv(index=False),"nfl_lineups_v316.csv","text/csv")
