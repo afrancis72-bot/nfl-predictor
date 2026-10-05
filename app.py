@@ -763,7 +763,7 @@ def exposure_df(lineups):
 
 
 # -------------------------
-# Single-Game Showdown V1.8a
+# Single-Game Showdown V1.9a
 # -------------------------
 CLASSIC_DEFAULTS = {
     "classic_n_lineups": 15, "classic_max_exp": 0.30, "classic_min_unique": 4,
@@ -789,7 +789,12 @@ def _reset_defaults(defaults):
     for k,v in defaults.items(): st.session_state[k]=v
 
 def _clean_name(x):
-    return " ".join(str(x).lower().replace(".","").replace("'","").replace("-"," ").split())
+    s=" ".join(str(x).lower().replace(".","").replace("'","").replace("-"," ").split())
+    parts=s.split()
+    # DK and weekly feeds frequently disagree on suffixes (Jr/Sr/II/III/IV).
+    if parts and parts[-1] in {"jr","sr","ii","iii","iv"}:
+        parts=parts[:-1]
+    return " ".join(parts)
 
 def parse_showdown_csv(uploaded):
     df=pd.read_csv(uploaded)
@@ -873,11 +878,18 @@ def apply_showdown_current_role_layer(x):
 def showdown_projection_table(flex, comp, mc, dst):
     x=flex.copy()
     # Prefer the weekly model when the uploaded game's teams are represented.
-    cm=comp.copy(); cm["TeamAbbrev"]=cm["TeamAbbrev"].map(normalize_team); cm["key"]=cm["Name"].map(_clean_name)+"|"+cm["TeamAbbrev"]
+    cm=comp.copy(); cm["TeamAbbrev"]=cm["TeamAbbrev"].map(normalize_team); cm["name_key"]=cm["Name"].map(_clean_name); cm["key"]=cm["name_key"]+"|"+cm["TeamAbbrev"]
     cm["model_mean"]=pd.to_numeric(cm.get("matchup_adjusted_projection"),errors="coerce")
     cm["model_mean"]=cm["model_mean"].fillna(pd.to_numeric(cm.get("projected_dk_points"),errors="coerce"))
-    cm=cm.sort_values("model_mean",ascending=False).drop_duplicates("key")[["key","model_mean"]]
-    x=x.merge(cm,on="key",how="left")
+    cm_full=cm.sort_values("model_mean",ascending=False).drop_duplicates("key")[["key","model_mean"]]
+    x=x.merge(cm_full,on="key",how="left")
+    # Rescue unique player-name matches across feed team/suffix formatting differences.
+    x["name_key"]=x["Name"].map(_clean_name)
+    unique_names=cm.dropna(subset=["model_mean"]).groupby("name_key").filter(lambda g: len(g)==1)[["name_key","model_mean"]]
+    unique_names=unique_names.rename(columns={"model_mean":"model_mean_name"})
+    x=x.merge(unique_names,on="name_key",how="left")
+    x["model_mean"]=pd.to_numeric(x["model_mean"],errors="coerce").fillna(pd.to_numeric(x["model_mean_name"],errors="coerce"))
+    x=x.drop(columns=["model_mean_name"],errors="ignore")
     mm=mc.copy(); mm["TeamAbbrev"]=mm["TeamAbbrev"].map(normalize_team); mm["key"]=mm["Name"].map(_clean_name)+"|"+mm["TeamAbbrev"]
     mm=mm.drop_duplicates("key")[["key","mean","p90","p95"]]
     x=x.merge(mm,on="key",how="left")
@@ -1219,7 +1231,7 @@ if "classic_uploaded_pool" not in st.session_state:
     st.session_state["classic_uploaded_pool"]=None
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — V3.1.7 + Showdown V1.8")
+st.title("🏈 NFL Predictor Pro — V3.1.7 + Showdown V1.9")
 st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
 st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
