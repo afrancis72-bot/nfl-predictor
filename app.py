@@ -1362,12 +1362,12 @@ base_pool = attach_game_environment(calibrate_classic_tails(prepare_pool(mc,dst,
 if "classic_uploaded_pool" not in st.session_state:
     st.session_state["classic_uploaded_pool"]=None
 if "classic_active_environment" not in st.session_state:
-    st.session_state["classic_active_environment"]=games.copy()
+    st.session_state["classic_active_environment"]=pd.DataFrame(columns=["game","total","spread_home"])
 if "classic_environment_verified" not in st.session_state:
-    st.session_state["classic_environment_verified"]=True
+    st.session_state["classic_environment_verified"]=False
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.1")
+st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.2")
 st.caption("DraftKings NFL DFS • correlated game scripts • variance + uncertainty • scenario portfolios • calibration")
 st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
@@ -1445,17 +1445,25 @@ if view == "Slate Setup":
                 st.session_state["classic_uploaded_pool"]=refreshed
                 st.success("Current-slate environment activated. No prior-week game rows are being used.")
                 st.rerun()
-    if u1.button("Use built-in weekly model slate"):
+    # V2.0.2: never allow a current uploaded slate to be silently replaced by the
+    # bundled historical research snapshot.  The bundled data are useful only as
+    # a demo/reference dataset; they are NOT a current weekly model.
+    if st.session_state.get("classic_uploaded_pool") is None:
+        st.caption("No DraftKings slate is currently uploaded. The bundled research snapshot is historical/demo data only.")
+    else:
+        st.caption("Current DK slate is locked as the active slate. The app will not revert to bundled prior-week data.")
+
+    if u1.button("Clear uploaded slate", help="Returns to the bundled historical/demo snapshot. This is not a current-week model."):
         st.session_state["classic_uploaded_pool"]=None
-        st.session_state["classic_active_environment"]=games.copy()
-        st.session_state["classic_environment_verified"]=True
+        st.session_state["classic_active_environment"]=pd.DataFrame(columns=["game","total","spread_home"])
+        st.session_state["classic_environment_verified"]=False
         st.session_state["classic_uploaded_games"]=[]
         st.rerun()
     active=st.session_state.get("classic_uploaded_pool")
     if active is not None:
         st.info(f"ACTIVE CLASSIC SLATE: uploaded DraftKings CSV • {len(active)} players • {active['game'].nunique()} games")
     else:
-        st.info("ACTIVE CLASSIC SLATE: built-in researched weekly model")
+        st.warning("ACTIVE CLASSIC SLATE: bundled HISTORICAL/DEMO research snapshot — upload a current DraftKings slate before generating current-week portfolios.")
 
 elif view == "Player Projections":
     st.subheader("Player Projections")
