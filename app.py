@@ -1178,8 +1178,60 @@ def select_v2_portfolio(records, n_lineups, max_exposure=.65, min_unique=3):
         'selected_records':selected,'max_count':max_count,
         'scenario_coverage_rate':float(np.mean(covered)) if selected else 0.0,
         'scenario_coverage_mean':float(np.mean(covered)) if selected else 0.0,
-        'selection_method':'V2.0.8 marginal near-optimal scenario coverage + soft concentration cost'
+        'selection_method':'V2.0.9 marginal near-optimal scenario coverage + attribution diagnostics'
     }
+
+
+def v2_portfolio_attribution(selected_records, all_records):
+    """Diagnostic-only attribution for a selected Classic V2 portfolio.
+
+    Uses the exact scenario vectors already produced by the selector.  It does not alter
+    selection, projections, exposures, or simulations.
+    """
+    if not selected_records or not all_records:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+    ns=len(selected_records[0]['sim'])
+    bank_best=np.maximum.reduce([r['sim'] for r in all_records])
+    target=bank_best-5.0
+    sel=np.vstack([r['sim'] for r in selected_records])
+    portfolio_best=sel.max(axis=0)
+    winner_idx=sel.argmax(axis=0)
+    rows=[]; covered=np.zeros(ns,dtype=bool)
+    for j,r in enumerate(selected_records):
+        near=r['sim']>=target
+        new=near & ~covered
+        rows.append({
+            'Lineup':j+1,
+            'Portfolio Win %':100*float(np.mean(winner_idx==j)),
+            'Within 5 of Bank Best %':100*float(np.mean(near)),
+            'Unique Scenario Coverage Added %':100*float(np.mean(new)),
+            'Cumulative Coverage %':100*float(np.mean(covered|near)),
+            'Avg Score When Portfolio Winner':float(np.mean(r['sim'][winner_idx==j])) if np.any(winner_idx==j) else np.nan,
+            'Mean Regret vs Bank Best':float(np.mean(bank_best-r['sim']))
+        })
+        covered |= near
+    # Player exposure versus presence in scenarios where a selected lineup is portfolio-best.
+    names=sorted(set().union(*[set(r['lineup']['Name'].astype(str)) for r in selected_records]))
+    prows=[]
+    for nm in names:
+        in_line=np.array([nm in set(r['lineup']['Name'].astype(str)) for r in selected_records])
+        exposure=100*float(in_line.mean())
+        winning_presence=100*float(np.mean(in_line[winner_idx]))
+        prows.append({'Player':nm,'Exposure %':exposure,'Presence in Portfolio-Winning Scenarios %':winning_presence,
+                      'Exposure - Winning Presence':exposure-winning_presence})
+    # Team attribution uses rostered player-team pairs from selected lineups.
+    teams=sorted(set().union(*[set(r['lineup']['TeamAbbrev'].astype(str)) for r in selected_records]))
+    trows=[]
+    for tm in teams:
+        in_line=np.array([tm in set(r['lineup']['TeamAbbrev'].astype(str)) for r in selected_records])
+        trows.append({'Team':tm,'Lineup Presence %':100*float(in_line.mean()),
+                      'Presence in Portfolio-Winning Scenarios %':100*float(np.mean(in_line[winner_idx])),
+                      'Presence Gap':100*float(in_line.mean())-100*float(np.mean(in_line[winner_idx]))})
+    meta={'Portfolio near-optimal coverage %':100*float(np.mean(covered)),
+          'Portfolio avg best score':float(np.mean(portfolio_best)),
+          'Candidate-bank avg best score':float(np.mean(bank_best)),
+          'Avg portfolio regret':float(np.mean(bank_best-portfolio_best))}
+    return pd.DataFrame(rows),pd.DataFrame(prows),pd.DataFrame(trows),meta
 
 def select_showdown_portfolio_v2(cands, players, n_lineups, max_player_exp, max_cpt_exp, min_unique, locks, excludes, cpt_excludes):
     """Portfolio selection by marginal scenario coverage, not a stack-ranked list of near-duplicates."""
@@ -1900,7 +1952,7 @@ elif view == "Lineup Builder":
     bank_size=st.slider("Candidate bank size",300,2000,key="classic_bank_size",step=100,disabled=False,help="V3.1.7 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
     solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,key="classic_solver_seconds",step=5,disabled=False)
 
-    st.info("V2.0.8 defaults: 15 lineups • 65% safety exposure ceiling • 3 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V2.0.8 evaluates every legal candidate against the same coherent full-slate simulations, measures near-optimal scenario success, and selects each additional lineup for NEW scenario coverage with a soft concentration cost. Exposure remains a safety ceiling rather than a target.")
+    st.info("V2.0.9 defaults: 15 lineups • 65% safety exposure ceiling • 3 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V2.0.9 evaluates every legal candidate against the same coherent full-slate simulations, measures near-optimal scenario success, and selects each additional lineup for NEW scenario coverage with a soft concentration cost. Exposure remains a safety ceiling rather than a target.")
 
     if st.button("Generate portfolio",type="primary"):
         with st.spinner("Generating diversified portfolio..."):
@@ -1915,6 +1967,7 @@ elif view == "Lineup Builder":
                 records=v2_rescore_classic_candidates(candidate_items,sim_players,classic_sims)
                 lineups,solver_meta=select_v2_portfolio(records,int(n_lineups),float(max_exp),int(min_unique))
                 st.session_state['classic_v2_sim_players']=sim_players; st.session_state['classic_v2_sims']=classic_sims
+                st.session_state['classic_v2_records']=records
             else:
                 lineups, solver_meta = select_portfolio_milp(candidate_items,int(n_lineups),float(max_exp),int(min_unique),float(solver_seconds))
             expo={}; max_count=max(1,math.ceil(int(n_lineups)*float(max_exp)-1e-12))
@@ -1946,6 +1999,23 @@ elif view == "Lineup Builder":
             st.markdown("#### Exposure")
             st.dataframe(edf,use_container_width=True,hide_index=True)
             st.download_button("Download exposure",edf.to_csv(index=False),"nfl_exposure.csv","text/csv")
+            if portfolio_mode == "DFS Engine V2 Scenario Portfolio" and solver_meta and solver_meta.get('selected_records'):
+                adf,padf,tadf,ameta=v2_portfolio_attribution(solver_meta['selected_records'],st.session_state.get('classic_v2_records',[]))
+                st.markdown("#### V2.0.9 Portfolio Attribution — diagnostic only")
+                st.caption("These diagnostics use the exact coherent scenarios used by portfolio selection. They do not change lineup selection. Exposure minus winning presence near zero suggests concentration is scenario-earned; a large positive gap flags concentration for review, not an automatic cap.")
+                m1,m2,m3=st.columns(3)
+                m1.metric("Near-optimal scenario coverage",f"{ameta.get('Portfolio near-optimal coverage %',0):.1f}%")
+                m2.metric("Avg portfolio regret",f"{ameta.get('Avg portfolio regret',0):.2f} DK")
+                m3.metric("Candidate-bank best avg",f"{ameta.get('Candidate-bank avg best score',0):.1f}")
+                st.markdown("##### Lineup scenario attribution")
+                st.dataframe(adf,use_container_width=True,hide_index=True)
+                st.download_button("Download lineup attribution",adf.to_csv(index=False),"nfl_v2_lineup_attribution.csv","text/csv")
+                st.markdown("##### Player concentration attribution")
+                st.dataframe(padf.sort_values(['Exposure %','Exposure - Winning Presence'],ascending=[False,False]),use_container_width=True,hide_index=True)
+                st.download_button("Download player attribution",padf.to_csv(index=False),"nfl_v2_player_attribution.csv","text/csv")
+                st.markdown("##### Team / game-environment attribution")
+                st.dataframe(tadf.sort_values('Lineup Presence %',ascending=False),use_container_width=True,hide_index=True)
+                st.download_button("Download team attribution",tadf.to_csv(index=False),"nfl_v2_team_attribution.csv","text/csv")
 
 elif view == "Single Game Showdown":
     st.subheader("DraftKings Single-Game Showdown")

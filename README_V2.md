@@ -37,3 +37,10 @@
 - Adds a smooth concentration cost for repeatedly using the same player core before the safety exposure ceiling is reached.
 - Keeps exposure as a broad safety ceiling; no player-specific exposure caps were introduced.
 - Keeps legality, salary, minimum-unique and projection-quality constraints unchanged.
+
+## V2.0.9 — Portfolio Attribution Diagnostics
+- Diagnostic-only update; V2.0.8 projection, simulation, candidate scoring, and selection logic are unchanged.
+- Adds lineup Portfolio Win %, Within-5-of-bank-best %, unique marginal scenario coverage, cumulative coverage, winner score, and regret.
+- Adds player exposure versus presence in portfolio-winning scenarios and the exposure-minus-winning-presence gap.
+- Adds team presence attribution for game-environment concentration review.
+- Adds downloadable lineup, player, and team attribution CSVs.
