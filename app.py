@@ -373,14 +373,6 @@ def lineup_valid(df, min_salary, max_salary, stack_required=True):
     if flex_count != 7: return False
     sal = int(df["Salary"].sum())
     if sal < min_salary or sal > max_salary: return False
-    if stack_required:
-        qb = df[df.Position=="QB"].iloc[0]
-        mates = df[(df.TeamAbbrev==qb.TeamAbbrev) & (df.Position.isin(["WR","TE"]))]
-        if len(mates) < 1: return False
-    dst = df[df.Position=="DST"].iloc[0]
-    opp = opponent_from_game(dst["game"], dst["TeamAbbrev"])
-    if opp and any((df.TeamAbbrev==opp) & (df.Position.isin(["QB","RB","WR","TE"]))):
-        return False
     return True
 
 def lineup_score(df, strategy, own_weight, leverage_weight):
@@ -594,9 +586,11 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
         q=pick(by_pos["QB"],sel)
         if q is None: return None
         sel.add(q)
-        m=pick(mates.get(q,np.array([],dtype=int)),sel)
-        if m is None: return None
-        sel.add(m)
+        # V2: correlation is rewarded by simulations, not forced as a universal rule.
+        # Most candidates still seed a pass-catcher, while a minority explore legal no-stack scripts.
+        if rng.random() < 0.78:
+            m=pick(mates.get(q,np.array([],dtype=int)),sel)
+            if m is not None: sel.add(m)
         # V3.1.7 game-stack seeding: in strong environments, some candidates get
         # an opponent bring-back before generic slots are filled. This creates more
         # correlated shootout candidates without requiring them in every lineup.
@@ -620,8 +614,6 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
         if sal<min_salary or sal>max_salary: return None
         d=idx[pos[idx]=="DST"]
         if len(d)!=1: return None
-        di=int(d[0]); opp=opponent_from_game(games[di],teams[di])
-        if opp and any((teams[i]==opp and pos[i] in ("QB","RB","WR","TE")) for i in idx): return None
         return idx
 
     # Fast calibration: enough samples for a stable 99th-percentile reference,
@@ -762,22 +754,140 @@ def exposure_df(lineups):
 
 
 
+
+# =========================
+# DFS ENGINE V2 — shared simulation / portfolio layer
+# =========================
+def _binned_mode(values, width=2.0):
+    v=np.asarray(values,dtype=float); v=v[np.isfinite(v)]
+    if not len(v): return np.nan
+    lo=np.floor(v.min()/width)*width; hi=np.ceil(v.max()/width)*width+width
+    edges=np.arange(lo,hi+1e-9,width)
+    if len(edges)<2: return float(v[0])
+    hist,edges=np.histogram(v,bins=edges); k=int(np.argmax(hist))
+    return float((edges[k]+edges[k+1])/2)
+
+def simulation_summary(names, sims, actual=None, bin_width=2.0):
+    rows=[]; actual=actual or {}
+    for j,name in enumerate(names):
+        v=np.asarray(sims[:,j],dtype=float); a=actual.get(str(name),np.nan)
+        rows.append({'Name':name,'Mean':v.mean(),'Median':np.median(v),'Mode (binned)':_binned_mode(v,bin_width),
+                     'P10':np.percentile(v,10),'P25':np.percentile(v,25),'P75':np.percentile(v,75),
+                     'P90':np.percentile(v,90),'P95':np.percentile(v,95),'Actual':a,
+                     'Actual Percentile':(100*np.mean(v<=a) if pd.notna(a) else np.nan),
+                     'Error vs Mean':(a-v.mean() if pd.notna(a) else np.nan)})
+    return pd.DataFrame(rows)
+
+def simulate_classic_v2(pool, n_sims=10000, seed=20261006):
+    """Correlated full-slate simulation with game scripts, heavy tails and model uncertainty.
+    One row is one coherent Sunday scenario; player outcomes are not independent.
+    """
+    x=pool[pool['optimizer_eligible']==True].copy().reset_index(drop=True)
+    rng=np.random.default_rng(seed); ns=int(n_sims); n=len(x)
+    games_u=x['game'].astype(str).unique().tolist(); teams_u=x['TeamAbbrev'].astype(str).unique().tolist()
+    pace={g:rng.standard_t(6,size=ns)/np.sqrt(1.5) for g in games_u}
+    # Explicit script regimes widen tails: slow/defensive, neutral, shootout/blowout-like environments.
+    regime={g:rng.choice([-1,0,1,2],size=ns,p=[.18,.55,.20,.07]) for g in games_u}
+    off={t:rng.normal(size=ns) for t in teams_u}; pas={t:rng.normal(size=ns) for t in teams_u}; rush={t:rng.normal(size=ns) for t in teams_u}
+    out=np.zeros((ns,n),dtype=np.float32)
+    for j,r in x.iterrows():
+        pos=str(r['Position']); t=str(r['TeamAbbrev']); g=str(r['game']); opp=opponent_from_game(g,t)
+        mean=max(.05,float(r['proj'])); p90=max(mean,float(r.get('ceiling',mean*1.5)))
+        empirical=max(.75,(p90-mean)/1.2816)
+        pos_floor={'QB':4.5,'RB':5.0,'WR':5.5,'TE':4.5,'DST':4.0}.get(pos,4.5)
+        sd=max(empirical,pos_floor,mean*{'QB':.30,'RB':.48,'WR':.58,'TE':.58,'DST':.65}.get(pos,.5))
+        # Model uncertainty shifts the center itself, separately from game-to-game variance.
+        unc=rng.normal(0,{'QB':.07,'RB':.10,'WR':.12,'TE':.13,'DST':.16}.get(pos,.12),size=ns)*mean
+        idio=rng.standard_t(5,size=ns)/np.sqrt(5/3)
+        rg=regime[g].astype(float)
+        if pos=='QB': z=.18*pace[g]+.36*off[t]+.35*pas[t]+.18*rg+.70*idio
+        elif pos in ['WR','TE']: z=.15*pace[g]+.28*off[t]+.34*pas[t]+.16*rg+.73*idio
+        elif pos=='RB': z=.10*pace[g]+.32*off[t]+.34*rush[t]-.12*pas[t]+.12*rg+.73*idio
+        elif pos=='DST': z=-.38*off.get(opp,np.zeros(ns))-.15*pace[g]-.13*rg+.80*idio
+        else: z=.15*pace[g]+.28*off[t]+.78*idio
+        z=(z-z.mean())/(z.std()+1e-9)
+        out[:,j]=np.clip(mean+unc+sd*z,0,None).astype(np.float32)
+    return x,out
+
+def v2_rescore_classic_candidates(candidate_items, sim_players, sims):
+    if not candidate_items: return []
+    idx={str(n):i for i,n in enumerate(sim_players['Name'])}; enriched=[]; best=np.full(sims.shape[0],-1e9,dtype=np.float32)
+    for lineup,_old in candidate_items:
+        cols=[idx[n] for n in lineup['Name'].astype(str) if n in idx]
+        if len(cols)!=9: continue
+        pts=sims[:,cols].sum(axis=1).astype(np.float32)
+        rec={'lineup':lineup,'sim':pts,'mean':float(pts.mean()),'median':float(np.median(pts)),
+             'p75':float(np.percentile(pts,75)),'p90':float(np.percentile(pts,90)),'p95':float(np.percentile(pts,95))}
+        enriched.append(rec); best=np.maximum(best,pts)
+    for r in enriched:
+        r['optimal_rate']=float(np.mean(r['sim']>=best-1e-5))
+        own=float(pd.to_numeric(r['lineup']['ownership_pct'],errors='coerce').fillna(8).sum())
+        lev=float(pd.to_numeric(r['lineup']['leverage_score'],errors='coerce').fillna(0).sum())
+        r['score']=.30*r['mean']+.15*r['median']+.20*r['p90']+.25*r['p95']+12*r['optimal_rate']-.025*own+.12*lev
+    return enriched
+
+def select_v2_portfolio(records, n_lineups, max_exposure=.65, min_unique=3):
+    """Greedy marginal-scenario portfolio: rewards strong lineups AND new right-tail coverage."""
+    if not records: return [],{}
+    records=sorted(records,key=lambda r:r['score'],reverse=True); selected=[]; counts={}; ns=len(records[0]['sim']); covered=np.full(ns,-1e9,dtype=np.float32)
+    max_count=max(1,math.ceil(int(n_lineups)*float(max_exposure)-1e-12)); max_overlap=9-int(min_unique)
+    pool_scores=np.array([r['score'] for r in records]); mu=pool_scores.mean(); sig=pool_scores.std()+1e-9
+    while len(selected)<int(n_lineups):
+        best_i=None; best_val=-1e18
+        for i,r in enumerate(records):
+            if r.get('_used'): continue
+            names=set(r['lineup']['Name'].astype(str))
+            if any(counts.get(n,0)>=max_count for n in names): continue
+            if any(len(names & set(q['lineup']['Name'].astype(str)))>max_overlap for q in selected): continue
+            marginal=float(np.mean(np.maximum(r['sim']-covered,0))) if selected else float(np.mean(r['sim']))
+            overlap=(np.mean([len(names & set(q['lineup']['Name'].astype(str)))/9 for q in selected]) if selected else 0)
+            val=(r['score']-mu)/sig + .18*marginal - 1.75*overlap
+            if val>best_val: best_val=val; best_i=i
+        if best_i is None: break
+        r=records[best_i]; r['_used']=True; selected.append(r); covered=np.maximum(covered,r['sim'])
+        for n in set(r['lineup']['Name'].astype(str)): counts[n]=counts.get(n,0)+1
+    return [r['lineup'] for r in selected],{'selected_records':selected,'max_count':max_count,'scenario_coverage_mean':float(np.mean(covered)) if selected else np.nan}
+
+def select_showdown_portfolio_v2(cands, players, n_lineups, max_player_exp, max_cpt_exp, min_unique, locks, excludes, cpt_excludes):
+    """Portfolio selection by marginal scenario coverage, not a stack-ranked list of near-duplicates."""
+    lockset=set(locks); exset=set(excludes); cex=set(cpt_excludes); n_lineups=int(n_lineups)
+    maxp,maxc=_showdown_exposure_counts(n_lineups,max_player_exp,max_cpt_exp); selected=[]; counts={}; ccounts={}; covered=None
+    vals=np.array([c.get('rank_score',0.) for c in cands],dtype=float); mu=vals.mean() if len(vals) else 0; sig=vals.std()+1e-9
+    while len(selected)<n_lineups:
+        bi=None; bv=-1e18
+        for i,c in enumerate(cands):
+            if c.get('_v2used'): continue
+            ids=[c['cpt']]+list(c['flex']); names=set(players.iloc[ids]['Name'].astype(str)); cp=str(players.iloc[c['cpt']]['Name'])
+            if lockset and not lockset.issubset(names): continue
+            if names&exset or cp in cex or ccounts.get(cp,0)>=maxc or any(counts.get(n,0)>=maxp for n in names): continue
+            if any(len(names & set(q['names']))>6-int(min_unique) for q in selected): continue
+            marginal=float(np.mean(c['sim'])) if covered is None else float(np.mean(np.maximum(c['sim']-covered,0)))
+            overlap=np.mean([len(names & set(q['names']))/6 for q in selected]) if selected else 0
+            val=(c.get('rank_score',0)-mu)/sig + .22*marginal - 2.0*overlap
+            if val>bv: bv=val; bi=i
+        if bi is None: break
+        c=cands[bi]; c['_v2used']=True; ids=[c['cpt']]+list(c['flex']); names=set(players.iloc[ids]['Name'].astype(str)); cp=str(players.iloc[c['cpt']]['Name'])
+        z=dict(c); z['names']=list(names); selected.append(z); covered=c['sim'].copy() if covered is None else np.maximum(covered,c['sim'])
+        for n in names: counts[n]=counts.get(n,0)+1
+        ccounts[cp]=ccounts.get(cp,0)+1
+    return selected,{'requested':n_lineups,'max_player_count':maxp,'max_cpt_count':maxc,'relaxed':False,'scenario_coverage_mean':float(np.mean(covered)) if covered is not None else np.nan}
+
 # -------------------------
-# Single-Game Showdown V1.9a
+# Single-Game Showdown V1.8a
 # -------------------------
 CLASSIC_DEFAULTS = {
-    "classic_n_lineups": 15, "classic_max_exp": 0.30, "classic_min_unique": 4,
+    "classic_n_lineups": 15, "classic_max_exp": 0.65, "classic_min_unique": 3,
     "classic_min_salary": 47500, "classic_strategy": "GPP Ceiling",
     "classic_own_weight": 0.15, "classic_leverage_weight": 0.35,
-    "classic_projection_floor": 0.88, "classic_portfolio_mode": "V3.1.7 Portfolio Optimize",
+    "classic_projection_floor": 0.88, "classic_portfolio_mode": "DFS Engine V2 Scenario Portfolio",
     "classic_bank_size": 1200, "classic_solver_seconds": 20,
     "classic_locks": [], "classic_excludes": [],
 }
 SHOWDOWN_DEFAULTS = {
-    "sd_n_lineups": 20, "sd_max_player_exp": 0.65, "sd_max_cpt_exp": 0.35,
-    "sd_min_unique": 2, "sd_min_salary": 44000, "sd_sims": 20000,
+    "sd_n_lineups": 20, "sd_max_player_exp": 0.75, "sd_max_cpt_exp": 0.50,
+    "sd_min_unique": 2, "sd_min_salary": 38000, "sd_sims": 20000,
     "sd_candidate_bank": 6000, "sd_strategy": "Tournament Ceiling",
-    "sd_min_standard": "Balanced GPP", "sd_allow_deep_punt": True,
+    "sd_min_standard": "Off", "sd_allow_deep_punt": True,
     "sd_locks": [], "sd_excludes": [], "sd_cpt_excludes": [],
 }
 
@@ -789,12 +899,7 @@ def _reset_defaults(defaults):
     for k,v in defaults.items(): st.session_state[k]=v
 
 def _clean_name(x):
-    s=" ".join(str(x).lower().replace(".","").replace("'","").replace("-"," ").split())
-    parts=s.split()
-    # DK and weekly feeds frequently disagree on suffixes (Jr/Sr/II/III/IV).
-    if parts and parts[-1] in {"jr","sr","ii","iii","iv"}:
-        parts=parts[:-1]
-    return " ".join(parts)
+    return " ".join(str(x).lower().replace(".","").replace("'","").replace("-"," ").split())
 
 def parse_showdown_csv(uploaded):
     df=pd.read_csv(uploaded)
@@ -878,18 +983,11 @@ def apply_showdown_current_role_layer(x):
 def showdown_projection_table(flex, comp, mc, dst):
     x=flex.copy()
     # Prefer the weekly model when the uploaded game's teams are represented.
-    cm=comp.copy(); cm["TeamAbbrev"]=cm["TeamAbbrev"].map(normalize_team); cm["name_key"]=cm["Name"].map(_clean_name); cm["key"]=cm["name_key"]+"|"+cm["TeamAbbrev"]
+    cm=comp.copy(); cm["TeamAbbrev"]=cm["TeamAbbrev"].map(normalize_team); cm["key"]=cm["Name"].map(_clean_name)+"|"+cm["TeamAbbrev"]
     cm["model_mean"]=pd.to_numeric(cm.get("matchup_adjusted_projection"),errors="coerce")
     cm["model_mean"]=cm["model_mean"].fillna(pd.to_numeric(cm.get("projected_dk_points"),errors="coerce"))
-    cm_full=cm.sort_values("model_mean",ascending=False).drop_duplicates("key")[["key","model_mean"]]
-    x=x.merge(cm_full,on="key",how="left")
-    # Rescue unique player-name matches across feed team/suffix formatting differences.
-    x["name_key"]=x["Name"].map(_clean_name)
-    unique_names=cm.dropna(subset=["model_mean"]).groupby("name_key").filter(lambda g: len(g)==1)[["name_key","model_mean"]]
-    unique_names=unique_names.rename(columns={"model_mean":"model_mean_name"})
-    x=x.merge(unique_names,on="name_key",how="left")
-    x["model_mean"]=pd.to_numeric(x["model_mean"],errors="coerce").fillna(pd.to_numeric(x["model_mean_name"],errors="coerce"))
-    x=x.drop(columns=["model_mean_name"],errors="ignore")
+    cm=cm.sort_values("model_mean",ascending=False).drop_duplicates("key")[["key","model_mean"]]
+    x=x.merge(cm,on="key",how="left")
     mm=mc.copy(); mm["TeamAbbrev"]=mm["TeamAbbrev"].map(normalize_team); mm["key"]=mm["Name"].map(_clean_name)+"|"+mm["TeamAbbrev"]
     mm=mm.drop_duplicates("key")[["key","mean","p90","p95"]]
     x=x.merge(mm,on="key",how="left")
@@ -980,24 +1078,26 @@ def showdown_projection_table(flex, comp, mc, dst):
 
 def simulate_showdown_players(players, teams, n_sims=20000, seed=315):
     rng=np.random.default_rng(seed); n=len(players); ns=int(n_sims)
-    pace=rng.normal(size=ns)
-    team_off={t:rng.normal(size=ns) for t in teams}
+    pace=rng.standard_t(6,size=ns)/np.sqrt(1.5)
+    team_off={t:rng.standard_t(7,size=ns)/np.sqrt(7/5) for t in teams}
     pass_script={t:rng.normal(size=ns) for t in teams}
     rush_script={t:rng.normal(size=ns) for t in teams}
+    game_regime=rng.choice([-1,0,1,2],size=ns,p=[.18,.55,.20,.07])
     # Negative relationship between opponent offense and DST outcomes.
     out=np.zeros((ns,n),dtype=np.float32)
     for j,r in players.iterrows():
         t=r["TeamAbbrev"]; opp=teams[1] if t==teams[0] else teams[0]; pos=r["Position"]
-        idio=rng.normal(size=ns)
-        if pos=="QB": z=.18*pace+.38*team_off[t]+.34*pass_script[t]+.72*idio
-        elif pos in ["WR","TE"]: z=.16*pace+.30*team_off[t]+.32*pass_script[t]+.74*idio
-        elif pos=="RB": z=.12*pace+.34*team_off[t]+.30*rush_script[t]-.10*pass_script[t]+.75*idio
-        elif pos in ["DST","D"]: z=-.42*team_off[opp]-.16*pace+.18*rush_script[t]+.72*idio
+        idio=rng.standard_t(5,size=ns)/np.sqrt(5/3)
+        if pos=="QB": z=.18*pace+.38*team_off[t]+.34*pass_script[t]+.14*game_regime+.70*idio
+        elif pos in ["WR","TE"]: z=.16*pace+.30*team_off[t]+.32*pass_script[t]+.12*game_regime+.72*idio
+        elif pos=="RB": z=.12*pace+.34*team_off[t]+.30*rush_script[t]-.10*pass_script[t]+.10*game_regime+.73*idio
+        elif pos in ["DST","D"]: z=-.42*team_off[opp]-.16*pace-.12*game_regime+.18*rush_script[t]+.72*idio
         elif pos=="K": z=.18*pace+.32*team_off[t]+.78*idio
         else: z=.15*pace+.30*team_off[t]+.78*idio
         # Normalize factor variance so Sim SD remains interpretable.
         z=(z-z.mean())/(z.std()+1e-9)
-        score=np.clip(float(r["Base Mean"])+float(r["Sim SD"])*z,0,None)
+        unc=rng.normal(0,{"QB":.07,"RB":.10,"WR":.12,"TE":.13,"K":.08,"DST":.16,"D":.16}.get(pos,.12),size=ns)*float(r["Base Mean"])
+        score=np.clip(float(r["Base Mean"])+unc+float(r["Sim SD"])*z,0,None)
         # V1.3: low-volume fallback skill players are mixture distributions, not
         # smooth bell curves. Most retain normal opportunity, but a role-tier-based
         # share of simulations are true low-opportunity/dud outcomes. Rare spike
@@ -1094,13 +1194,13 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
             core[i]=(sim_mean[i]>=3.25 and sim_p75[i]>=4.0 and sim_p90[i]>=7.0 and prob5[i]>=0.20)
         relief[i]=(sim_p90[i]>=6.0 and prob5[i]>=0.15 and sim_mean[i]>=1.75)
         role_cpt_ok=bool(players.iloc[i].get("Role CPT Eligible",True))
-        captain_ok[i]=(role_cpt_ok and sim_mean[i]>=6.0 and sim_p90[i]>=11.0 and sim_p95[i]>=13.0 and prob10[i]>=0.22)
+        captain_ok[i]=role_cpt_ok
 
     mean_scale=np.maximum(sim_mean,0.10); p90_scale=np.maximum(sim_p90,0.10); ceiling_scale=np.maximum(sim_p95,0.10)
     weights=(0.40*mean_scale/mean_scale.max()+0.40*p90_scale/p90_scale.max()+0.20*ceiling_scale/ceiling_scale.max())
     weights=np.maximum(weights,0.005)
-    weights=np.where(core,weights,weights*0.18)
-    weights=np.where((~core)&(~relief),weights*0.05,weights)
+    weights=np.where(core,weights,weights*0.55)
+    weights=np.where((~core)&(~relief),weights*0.35,weights)
     weights=weights/weights.sum()
     cpt_weights=weights*captain_ok.astype(float)
     if cpt_weights.sum()>0: cpt_weights=cpt_weights/cpt_weights.sum()
@@ -1133,14 +1233,6 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
             elif viable_count<6: continue
 
         p=pos[ids]
-        if np.count_nonzero(p=="TE")>2: continue
-        noncore=ids[~core[ids]]
-        if len(noncore)>1: continue
-        if len(noncore) and (not allow_deep_punt or not relief[noncore[0]]): continue
-        if np.count_nonzero(p=="QB")<1: continue
-        if np.count_nonzero(p=="K")>1: continue
-        if np.count_nonzero(np.isin(p,["DST","D"]))>1: continue
-        if np.count_nonzero(np.isin(p,["K","DST","D"]))>2: continue
 
         seen.add(key)
         pts=(1.5*sims[:,c]+sims[:,flex_idx].sum(axis=1)).astype(np.float32,copy=False)
@@ -1231,11 +1323,11 @@ if "classic_uploaded_pool" not in st.session_state:
     st.session_state["classic_uploaded_pool"]=None
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — V3.1.7 + Showdown V1.9")
-st.caption("DraftKings NFL DFS • projections • correlated Monte Carlo • leverage • portfolio optimization")
+st.title("🏈 NFL Predictor Pro — DFS Engine V2")
+st.caption("DraftKings NFL DFS • correlated game scripts • variance + uncertainty • scenario portfolios • calibration")
 st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
-view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Portfolio Analysis"])
+view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis"])
 
 if view == "Slate Setup":
     st.subheader("Slate Setup")
@@ -1312,8 +1404,8 @@ elif view == "Player Projections":
     st.dataframe(board.sort_values("individual_matchup_factor",ascending=False),use_container_width=True,hide_index=True)
 
 elif view == "Simulation":
-    st.subheader("50,000-run Correlated Monte Carlo")
-    st.caption("Current V8 model includes role-aware correlations, target share, aDOT and red-zone inputs.")
+    st.subheader("Simulation")
+    st.caption("Legacy weekly Monte Carlo inputs are shown below. DFS Engine V2 additionally runs coherent full-slate game-script simulations during portfolio construction, with heavy tails and model uncertainty.")
     metric=st.selectbox("Sort by",["mean","p90","p95","boom_25","boom_30"])
     pos=st.multiselect("Position",["QB","RB","WR","TE"],default=["QB","RB","WR","TE"])
     sx=mc[mc.Position.isin(pos)].sort_values(metric,ascending=False)
@@ -1340,32 +1432,30 @@ elif view == "Lineup Builder":
     locks=st.multiselect("Lock players",names,key="classic_locks")
     excludes=st.multiselect("Exclude players",names,key="classic_excludes")
 
-    portfolio_mode=st.radio("Portfolio construction",["V3.1.7 Portfolio Optimize","V3.1.5 Sequential (control)"],horizontal=True,key="classic_portfolio_mode")
-    bank_size=st.slider("Candidate bank size",300,2000,key="classic_bank_size",step=100,disabled=(portfolio_mode!="V3.1.7 Portfolio Optimize"),help="V3.1.7 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
-    solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,key="classic_solver_seconds",step=5,disabled=(portfolio_mode!="V3.1.7 Portfolio Optimize"))
+    portfolio_mode=st.radio("Portfolio construction",["DFS Engine V2 Scenario Portfolio","V3.1.7 Portfolio Optimize (control)"],horizontal=True,key="classic_portfolio_mode")
+    bank_size=st.slider("Candidate bank size",300,2000,key="classic_bank_size",step=100,disabled=False,help="V3.1.7 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
+    solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,key="classic_solver_seconds",step=5,disabled=False)
 
-    st.info("Default portfolio rules: 15 lineups • 30% max exposure • 4 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V3.1.7 keeps the calibrated tails and small P99 signal, and now moves bounded game-environment, elite-ceiling representation, and projection-confidence signals upstream into candidate generation.")
+    st.info("V2 defaults: 15 lineups • 65% safety exposure ceiling • 3 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V2 rescoring uses coherent full-slate scenarios with heavy-tailed player variance and model uncertainty, then selects lineups for marginal scenario coverage instead of simply taking the highest-ranked near-duplicates.")
 
     if st.button("Generate portfolio",type="primary"):
         with st.spinner("Generating diversified portfolio..."):
             solver_meta=None
-            if portfolio_mode == "V3.1.7 Portfolio Optimize":
-                candidate_items, reference_proj, min_proj_required = generate_candidate_bank(
-                    pool,int(bank_size),int(min_salary),50000,strategy,float(own_weight),
-                    float(leverage_weight),locks,excludes,float(projection_floor_pct),
-                    attempts=max(60000,int(bank_size)*120)
-                )
-                lineups, solver_meta = select_portfolio_milp(
-                    candidate_items,int(n_lineups),float(max_exp),int(min_unique),float(solver_seconds)
-                )
-                expo={}; max_count=max(1,math.floor(int(n_lineups)*float(max_exp)+1e-9))
-                for l in lineups:
-                    for nm in set(l.Name): expo[nm]=expo.get(nm,0)+1
+            candidate_items, reference_proj, min_proj_required = generate_candidate_bank(
+                pool,int(bank_size),int(min_salary),50000,strategy,float(own_weight),
+                float(leverage_weight),locks,excludes,float(projection_floor_pct),
+                attempts=max(60000,int(bank_size)*120)
+            )
+            if portfolio_mode == "DFS Engine V2 Scenario Portfolio":
+                sim_players,classic_sims=simulate_classic_v2(pool,10000)
+                records=v2_rescore_classic_candidates(candidate_items,sim_players,classic_sims)
+                lineups,solver_meta=select_v2_portfolio(records,int(n_lineups),float(max_exp),int(min_unique))
+                st.session_state['classic_v2_sim_players']=sim_players; st.session_state['classic_v2_sims']=classic_sims
             else:
-                lineups, expo, max_count, reference_proj, min_proj_required=build_portfolio(
-                    pool,int(n_lineups),float(max_exp),int(min_unique),int(min_salary),50000,
-                    strategy,float(own_weight),float(leverage_weight),locks,excludes,float(projection_floor_pct)
-                )
+                lineups, solver_meta = select_portfolio_milp(candidate_items,int(n_lineups),float(max_exp),int(min_unique),float(solver_seconds))
+            expo={}; max_count=max(1,math.ceil(int(n_lineups)*float(max_exp)-1e-12))
+            for l in lineups:
+                for nm in set(l.Name): expo[nm]=expo.get(nm,0)+1
         if not lineups:
             st.error("No valid portfolio found. Relax locks/exclusions, uniqueness, exposure, or salary floor.")
         else:
@@ -1407,8 +1497,13 @@ elif view == "Single Game Showdown":
             st.success(f"Detected {game_label} • {' vs '.join(sd_teams)} • {len(players)} active FLEX-eligible players")
             model_matches=int((players["Projection Source"]=="NFL weekly model").sum())
             c1,c2,c3=st.columns(3); c1.metric("Active players",len(players)); c2.metric("Weekly-model matches",model_matches); c3.metric("Fallback players",len(players)-model_matches)
-            if model_matches==0:
-                st.warning("This standalone game is not present in the current Classic weekly model dataset. Showdown will use DraftKings slate scoring baselines plus position-aware correlated simulation for this game. The app labels this fallback explicitly rather than inventing weekly-model projections.")
+            coverage=model_matches/max(1,len(players))
+            if coverage<0.60:
+                st.error(f"PROJECTION INTEGRITY GATE: only {coverage:.0%} of active players matched the weekly model. V2 will show diagnostics, but this slate should not be trusted for automated entry until the weekly projection feed is refreshed.")
+            elif coverage<0.85:
+                st.warning(f"Projection coverage is {coverage:.0%}. Review fallback rows before trusting the portfolio.")
+            else:
+                st.success(f"Projection integrity gate: {coverage:.0%} weekly-model coverage.")
             with st.expander("Player matching / projection audit"):
                 st.dataframe(players[["Name","Position","TeamAbbrev","FLEX Salary","CPT Salary","Status","Current Role","Opportunity Multiplier","Raw Weekly Mean","DK Role Baseline","Base Mean","Sim SD","Role Tier","Role Calibration","Projection Source"]].sort_values("FLEX Salary",ascending=False),use_container_width=True,hide_index=True)
             st.button("Reset Showdown to Recommended Defaults",key="sd_reset_btn",on_click=_reset_defaults,args=(SHOWDOWN_DEFAULTS,))
@@ -1431,7 +1526,7 @@ elif view == "Single Game Showdown":
             cpt_excludes=st.multiselect("Exclude from Captain only",names,key="sd_cpt_excludes")
             eff_p,eff_c=_showdown_exposure_counts(int(n_lineups),float(max_player),float(max_cpt))
             st.caption(f"Effective small-portfolio limits: any player ≤ {eff_p}/{int(n_lineups)} lineups ({100*eff_p/int(n_lineups):.0f}%) • any Captain ≤ {eff_c}/{int(n_lineups)} ({100*eff_c/int(n_lineups):.0f}%). Percentages are rounded up to the nearest attainable lineup count.")
-            st.info("Recommended Showdown defaults: 20 lineups • 65% max player exposure • 35% max Captain exposure • 2 minimum uniques • $44,000 salary floor • 20,000 correlated game simulations • 6,000 candidate lineups • Balanced GPP minimum standard • one deep punt allowed. V1.7 keeps opportunity-first candidate generation and adds a bounded role sanity calibration for weekly-model skill players. DK PPG is used only as a 20% role anchor when available; it never replaces the weekly projection. Lineups also require a QB and may use at most one kicker and one DST, preventing double-kicker salary-dump constructions.")
+            st.info("V2 defaults: 20 lineups • 75% safety player ceiling • 50% Captain ceiling • 2 minimum uniques • $38,000 salary floor • 20,000 correlated game simulations • 6,000 candidates • viability screen Off. Rare legal constructions are probability-weighted rather than prohibited. V1.7 keeps opportunity-first candidate generation and adds a bounded role sanity calibration for weekly-model skill players. DK PPG is used only as a 20% role anchor when available; it never replaces the weekly projection. V2 no longer bans unusual legal constructions (including DST Captain, double-DST, no-QB, or unusual salary usage) merely because they are rare; simulated outcomes and portfolio value determine representation.")
             if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate"):
                 with st.spinner("Simulating correlated game outcomes and optimizing Showdown lineups..."):
                     sim=simulate_showdown_players(players,sd_teams,int(n_sims))
@@ -1439,12 +1534,12 @@ elif view == "Single Game Showdown":
                     ranked=rank_showdown_candidates(cands,strategy)
                     diagnostics=showdown_value_diagnostics(players,sim)
                     diagnostics=diagnostics.join(viability[["Viable","Deep Punt OK","Viability Tests"]])
-                    selected,sd_meta=select_showdown_portfolio(ranked,players,int(n_lineups),float(max_player),float(max_cpt),int(min_unique),locks,excludes,cpt_excludes)
+                    selected,sd_meta=select_showdown_portfolio_v2(ranked,players,int(n_lineups),float(max_player),float(max_cpt),int(min_unique),locks,excludes,cpt_excludes)
                 if not selected:
                     st.error("No valid Showdown portfolio found. Relax salary, uniqueness, locks, or exclusions.")
                 else:
                     rdf=showdown_results_df(selected,players); dkdf=showdown_dk_export(selected,players)
-                    st.session_state["showdown_selected"]=selected; st.session_state["showdown_players"]=players
+                    st.session_state["showdown_selected"]=selected; st.session_state["showdown_players"]=players; st.session_state['showdown_sims']=sim
                     if len(selected)<int(n_lineups):
                         st.error(f"Requested {int(n_lineups)} lineups but only {len(selected)} could be built after controlled exposure relaxation. Increase candidate bank or relax minimum uniques / salary floor / locks before exporting.")
                     else:
@@ -1454,7 +1549,7 @@ elif view == "Single Game Showdown":
                     st.dataframe(rdf,use_container_width=True,hide_index=True,column_config={"Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"Optimal %":st.column_config.NumberColumn(format="%.3f")})
                     st.download_button("Download DraftKings Showdown CSV",dkdf.to_csv(index=False),"DK_Showdown_Lineups.csv","text/csv")
                     st.markdown("#### Showdown value diagnostics")
-                    st.caption("V1.7 generates candidates from simulated opportunity and ceiling rather than points-per-dollar. Weekly-model skill projections receive a bounded 20% DK-role sanity anchor before simulation; salary is not part of that calibration. Candidate lineups require at least five core-role players, at least one QB, and no more than one kicker or one DST.")
+                    st.caption("V1.7 generates candidates from simulated opportunity and ceiling rather than points-per-dollar. Weekly-model skill projections receive a bounded 20% DK-role sanity anchor before simulation; salary is not part of that calibration. V2 evaluates legal constructions from simulated outcomes rather than hard-banning rare roster structures. Role-ineligible/inactive players remain blocked.")
                     diag_show=diagnostics.sort_values(["Salary","Sim Mean"],ascending=[True,False])
                     st.dataframe(diag_show,use_container_width=True,hide_index=True,column_config={"Sim Mean":st.column_config.NumberColumn(format="%.2f"),"P75":st.column_config.NumberColumn(format="%.2f"),"P90":st.column_config.NumberColumn(format="%.2f"),"P95":st.column_config.NumberColumn(format="%.2f"),"≤3 pts %":st.column_config.NumberColumn(format="%.1f%%"),"10+ pts %":st.column_config.NumberColumn(format="%.1f%%")})
                     all_names=[]; all_cpt=[]
@@ -1466,6 +1561,41 @@ elif view == "Single Game Showdown":
                     st.markdown("#### Captain exposure"); st.dataframe(cx.reset_index(names="Name"),use_container_width=True,hide_index=True)
         except Exception as exc:
             st.error(f"Could not process this Showdown CSV: {exc}")
+
+elif view == "Simulation Validation":
+    st.subheader("Simulation Validation")
+    st.caption("V2 compares the full simulated distribution with actual fantasy results. Mean, median and binned mode are kept separate; Actual Percentile is the calibration diagnostic.")
+    source=st.radio("Simulation source",["NFL Main Slate","Showdown"],horizontal=True)
+    if source=="NFL Main Slate":
+        sp=st.session_state.get('classic_v2_sim_players'); ss=st.session_state.get('classic_v2_sims')
+        if sp is None or ss is None:
+            st.info("Generate a DFS Engine V2 Main Slate portfolio first.")
+        else:
+            names=sp['Name'].astype(str).tolist(); ss_use=ss
+    else:
+        sp=st.session_state.get('showdown_players'); ss_use=st.session_state.get('showdown_sims')
+        if sp is None or ss_use is None:
+            st.info("Generate a Showdown portfolio first.")
+        else: names=sp['Name'].astype(str).tolist()
+    if sp is not None and ss_use is not None:
+        base=simulation_summary(names,ss_use)
+        st.dataframe(base,use_container_width=True,hide_index=True)
+        st.download_button("Download pre-event simulation validation baseline",base.to_csv(index=False),"simulation_validation_baseline.csv","text/csv")
+        actual_up=st.file_uploader("After the games: upload actual DK points CSV (columns: Name, Actual)",type=['csv'],key='actual_validation_upload')
+        if actual_up is not None:
+            a=pd.read_csv(actual_up)
+            if {'Name','Actual'}.issubset(a.columns):
+                amap=dict(zip(a['Name'].astype(str),pd.to_numeric(a['Actual'],errors='coerce')))
+                graded=simulation_summary(names,ss_use,amap)
+                st.markdown("#### Graded simulation vs actual")
+                st.dataframe(graded,use_container_width=True,hide_index=True)
+                valid=graded.dropna(subset=['Actual Percentile'])
+                if len(valid):
+                    c1,c2,c3=st.columns(3); c1.metric("Actual above simulated median",f"{100*np.mean(valid['Actual Percentile']>50):.1f}%")
+                    c2.metric("Actual above simulated P90",f"{100*np.mean(valid['Actual Percentile']>90):.1f}%")
+                    c3.metric("Mean absolute error",f"{np.mean(np.abs(valid['Error vs Mean'])):.2f}")
+                st.download_button("Download graded validation",graded.to_csv(index=False),"simulation_validation_graded.csv","text/csv")
+            else: st.error("Actual-results CSV must contain Name and Actual columns.")
 
 elif view == "Portfolio Analysis":
     st.subheader("Portfolio Analysis")
