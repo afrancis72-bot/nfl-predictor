@@ -1077,46 +1077,109 @@ def simulate_classic_v2(pool, n_sims=10000, seed=20261006):
     return x,out
 
 def v2_rescore_classic_candidates(candidate_items, sim_players, sims):
+    """Score Classic candidates by how often they are actually strong in coherent slate sims.
+
+    V2.0.8 deliberately avoids summing player P95s.  Each legal lineup is evaluated as
+    a unit across the SAME full-slate simulation matrix.  We retain central/tail points,
+    but add scenario win/top-tail rates relative to the candidate bank so portfolio
+    selection can cover distinct paths to a tournament-winning score.
+    """
     if not candidate_items: return []
-    idx={str(n):i for i,n in enumerate(sim_players['Name'])}; enriched=[]; best=np.full(sims.shape[0],-1e9,dtype=np.float32)
+    idx={str(n):i for i,n in enumerate(sim_players['Name'])}
     relevant_names=set(sim_players.loc[sim_players.get('portfolio_relevant',True).astype(bool),'Name'].astype(str)) if 'portfolio_relevant' in sim_players.columns else set(idx)
+    enriched=[]
     for lineup,_old in candidate_items:
         names=lineup['Name'].astype(str).tolist()
         if any(n not in relevant_names for n in names): continue
         cols=[idx[n] for n in names if n in idx]
         if len(cols)!=9: continue
         pts=sims[:,cols].sum(axis=1).astype(np.float32)
-        rec={'lineup':lineup,'sim':pts,'mean':float(pts.mean()),'median':float(np.median(pts)),
-             'p75':float(np.percentile(pts,75)),'p90':float(np.percentile(pts,90)),'p95':float(np.percentile(pts,95))}
-        enriched.append(rec); best=np.maximum(best,pts)
+        enriched.append({'lineup':lineup,'sim':pts,'mean':float(pts.mean()),'median':float(np.median(pts)),
+                         'p75':float(np.percentile(pts,75)),'p90':float(np.percentile(pts,90)),
+                         'p95':float(np.percentile(pts,95))})
+    if not enriched: return []
+
+    # Candidate-bank scenario benchmarks.  Chunking keeps memory bounded while giving
+    # every lineup a true within-scenario comparison against the same legal bank.
+    ns=len(enriched[0]['sim'])
+    best=np.full(ns,-np.inf,dtype=np.float32)
+    second=np.full(ns,-np.inf,dtype=np.float32)
     for r in enriched:
-        r['optimal_rate']=float(np.mean(r['sim']>=best-1e-5))
+        z=r['sim']
+        better=z>best
+        second=np.where(better,best,np.maximum(second,z))
+        best=np.maximum(best,z)
+    # A practical tournament threshold: within 5 DK points of the best candidate in
+    # that simulated slate. This is much more stable than exact ties alone.
+    near_cut=best-5.0
+    for r in enriched:
+        z=r['sim']
+        r['optimal_rate']=float(np.mean(z>=best-1e-5))
+        r['near_optimal_rate']=float(np.mean(z>=near_cut))
+        # Scenario-specific regret is useful for portfolio coverage diagnostics.
+        r['mean_regret']=float(np.mean(best-z))
         own=float(pd.to_numeric(r['lineup']['ownership_pct'],errors='coerce').fillna(8).sum())
         lev=float(pd.to_numeric(r['lineup']['leverage_score'],errors='coerce').fillna(0).sum())
-        r['score']=.30*r['mean']+.15*r['median']+.20*r['p90']+.25*r['p95']+12*r['optimal_rate']-.025*own+.12*lev
+        # Point quality matters, but scenario success rates carry the tournament signal.
+        r['score']=(.22*r['mean']+.10*r['median']+.18*r['p90']+.20*r['p95']+
+                    22*r['near_optimal_rate']+35*r['optimal_rate']-.018*own+.10*lev)
     return enriched
 
+
 def select_v2_portfolio(records, n_lineups, max_exposure=.65, min_unique=3):
-    """Greedy marginal-scenario portfolio: rewards strong lineups AND new right-tail coverage."""
+    """Select a portfolio for distinct simulated winning scenarios.
+
+    Exposure is a safety ceiling, not a target.  Repeated players face a smooth marginal
+    concentration cost before they ever hit that ceiling.  A new lineup is rewarded for
+    covering simulations in which the CURRENT portfolio is not already near the bank's
+    best score.  This makes lineup 20 earn its seat by adding a different path to upside.
+    """
     if not records: return [],{}
-    records=sorted(records,key=lambda r:r['score'],reverse=True); selected=[]; counts={}; ns=len(records[0]['sim']); covered=np.full(ns,-1e9,dtype=np.float32)
-    max_count=max(1,math.ceil(int(n_lineups)*float(max_exposure)-1e-12)); max_overlap=9-int(min_unique)
-    pool_scores=np.array([r['score'] for r in records]); mu=pool_scores.mean(); sig=pool_scores.std()+1e-9
-    while len(selected)<int(n_lineups):
+    records=sorted(records,key=lambda r:r['score'],reverse=True)
+    n_lineups=int(n_lineups); ns=len(records[0]['sim'])
+    max_count=max(1,math.ceil(n_lineups*float(max_exposure)-1e-12)); max_overlap=9-int(min_unique)
+    # Candidate-bank best score in each scenario; fixed benchmark for marginal coverage.
+    bank_best=np.maximum.reduce([r['sim'] for r in records])
+    target=bank_best-5.0
+    selected=[]; counts={}; covered=np.zeros(ns,dtype=bool)
+    vals=np.array([r['score'] for r in records],dtype=float); mu=vals.mean(); sig=vals.std()+1e-9
+
+    while len(selected)<n_lineups:
         best_i=None; best_val=-1e18
         for i,r in enumerate(records):
             if r.get('_used'): continue
             names=set(r['lineup']['Name'].astype(str))
             if any(counts.get(n,0)>=max_count for n in names): continue
             if any(len(names & set(q['lineup']['Name'].astype(str)))>max_overlap for q in selected): continue
-            marginal=float(np.mean(np.maximum(r['sim']-covered,0))) if selected else float(np.mean(r['sim']))
-            overlap=(np.mean([len(names & set(q['lineup']['Name'].astype(str)))/9 for q in selected]) if selected else 0)
-            val=(r['score']-mu)/sig + .18*marginal - 1.75*overlap
+
+            wins=(r['sim']>=target)
+            # Primary portfolio objective: newly covered near-optimal scenarios.
+            new_cov=float(np.mean(wins & ~covered))
+            total_cov=float(np.mean(wins))
+            overlap=(np.mean([len(names & set(q['lineup']['Name'].astype(str)))/9 for q in selected]) if selected else 0.0)
+            # Smooth concentration penalty.  This does NOT impose a new hard cap; it
+            # prices the opportunity cost of using the same core yet again.
+            if selected:
+                denom=max(1,len(selected))
+                conc=np.mean([(counts.get(n,0)/denom)**1.7 for n in names])
+            else:
+                conc=0.0
+            # Reward scenario contribution first, then lineup quality.  The scaling is
+            # percentage-point based so a lineup that adds 1% unique scenario coverage
+            # receives a meaningful advantage over a near-duplicate.
+            val=(r['score']-mu)/sig + 85.0*new_cov + 8.0*total_cov - 1.4*overlap - 2.2*conc
             if val>best_val: best_val=val; best_i=i
         if best_i is None: break
-        r=records[best_i]; r['_used']=True; selected.append(r); covered=np.maximum(covered,r['sim'])
+        r=records[best_i]; r['_used']=True; selected.append(r)
+        covered |= (r['sim']>=target)
         for n in set(r['lineup']['Name'].astype(str)): counts[n]=counts.get(n,0)+1
-    return [r['lineup'] for r in selected],{'selected_records':selected,'max_count':max_count,'scenario_coverage_mean':float(np.mean(covered)) if selected else np.nan}
+
+    return [r['lineup'] for r in selected],{
+        'selected_records':selected,'max_count':max_count,
+        'scenario_coverage_rate':float(np.mean(covered)) if selected else 0.0,
+        'scenario_coverage_mean':float(np.mean(covered)) if selected else 0.0,
+        'selection_method':'V2.0.8 marginal near-optimal scenario coverage + soft concentration cost'
+    }
 
 def select_showdown_portfolio_v2(cands, players, n_lineups, max_player_exp, max_cpt_exp, min_unique, locks, excludes, cpt_excludes):
     """Portfolio selection by marginal scenario coverage, not a stack-ranked list of near-duplicates."""
@@ -1837,7 +1900,7 @@ elif view == "Lineup Builder":
     bank_size=st.slider("Candidate bank size",300,2000,key="classic_bank_size",step=100,disabled=False,help="V3.1.7 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
     solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,key="classic_solver_seconds",step=5,disabled=False)
 
-    st.info("V2 defaults: 15 lineups • 65% safety exposure ceiling • 3 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V2 rescoring uses coherent full-slate scenarios with heavy-tailed player variance and model uncertainty, then selects lineups for marginal scenario coverage instead of simply taking the highest-ranked near-duplicates.")
+    st.info("V2.0.8 defaults: 15 lineups • 65% safety exposure ceiling • 3 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V2.0.8 evaluates every legal candidate against the same coherent full-slate simulations, measures near-optimal scenario success, and selects each additional lineup for NEW scenario coverage with a soft concentration cost. Exposure remains a safety ceiling rather than a target.")
 
     if st.button("Generate portfolio",type="primary"):
         with st.spinner("Generating diversified portfolio..."):

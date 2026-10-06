@@ -28,3 +28,12 @@
 - Bounds log-space dispersion and latent shocks for RB/WR/TE while preserving right-skewed distributions.
 - Adds adaptive position-aware simulation guardrails; these scale with projection/variance rather than imposing one universal fantasy ceiling.
 - Adds fail-closed numerical sanity assertions before optimizer use.
+
+## V2.0.8 — Scenario Portfolio Selection
+- Freezes the V2.0.7 projection and bounded-tail simulation layers.
+- Scores Classic candidates as complete lineups against the same coherent full-slate simulations.
+- Adds exact-optimal and within-5-DK-points near-optimal scenario rates.
+- Portfolio selection rewards NEW near-optimal scenario coverage from each additional lineup.
+- Adds a smooth concentration cost for repeatedly using the same player core before the safety exposure ceiling is reached.
+- Keeps exposure as a broad safety ceiling; no player-specific exposure caps were introduced.
+- Keeps legality, salary, minimum-unique and projection-quality constraints unchanged.
