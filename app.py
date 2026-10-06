@@ -186,14 +186,37 @@ def rebuild_uploaded_weekly_projections(pool, env):
     x["weekly_projection_source"]="DK history + salary peers + current market + role proxy"
     x["projection_confidence"]=np.where(ppg>=5,0.82,0.70)
     x["weekly_projection_valid"]=team_pts.notna() & (sal>0) & ((ppg>0)|(pos=="DST"))
-    x["role_status"]=np.where(x["weekly_projection_valid"],"V2 Weekly Modeled","No Weekly Baseline")
-    # Availability remains a separate hard gate.
+    # V2.0.5: the raw DK salary pool is NOT the simulation pool.  Build a
+    # conservative viability layer from current-slate pricing + demonstrated DK
+    # production.  This prevents emergency QBs / buried depth players from
+    # forcing fake projections merely because DraftKings priced them.
+    team_pos_rank=x.groupby(["TeamAbbrev","Position"])["Salary"].rank(method="min",ascending=False)
+    team_rank=x.groupby("TeamAbbrev")["Salary"].rank(method="min",ascending=False)
+    viable=pd.Series(False,index=x.index)
+    viable |= (pos=="DST")
+    viable |= (pos=="QB") & (team_pos_rank==1) & ((ppg>=8.0)|(sal>=5000))
+    viable |= (pos=="RB") & (((team_pos_rank<=3)&(ppg>=4.0)) | (ppg>=8.0) | (sal>=5000))
+    viable |= (pos=="WR") & (((team_pos_rank<=4)&(ppg>=4.0)) | (ppg>=8.0) | (sal>=5000))
+    viable |= (pos=="TE") & (((team_pos_rank<=2)&(ppg>=3.0)) | (ppg>=7.0) | (sal>=4500))
+    # A zero-history player can enter only when the market has priced him as a
+    # material team option; otherwise he remains visible in the raw slate but
+    # outside the simulation until better role data exists.
+    viable |= (ppg<=0) & (team_rank<=5) & (sal>=4500) & pos.isin(["RB","WR","TE"])
+    x["simulation_viable"]=viable
+    x["role_status"]=np.select(
+        [~viable, viable & x["weekly_projection_valid"]],
+        ["Raw DK Pool / No Credible Role","V2 Weekly Modeled"],
+        default="Viable / Missing Baseline")
+    # Availability remains a separate hard gate. Only viable players can reach
+    # the optimizer; projection integrity is enforced on this exact population.
     blocked=x.get("injury_blocked",pd.Series(False,index=x.index)).fillna(False).astype(bool)
-    x["optimizer_eligible"]=x["weekly_projection_valid"] & ~blocked
+    x["optimizer_eligible"]=x["simulation_viable"] & x["weekly_projection_valid"] & ~blocked
     return calibrate_classic_tails(x)
 
 def weekly_projection_integrity(pool):
-    elig=pool[~pool.get("injury_blocked",pd.Series(False,index=pool.index)).fillna(False).astype(bool)].copy()
+    viable=pool.get("simulation_viable",pool.get("optimizer_eligible",pd.Series(False,index=pool.index))).fillna(False).astype(bool)
+    blocked=pool.get("injury_blocked",pd.Series(False,index=pool.index)).fillna(False).astype(bool)
+    elig=pool[viable & ~blocked].copy()
     bad=elig[~elig.get("weekly_projection_valid",pd.Series(False,index=elig.index)).fillna(False).astype(bool)]
     return len(bad)==0,bad
 
@@ -1697,7 +1720,7 @@ elif view == "Simulation":
     else:
         integrity_ok, integrity_bad=weekly_projection_integrity(pool)
         if not integrity_ok:
-            st.error(f"V2 PROJECTION-INTEGRITY GATE: {len(integrity_bad)} active player(s) lack a valid current-week baseline. Simulation is blocked rather than mixing current and historical data.")
+            st.error(f"V2 PROJECTION-INTEGRITY GATE: {len(integrity_bad)} simulation-viable player(s) lack a valid current-week baseline. Simulation is blocked rather than mixing current and historical data.")
             st.dataframe(integrity_bad[[c for c in ["Name","Position","TeamAbbrev","game","Salary","weekly_projection_source"] if c in integrity_bad.columns]],hide_index=True,use_container_width=True)
         else:
             active_games=sorted(pool['game'].dropna().astype(str).unique().tolist())
@@ -1735,7 +1758,7 @@ elif view == "Lineup Builder":
     if st.session_state.get("classic_uploaded_pool") is not None:
         integrity_ok, integrity_bad = weekly_projection_integrity(pool)
         if not integrity_ok:
-            st.error(f"V2 PROJECTION-INTEGRITY GATE: {len(integrity_bad)} active player(s) lack a valid current-week baseline. Portfolio generation is blocked rather than using DK PPG as a projection.")
+            st.error(f"V2 PROJECTION-INTEGRITY GATE: {len(integrity_bad)} simulation-viable player(s) lack a valid current-week baseline. Portfolio generation is blocked rather than using DK PPG as a projection.")
             st.dataframe(integrity_bad[[c for c in ["Name","Position","TeamAbbrev","Salary","AvgPointsPerGame","weekly_projection_source"] if c in integrity_bad.columns]],hide_index=True,use_container_width=True)
             st.stop()
     a,b,c,d=st.columns(4)
