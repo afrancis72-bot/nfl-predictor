@@ -15,3 +15,10 @@
 - Viability is determined conservatively from current-slate team/position salary rank plus demonstrated DK production; no fake projection is created to satisfy the gate.
 - The projection-integrity gate now evaluates only simulation-viable, non-blocked players.
 - `simulation_viable` and transparent role labels remain available for audit.
+
+
+## V2.0.6 distribution audit repair
+- Replaces additive-noise-plus-zero-clipping for RB/WR/TE with a smooth positive right-skewed distribution.
+- Allows DST simulations to produce negative DraftKings scores and QB rare negative outcomes.
+- Adds simulation-derived portfolio relevance: skill players need Mean >= 4 or P90 >= 10; QBs need Mean >= 10. This preserves real tail punts while excluding buried depth players from portfolio generation.
+- Keeps the broad simulation pool for calibration while narrowing lineup eligibility downstream.

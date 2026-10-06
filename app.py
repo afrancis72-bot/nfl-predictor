@@ -1022,14 +1022,44 @@ def simulate_classic_v2(pool, n_sims=10000, seed=20261006):
         elif pos=='DST': z=-.38*off.get(opp,np.zeros(ns))-.15*pace[g]-.13*rg+.80*idio
         else: z=.15*pace[g]+.28*off[t]+.78*idio
         z=(z-z.mean())/(z.std()+1e-9)
-        out[:,j]=np.clip(mean+unc+sd*z,0,None).astype(np.float32)
+        # V2.0.6 distribution repair: do not create a fake zero-point mass by
+        # adding symmetric noise and clipping. Skill positions use a smooth
+        # positive, right-skewed transform; QB remains near-symmetric with a
+        # small negative allowance; DST is allowed to score negative DK points.
+        center=np.maximum(0.05, mean+unc)
+        if pos in ['RB','WR','TE']:
+            cv=np.clip(sd/max(mean,0.5),0.20,1.35)
+            sigma=np.sqrt(np.log1p(cv*cv))
+            score=center*np.exp(sigma*z-0.5*sigma*sigma)
+        elif pos=='QB':
+            score=center+sd*z
+            score=np.maximum(score,-4.0)
+        elif pos=='DST':
+            score=center+sd*z
+            score=np.maximum(score,-12.0)
+        else:
+            score=center+sd*z
+        out[:,j]=score.astype(np.float32)
+    # Portfolio relevance is determined from the simulated distribution, not
+    # salary alone. Preserve credible punts when their tail is real, while
+    # keeping buried depth players out of lineup generation.
+    sim_mean=out.mean(axis=0); sim_p90=np.percentile(out,90,axis=0)
+    pos_arr=x['Position'].astype(str).to_numpy()
+    relevant=np.ones(len(x),dtype=bool)
+    skill=np.isin(pos_arr,['RB','WR','TE'])
+    relevant[skill]=(sim_mean[skill]>=4.0) | (sim_p90[skill]>=10.0)
+    relevant[pos_arr=='QB']=sim_mean[pos_arr=='QB']>=10.0
+    x['portfolio_relevant']=relevant
     return x,out
 
 def v2_rescore_classic_candidates(candidate_items, sim_players, sims):
     if not candidate_items: return []
     idx={str(n):i for i,n in enumerate(sim_players['Name'])}; enriched=[]; best=np.full(sims.shape[0],-1e9,dtype=np.float32)
+    relevant_names=set(sim_players.loc[sim_players.get('portfolio_relevant',True).astype(bool),'Name'].astype(str)) if 'portfolio_relevant' in sim_players.columns else set(idx)
     for lineup,_old in candidate_items:
-        cols=[idx[n] for n in lineup['Name'].astype(str) if n in idx]
+        names=lineup['Name'].astype(str).tolist()
+        if any(n not in relevant_names for n in names): continue
+        cols=[idx[n] for n in names if n in idx]
         if len(cols)!=9: continue
         pts=sims[:,cols].sum(axis=1).astype(np.float32)
         rec={'lineup':lineup,'sim':pts,'mean':float(pts.mean()),'median':float(np.median(pts)),
