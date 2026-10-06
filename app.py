@@ -2,6 +2,9 @@ from pathlib import Path
 import io
 import math
 import random
+import json
+import re
+from urllib.request import Request, urlopen
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -62,6 +65,9 @@ def parse_classic_dk_csv(uploaded):
         "INACT":"INACTIVE","INA":"INACTIVE","QUESTIONABLE":"Q","DOUBTFUL":"D"
     })
     x["game"]=x["Game Info"].astype(str).str.split().str[0].str.upper()
+    # Preserve the contest date from DK so weekly market data can be resolved automatically.
+    date_text=x["Game Info"].astype(str).str.extract(r"(\d{1,2}/\d{1,2}/\d{4})", expand=False)
+    x["game_date"]=pd.to_datetime(date_text, errors="coerce").dt.strftime("%Y%m%d")
     x=x[x["Position"].isin(["QB","RB","WR","TE","DST"])].dropna(subset=["Name","Salary","TeamAbbrev"])
     x=x[x["Salary"]>0].drop_duplicates(["Name","Position","TeamAbbrev"],keep="first")
     x["opponent"]=[opponent_from_game(g,t) for g,t in zip(x["game"],x["TeamAbbrev"])]
@@ -152,6 +158,77 @@ def environment_editor_seed(pool, researched_games):
     if "game_total" not in seed: seed["game_total"]=np.nan
     if "spread" not in seed: seed["spread"]=np.nan
     return seed[["game","game_total","spread"]]
+
+
+
+def _market_team_abbr(x):
+    """Normalize common ESPN/DK NFL abbreviation differences."""
+    a=str(x or "").strip().upper()
+    return {"JAX":"JAC","WSH":"WAS","LA":"LAR"}.get(a,a)
+
+def _espn_home_spread(odds, home_abbr, away_abbr):
+    """Return a signed home-team spread when ESPN supplies enough information."""
+    details=str(odds.get("details","") or "").strip().upper()
+    m=re.search(r"([A-Z]{2,3})\s*([+-]?\d+(?:\.\d+)?)", details)
+    if m:
+        fav=_market_team_abbr(m.group(1)); val=float(m.group(2))
+        # Details commonly appear as 'TEAM -3.5'. Preserve explicit sign.
+        if fav==_market_team_abbr(home_abbr): return val if val < 0 else -abs(val)
+        if fav==_market_team_abbr(away_abbr): return abs(val)
+    raw=pd.to_numeric(pd.Series([odds.get("spread")]),errors="coerce").iloc[0]
+    return float(raw) if pd.notna(raw) else np.nan
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_espn_nfl_market(date_yyyymmdd):
+    """Fetch current NFL market totals/spreads from ESPN's public scoreboard feed."""
+    url=f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={date_yyyymmdd}&limit=100"
+    req=Request(url, headers={"User-Agent":"Mozilla/5.0"})
+    with urlopen(req, timeout=12) as resp:
+        payload=json.loads(resp.read().decode("utf-8"))
+    rows=[]
+    for event in payload.get("events",[]):
+        comp=(event.get("competitions") or [{}])[0]
+        competitors=comp.get("competitors") or []
+        home=next((c for c in competitors if c.get("homeAway")=="home"),None)
+        away=next((c for c in competitors if c.get("homeAway")=="away"),None)
+        if not home or not away: continue
+        hab=_market_team_abbr((home.get("team") or {}).get("abbreviation"))
+        aab=_market_team_abbr((away.get("team") or {}).get("abbreviation"))
+        odds_list=comp.get("odds") or []
+        odds=odds_list[0] if odds_list else {}
+        total=pd.to_numeric(pd.Series([odds.get("overUnder")]),errors="coerce").iloc[0]
+        spread=_espn_home_spread(odds,hab,aab) if odds else np.nan
+        provider=((odds.get("provider") or {}).get("name") if odds else None) or "ESPN scoreboard"
+        rows.append({"game":f"{aab}@{hab}","game_total":float(total) if pd.notna(total) else np.nan,
+                     "spread":spread,"market_source":provider,"market_status":"resolved" if pd.notna(total) else "odds unavailable"})
+    return pd.DataFrame(rows)
+
+def auto_market_environment(pool):
+    """Resolve current-slate market data only. Never fills missing games with historical rows."""
+    active=environment_editor_seed(pool,None)
+    dates=sorted({str(d) for d in pool.get("game_date",pd.Series(dtype=str)).dropna() if str(d) not in ("","nan","NaT")})
+    if not dates:
+        active["market_source"]=""; active["market_status"]="DK game date unavailable"
+        return active
+    frames=[]
+    errors=[]
+    for d in dates:
+        try:
+            f=fetch_espn_nfl_market(d)
+            if len(f): frames.append(f)
+        except Exception as e:
+            errors.append(f"{d}: {type(e).__name__}")
+    market=pd.concat(frames,ignore_index=True) if frames else pd.DataFrame(columns=["game","game_total","spread","market_source","market_status"])
+    if len(market): market["game"]=market["game"].astype(str).str.upper()
+    out=active.drop(columns=["game_total","spread"]).merge(market,on="game",how="left")
+    for c in ["game_total","spread"]:
+        if c not in out: out[c]=np.nan
+    if "market_source" not in out: out["market_source"]=""
+    if "market_status" not in out: out["market_status"]=""
+    out["market_source"]=out["market_source"].fillna("")
+    out["market_status"]=out["market_status"].fillna("unresolved")
+    if errors and not len(frames): out["market_status"]="fetch failed: "+"; ".join(errors)
+    return out[["game","game_total","spread","market_source","market_status"]]
 
 def calibrate_classic_tails(pool):
     """V3.1.6: bound pathological player tails while preserving ordering and upside."""
@@ -1367,7 +1444,7 @@ if "classic_environment_verified" not in st.session_state:
     st.session_state["classic_environment_verified"]=False
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.2")
+st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.3")
 st.caption("DraftKings NFL DFS • correlated game scripts • variance + uncertainty • scenario portfolios • calibration")
 st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
@@ -1429,10 +1506,25 @@ if view == "Slate Setup":
     active_upload=st.session_state.get("classic_uploaded_pool")
     if active_upload is not None:
         st.markdown("#### Verify this slate's game environment")
-        st.caption("The table contains ONLY games from the uploaded DK slate. Enter the current market game total for every game; spread is optional but improves the environment score. This prevents any prior-week environment from leaking into a new slate.")
+        st.caption("The table contains ONLY games from the uploaded DK slate. Use the automatic market refresh first. Any unresolved game stays unverified; prior-week data are never used as a fallback.")
+        if st.button("Auto-fetch current market totals & spreads", type="primary", key="auto_market_refresh"):
+            with st.spinner("Fetching current NFL market data..."):
+                fetched=auto_market_environment(active_upload)
+            st.session_state["classic_active_environment"]=fetched.copy()
+            st.session_state["classic_environment_verified"]=False
+            resolved=int(pd.to_numeric(fetched["game_total"],errors="coerce").notna().sum())
+            if resolved==len(fetched) and len(fetched):
+                st.success(f"Resolved market totals for all {resolved} active games. Review and activate below.")
+            else:
+                st.warning(f"Resolved {resolved} of {len(fetched)} active games. Unresolved games must be entered manually before activation.")
+            st.rerun()
         seed=environment_editor_seed(active_upload, st.session_state.get("classic_active_environment"))
-        edited_env=st.data_editor(seed,hide_index=True,use_container_width=True,disabled=["game"],key="classic_env_editor")
-        if st.button("Activate current game environment",type="primary",key="activate_current_env"):
+        src=st.session_state.get("classic_active_environment")
+        if isinstance(src,pd.DataFrame) and len(src) and "market_source" in src.columns:
+            meta=src[[c for c in ["game","market_source","market_status"] if c in src.columns]].drop_duplicates("game")
+            seed=seed.merge(meta,on="game",how="left")
+        edited_env=st.data_editor(seed,hide_index=True,use_container_width=True,disabled=[c for c in ["game","market_source","market_status"] if c in seed.columns],key="classic_env_editor")
+        if st.button("Activate reviewed game environment",type="primary",key="activate_current_env"):
             checked, ok, missing=current_slate_environment(active_upload,edited_env)
             if not ok:
                 st.session_state["classic_environment_verified"]=False

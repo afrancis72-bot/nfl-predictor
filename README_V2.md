@@ -1,13 +1,14 @@
-# NFL Predictor Pro — DFS Engine V2.0.2
+# NFL Predictor Pro — DFS Engine V2.0.3
 
-## Current-slate lock fix
+## Automatic current-slate market environment
 
-V2.0.2 removes the misleading **Use built-in weekly model slate** action. The bundled Week 4 research files are historical/demo inputs, not a live current-week feed.
+V2.0.3 keeps the V2.0.2 current-slate lock and adds an automatic weekly market-data step.
 
 Weekly workflow:
-1. Upload the current DraftKings Classic salary CSV.
-2. That upload becomes the locked active slate and cannot silently revert to bundled prior-week data.
-3. Verify/enter game totals for every active game and click **Activate current game environment**.
-4. Generate simulations/portfolios only after the current-slate environment gate passes.
+1. Upload the current DraftKings Classic salary CSV. The DK file supplies the active roster, games, IDs, salaries, and slate date.
+2. Click **Auto-fetch current market totals & spreads**. The app queries the current NFL scoreboard market feed for the DK slate date and matches only the active games.
+3. Review the returned total/spread/source/status table. If any game cannot be resolved, that game remains unverified and may be entered manually.
+4. Click **Activate reviewed game environment** only after every active game has a valid total.
+5. V2 simulation/portfolio generation remains blocked until full current-slate coverage is verified.
 
-The only reset action is now **Clear uploaded slate**, explicitly labeled as returning to historical/demo data. Clearing also marks the environment unverified so historical game totals cannot be mistaken for current verified inputs.
+Safety behavior: no unresolved current game is ever filled from the bundled historical Week 4 environment. The automatic feed is a convenience source, not a silent fallback; unresolved or failed fetches remain visible.
