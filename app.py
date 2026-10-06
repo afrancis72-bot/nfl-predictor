@@ -1028,9 +1028,24 @@ def simulate_classic_v2(pool, n_sims=10000, seed=20261006):
         # small negative allowance; DST is allowed to score negative DK points.
         center=np.maximum(0.05, mean+unc)
         if pos in ['RB','WR','TE']:
-            cv=np.clip(sd/max(mean,0.5),0.20,1.35)
-            sigma=np.sqrt(np.log1p(cv*cv))
-            score=center*np.exp(sigma*z-0.5*sigma*sigma)
+            # Bound log-space dispersion directly.  The previous CV cap still allowed
+            # sigma~1.0 for tiny means; combined with Student-t z this could create
+            # astronomical rare draws.  These caps preserve useful right tails
+            # without allowing numerical lottery-ticket explosions.
+            raw_cv=sd/max(mean,1.0)
+            sigma_cap={'RB':0.78,'WR':0.82,'TE':0.78}.get(pos,0.80)
+            sigma=np.minimum(np.sqrt(np.log1p(np.clip(raw_cv,0.20,1.10)**2)),sigma_cap)
+            # Cap the latent shock as well.  This is a simulation sanity bound, not
+            # a fantasy-score hard cap: the resulting ceiling still scales with the
+            # player's center and uncertainty.
+            z_pos=np.clip(z,-3.25,3.75)
+            score=center*np.exp(sigma*z_pos-0.5*sigma*sigma)
+            # Final adaptive guardrail catches corrupted inputs while retaining
+            # realistic slate-winning tails.  Low-center depth players cannot
+            # manufacture 100s/1000s of DK points from numerical overflow.
+            adaptive_cap=np.maximum(35.0, mean + 6.0*sd)
+            adaptive_cap=np.minimum(adaptive_cap, {'RB':75.0,'WR':80.0,'TE':65.0}.get(pos,75.0))
+            score=np.minimum(score,adaptive_cap)
         elif pos=='QB':
             score=center+sd*z
             score=np.maximum(score,-4.0)
@@ -1044,6 +1059,15 @@ def simulate_classic_v2(pool, n_sims=10000, seed=20261006):
     # salary alone. Preserve credible punts when their tail is real, while
     # keeping buried depth players out of lineup generation.
     sim_mean=out.mean(axis=0); sim_p90=np.percentile(out,90,axis=0)
+    sim_p99=np.percentile(out,99,axis=0); sim_max=out.max(axis=0)
+    # Numerical sanity assertions: fail closed if a future distribution change
+    # produces an impossible mean/tail relationship.
+    bad_num=(~np.isfinite(sim_mean)) | (~np.isfinite(sim_p99)) | (sim_mean > np.maximum(sim_p99*1.35, 90.0))
+    if bad_num.any():
+        bad_names=x.loc[bad_num,'Name'].astype(str).tolist()[:12]
+        raise ValueError('Simulation tail sanity check failed for: '+', '.join(bad_names))
+    x['sim_p99_sanity']=sim_p99
+    x['sim_max_sanity']=sim_max
     pos_arr=x['Position'].astype(str).to_numpy()
     relevant=np.ones(len(x),dtype=bool)
     skill=np.isin(pos_arr,['RB','WR','TE'])

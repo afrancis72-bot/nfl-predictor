@@ -22,3 +22,9 @@
 - Allows DST simulations to produce negative DraftKings scores and QB rare negative outcomes.
 - Adds simulation-derived portfolio relevance: skill players need Mean >= 4 or P90 >= 10; QBs need Mean >= 10. This preserves real tail punts while excluding buried depth players from portfolio generation.
 - Keeps the broad simulation pool for calibration while narrowing lineup eligibility downstream.
+
+## V2.0.7 — bounded tail generator
+- Repairs low-mean/high-variance lognormal numerical explosions found in the V2.0.6 full-slate audit.
+- Bounds log-space dispersion and latent shocks for RB/WR/TE while preserving right-skewed distributions.
+- Adds adaptive position-aware simulation guardrails; these scale with projection/variance rather than imposing one universal fantasy ceiling.
+- Adds fail-closed numerical sanity assertions before optimizer use.
