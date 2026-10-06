@@ -1989,33 +1989,55 @@ elif view == "Lineup Builder":
             st.caption(f"Projection quality guardrail: strong reference {reference_proj:.1f} DK points • minimum accepted {min_proj_required:.1f} ({projection_floor_pct:.0%}).")
             ldf=lineups_to_df(lineups,strategy,float(own_weight),float(leverage_weight),stack_rank=True)
             edf=exposure_df(lineups)
-            st.markdown("#### Lineups — stack ranked best to worst")
-            st.caption("V3.1.6 GPP Rank emphasizes Mean + P90 + P95, uses P99 only as a small tail signal, then adds bounded game-environment and stack-correlation bonuses before ownership/leverage adjustments. Percentile columns are player-upside indexes, not literal lineup percentiles.")
-            st.dataframe(ldf,use_container_width=True,hide_index=True)
-            if qc["pass"]:
-                st.download_button("Download lineups",ldf.to_csv(index=False),"nfl_lineups_v316.csv","text/csv")
-            else:
-                st.warning("Download disabled until final portfolio QC passes.")
-            st.markdown("#### Exposure")
-            st.dataframe(edf,use_container_width=True,hide_index=True)
-            st.download_button("Download exposure",edf.to_csv(index=False),"nfl_exposure.csv","text/csv")
-            if portfolio_mode == "DFS Engine V2 Scenario Portfolio" and solver_meta and solver_meta.get('selected_records'):
-                adf,padf,tadf,ameta=v2_portfolio_attribution(solver_meta['selected_records'],st.session_state.get('classic_v2_records',[]))
-                st.markdown("#### V2.0.9 Portfolio Attribution — diagnostic only")
-                st.caption("These diagnostics use the exact coherent scenarios used by portfolio selection. They do not change lineup selection. Exposure minus winning presence near zero suggests concentration is scenario-earned; a large positive gap flags concentration for review, not an automatic cap.")
-                m1,m2,m3=st.columns(3)
-                m1.metric("Near-optimal scenario coverage",f"{ameta.get('Portfolio near-optimal coverage %',0):.1f}%")
-                m2.metric("Avg portfolio regret",f"{ameta.get('Avg portfolio regret',0):.2f} DK")
-                m3.metric("Candidate-bank best avg",f"{ameta.get('Candidate-bank avg best score',0):.1f}")
-                st.markdown("##### Lineup scenario attribution")
-                st.dataframe(adf,use_container_width=True,hide_index=True)
-                st.download_button("Download lineup attribution",adf.to_csv(index=False),"nfl_v2_lineup_attribution.csv","text/csv")
-                st.markdown("##### Player concentration attribution")
-                st.dataframe(padf.sort_values(['Exposure %','Exposure - Winning Presence'],ascending=[False,False]),use_container_width=True,hide_index=True)
-                st.download_button("Download player attribution",padf.to_csv(index=False),"nfl_v2_player_attribution.csv","text/csv")
-                st.markdown("##### Team / game-environment attribution")
-                st.dataframe(tadf.sort_values('Lineup Presence %',ascending=False),use_container_width=True,hide_index=True)
-                st.download_button("Download team attribution",tadf.to_csv(index=False),"nfl_v2_team_attribution.csv","text/csv")
+            adf=padf=tadf=None; ameta={}
+            if portfolio_mode == "DFS Engine V2 Scenario Portfolio" and solver_meta and solver_meta.get("selected_records"):
+                adf,padf,tadf,ameta=v2_portfolio_attribution(solver_meta["selected_records"],st.session_state.get("classic_v2_records",[]))
+            st.session_state["classic_portfolio_bundle"]={
+                "lineups_df":ldf, "exposure_df":edf, "qc":qc,
+                "reference_proj":float(reference_proj), "min_proj_required":float(min_proj_required),
+                "projection_floor_pct":float(projection_floor_pct), "solver_meta":solver_meta,
+                "portfolio_mode":portfolio_mode, "lineup_attr":adf, "player_attr":padf,
+                "team_attr":tadf, "attr_meta":ameta
+            }
+
+    bundle=st.session_state.get("classic_portfolio_bundle")
+    if bundle is not None:
+        ldf=bundle["lineups_df"]; edf=bundle["exposure_df"]; qc=bundle["qc"]
+        solver_meta=bundle.get("solver_meta")
+        if qc.get("pass"):
+            st.success(f"Persisted portfolio ready: {len(ldf)} lineups. FINAL QC: PASS")
+        else:
+            st.error("Persisted portfolio FINAL QC: FAIL — export is not considered tournament-ready.")
+            for issue in qc.get("issues",[]): st.write("• "+issue)
+        if solver_meta is not None:
+            st.caption(f"Candidate bank: {solver_meta.get('candidate_count',0):,} • portfolio constraints: {solver_meta.get('constraint_count',0):,} • solver: {solver_meta.get('message','')}")
+        st.caption(f"Projection quality guardrail: strong reference {bundle.get('reference_proj',0):.1f} DK points • minimum accepted {bundle.get('min_proj_required',0):.1f} ({bundle.get('projection_floor_pct',0):.0%}).")
+        st.markdown("#### Lineups — stack ranked best to worst")
+        st.dataframe(ldf,use_container_width=True,hide_index=True)
+        if qc.get("pass"):
+            st.download_button("Download lineups",ldf.to_csv(index=False),"nfl_lineups_v316.csv","text/csv",key="persist_dl_lineups")
+        else:
+            st.warning("Download disabled until final portfolio QC passes.")
+        st.markdown("#### Exposure")
+        st.dataframe(edf,use_container_width=True,hide_index=True)
+        st.download_button("Download exposure",edf.to_csv(index=False),"nfl_exposure.csv","text/csv",key="persist_dl_exposure")
+        adf=bundle.get("lineup_attr"); padf=bundle.get("player_attr"); tadf=bundle.get("team_attr"); ameta=bundle.get("attr_meta") or {}
+        if adf is not None and padf is not None and tadf is not None:
+            st.markdown("#### V2.0.9.1 Portfolio Attribution — persistent diagnostics")
+            st.caption("These diagnostics are frozen to the exact persisted portfolio and coherent scenarios used when it was generated. Downloading any CSV will not rebuild or erase the portfolio.")
+            m1,m2,m3=st.columns(3)
+            m1.metric("Near-optimal scenario coverage",f"{ameta.get('Portfolio near-optimal coverage %',0):.1f}%")
+            m2.metric("Avg portfolio regret",f"{ameta.get('Avg portfolio regret',0):.2f} DK")
+            m3.metric("Candidate-bank best avg",f"{ameta.get('Candidate-bank avg best score',0):.1f}")
+            st.markdown("##### Lineup scenario attribution")
+            st.dataframe(adf,use_container_width=True,hide_index=True)
+            st.download_button("Download lineup attribution",adf.to_csv(index=False),"nfl_v2_lineup_attribution.csv","text/csv",key="persist_dl_lineup_attr")
+            st.markdown("##### Player concentration attribution")
+            st.dataframe(padf.sort_values(["Exposure %","Exposure - Winning Presence"],ascending=[False,False]),use_container_width=True,hide_index=True)
+            st.download_button("Download player attribution",padf.to_csv(index=False),"nfl_v2_player_attribution.csv","text/csv",key="persist_dl_player_attr")
+            st.markdown("##### Team / game-environment attribution")
+            st.dataframe(tadf.sort_values("Lineup Presence %",ascending=False),use_container_width=True,hide_index=True)
+            st.download_button("Download team attribution",tadf.to_csv(index=False),"nfl_v2_team_attribution.csv","text/csv",key="persist_dl_team_attr")
 
 elif view == "Single Game Showdown":
     st.subheader("DraftKings Single-Game Showdown")

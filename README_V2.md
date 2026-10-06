@@ -44,3 +44,9 @@
 - Adds player exposure versus presence in portfolio-winning scenarios and the exposure-minus-winning-presence gap.
 - Adds team presence attribution for game-environment concentration review.
 - Adds downloadable lineup, player, and team attribution CSVs.
+
+## V2.0.9.1 — Persistent portfolio downloads
+- Stores the generated lineup portfolio and all attribution tables together in Streamlit session state.
+- Download buttons no longer erase or rebuild the portfolio on rerun.
+- Lineups, lineup attribution, player attribution, and team attribution remain tied to the exact same generated build.
+- Modeling and V2.0.8 scenario portfolio-selection logic are unchanged.
