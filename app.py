@@ -121,6 +121,82 @@ def classic_pool_from_upload(dk, base_pool):
 
 
 
+
+
+def rebuild_uploaded_weekly_projections(pool, env):
+    """V2.0.4 current-week projection center for uploaded DK slates.
+
+    DK AvgPointsPerGame is treated as a historical feature only.  The weekly center is
+    rebuilt from a shrinkage baseline, salary-local positional peers, current market
+    implied team scoring and a bounded within-team role proxy.  Historical bundled
+    weekly projections never qualify an uploaded player by themselves.
+    """
+    x=pool.copy()
+    e=env.copy() if isinstance(env,pd.DataFrame) else pd.DataFrame()
+    if e.empty or "game" not in e or "game_total" not in e:
+        x["weekly_projection_valid"]=False
+        x["weekly_projection_source"]="UNVERIFIED: current market environment missing"
+        return x
+    e["game"]=e["game"].astype(str).str.upper()
+    e["game_total"]=pd.to_numeric(e["game_total"],errors="coerce")
+    e["spread"]=pd.to_numeric(e.get("spread",0),errors="coerce").fillna(0.0)
+    em=e.set_index("game")[["game_total","spread"]].to_dict("index")
+    implied=[]
+    for g,t in zip(x["game"].astype(str).str.upper(),x["TeamAbbrev"].astype(str).str.upper()):
+        row=em.get(g,{}) ; total=row.get("game_total",np.nan); hs=row.get("spread",0.0)
+        if not np.isfinite(total): implied.append(np.nan); continue
+        away,home=(g.split("@",1)+[""])[:2] if "@" in g else ("","")
+        home_pts=total/2.0-hs/2.0; away_pts=total/2.0+hs/2.0
+        implied.append(home_pts if t==home else away_pts if t==away else total/2.0)
+    x["team_implied_points"]=implied
+    ppg=pd.to_numeric(x.get("AvgPointsPerGame",0),errors="coerce").fillna(0.0).clip(lower=0)
+    sal=pd.to_numeric(x["Salary"],errors="coerce").fillna(0)
+    pos=x["Position"].astype(str).str.upper()
+    priors={"QB":15.0,"RB":8.0,"WR":7.0,"TE":5.5,"DST":6.5}
+    # Salary-local peer baseline prevents a four-game scoring average from becoming the projection.
+    peer=np.zeros(len(x),dtype=float)
+    for i,(pp,ss) in enumerate(zip(pos,sal)):
+        mask=(pos==pp)&(sal.between(ss-1200,ss+1200))&(ppg>0)
+        vals=ppg[mask]
+        peer[i]=float(vals.median()) if len(vals)>=4 else float(ppg[(pos==pp)&(ppg>0)].median() if ((pos==pp)&(ppg>0)).any() else priors.get(pp,6.0))
+    peer=pd.Series(peer,index=x.index)
+    prior=pd.Series([priors.get(v,6.0) for v in pos],index=x.index)
+    history=np.where(ppg>0,0.62*ppg+0.28*peer+0.10*prior,0.75*peer+0.25*prior)
+    history=pd.Series(history,index=x.index)
+    # Current market scoring environment: position-sensitive and deliberately bounded.
+    team_pts=pd.to_numeric(x["team_implied_points"],errors="coerce")
+    expo=pos.map({"QB":0.72,"RB":0.62,"WR":0.68,"TE":0.55,"DST":-0.30}).fillna(0.6)
+    market=np.power((team_pts/22.5).clip(0.72,1.35),expo)
+    market=market.clip(0.82,1.22).fillna(1.0)
+    # Bounded role proxy from current DK salary within team/position.  This is not an injury/depth-chart claim.
+    role=np.ones(len(x),dtype=float)
+    for (_,pp),idx in x.groupby(["TeamAbbrev","Position"]).groups.items():
+        ids=list(idx); ranks=sal.loc[ids].rank(method="min",ascending=False)
+        for j in ids:
+            r=float(ranks.loc[j]); role[x.index.get_loc(j)] = 1.04 if r==1 else 1.00 if r==2 else 0.96 if r==3 else 0.92
+    role=pd.Series(role,index=x.index)
+    mean=(history*market*role).clip(lower=0.1)
+    # DST remains conservative because DK PPG is especially noisy; market total supplies the weekly direction.
+    x["proj"]=mean
+    tail={"QB":(1.55,1.78,2.18),"RB":(1.72,2.05,2.62),"WR":(1.72,2.08,2.70),"TE":(1.78,2.16,2.80),"DST":(1.80,2.20,2.75)}
+    x["ceiling"]=[m*tail.get(p,(1.7,2.0,2.6))[0] for m,p in zip(mean,pos)]
+    x["p95_use"]=[m*tail.get(p,(1.7,2.0,2.6))[1] for m,p in zip(mean,pos)]
+    x["p99_use"]=[m*tail.get(p,(1.7,2.0,2.6))[2] for m,p in zip(mean,pos)]
+    x["projection_source"]="V2 current-week model"
+    x["weekly_projection_source"]="DK history + salary peers + current market + role proxy"
+    x["projection_confidence"]=np.where(ppg>=5,0.82,0.70)
+    x["weekly_projection_valid"]=team_pts.notna() & (sal>0) & ((ppg>0)|(pos=="DST"))
+    x["role_status"]=np.where(x["weekly_projection_valid"],"V2 Weekly Modeled","No Weekly Baseline")
+    # Availability remains a separate hard gate.
+    blocked=x.get("injury_blocked",pd.Series(False,index=x.index)).fillna(False).astype(bool)
+    x["optimizer_eligible"]=x["weekly_projection_valid"] & ~blocked
+    return calibrate_classic_tails(x)
+
+def weekly_projection_integrity(pool):
+    elig=pool[~pool.get("injury_blocked",pd.Series(False,index=pool.index)).fillna(False).astype(bool)].copy()
+    bad=elig[~elig.get("weekly_projection_valid",pd.Series(False,index=elig.index)).fillna(False).astype(bool)]
+    return len(bad)==0,bad
+
 def current_slate_environment(pool, environment_rows):
     """Return only environment rows belonging to the active slate and verify full coverage.
     A new DK slate must never inherit unrelated prior-week game rows.
@@ -1482,6 +1558,7 @@ if view == "Slate Setup":
                 st.session_state["classic_uploaded_games"]=slate_games
             env_now, env_ok, _ = current_slate_environment(uploaded_pool, st.session_state.get("classic_active_environment"))
             if env_ok and st.session_state.get("classic_environment_verified",False):
+                uploaded_pool=rebuild_uploaded_weekly_projections(uploaded_pool,env_now)
                 uploaded_pool=attach_game_environment(uploaded_pool,env_now)
             else:
                 uploaded_pool["game_env_score"]=np.nan
@@ -1533,6 +1610,7 @@ if view == "Slate Setup":
                 st.session_state["classic_active_environment"]=checked.copy()
                 st.session_state["classic_environment_verified"]=True
                 refreshed=active_upload.drop(columns=["game_env_score"],errors="ignore")
+                refreshed=rebuild_uploaded_weekly_projections(refreshed,checked)
                 refreshed=attach_game_environment(refreshed,checked)
                 st.session_state["classic_uploaded_pool"]=refreshed
                 st.success("Current-slate environment activated. No prior-week game rows are being used.")
@@ -1568,7 +1646,7 @@ elif view == "Player Projections":
     if teams: x=x[x.TeamAbbrev.isin(teams)]
     if q: x=x[x.Name.str.contains(q,case=False,na=False)]
     x["Value/1K"]=x["proj"]/(x["Salary"]/1000)
-    show=x.sort_values("proj",ascending=False)[["Name","Position","TeamAbbrev","game","Salary","proj","ceiling","p95_use","p99_use","ownership_pct","leverage_score","AvgPointsPerGame","role_status","coverage_matchup_grade","individual_matchup_factor","expected_primary_coverage","individual_matchup_delta","projection_repaired","optimizer_eligible","Value/1K"]]
+    show=x.sort_values("proj",ascending=False)[["Name","Position","TeamAbbrev","game","Salary","proj","ceiling","p95_use","p99_use","ownership_pct","leverage_score","AvgPointsPerGame","team_implied_points","weekly_projection_source","projection_confidence","role_status","coverage_matchup_grade","individual_matchup_factor","expected_primary_coverage","individual_matchup_delta","projection_repaired","optimizer_eligible","Value/1K"]]
     st.dataframe(show,use_container_width=True,hide_index=True,
                  column_config={"proj":st.column_config.NumberColumn("Mean",format="%.2f"),
                                 "ceiling":st.column_config.NumberColumn("P90",format="%.2f"),
@@ -1598,6 +1676,12 @@ elif view == "Lineup Builder":
     if st.session_state.get("classic_uploaded_pool") is not None and not st.session_state.get("classic_environment_verified",False):
         st.error("V2 SAFETY GATE: the uploaded slate's game environment has not been verified. Go to Slate Setup and activate current game totals first. Prior-week environment data will not be used as a fallback.")
         st.stop()
+    if st.session_state.get("classic_uploaded_pool") is not None:
+        integrity_ok, integrity_bad = weekly_projection_integrity(pool)
+        if not integrity_ok:
+            st.error(f"V2 PROJECTION-INTEGRITY GATE: {len(integrity_bad)} active player(s) lack a valid current-week baseline. Portfolio generation is blocked rather than using DK PPG as a projection.")
+            st.dataframe(integrity_bad[[c for c in ["Name","Position","TeamAbbrev","Salary","AvgPointsPerGame","weekly_projection_source"] if c in integrity_bad.columns]],hide_index=True,use_container_width=True)
+            st.stop()
     a,b,c,d=st.columns(4)
     _init_defaults(CLASSIC_DEFAULTS)
     st.button("Reset to Recommended Defaults",key="classic_reset_btn",on_click=_reset_defaults,args=(CLASSIC_DEFAULTS,))
