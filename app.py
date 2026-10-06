@@ -365,18 +365,43 @@ def attach_game_environment(pool, games):
     ).drop(columns=[c for c in ["game_env_score_weekly"] if c in x.merge(g[["game","game_env_score"]].drop_duplicates("game"),on="game",how="left",suffixes=("","_weekly")).columns])
 
 def lineup_context_scores(df):
-    """Bounded game-environment and correlation diagnostics for a Classic lineup."""
+    """V2.0.10 role-aware, bounded correlation diagnostic for a Classic lineup.
+
+    WR/TE remain the strongest direct QB partners. Same-team RBs receive a smaller
+    role-aware credit because the current slate model does not contain target-share
+    data; the RB credit is therefore explicitly a role proxy, not a claim that every
+    RB is a receiving back. Opponent bring-backs remain a separate game-stack signal.
+    """
     env=float(pd.to_numeric(df.get("game_env_score",5.0),errors="coerce").fillna(5.0).mean())
     qb=df[df.Position=="QB"]
-    corr=0.0
+    corr=0.0; detail=[]
     if len(qb):
         q=qb.iloc[0]
         mates=df[(df.TeamAbbrev==q.TeamAbbrev)&df.Position.isin(["WR","TE"])]
-        corr += min(2,len(mates))*1.25
+        if len(mates):
+            n=min(2,len(mates)); corr += n*1.25
+            detail.append("QB+WR/TE:"+",".join(mates.head(2)["Name"].astype(str)))
+
+        # QB+RB can be positively related through receptions/receiving TDs. Because
+        # target share is not yet an input, use current role/opportunity only as a
+        # conservative proxy and keep the credit well below a WR/TE pairing.
+        rb=df[(df.TeamAbbrev==q.TeamAbbrev)&(df.Position=="RB")]
+        for _,r in rb.iterrows():
+            role=str(r.get("role_status","")).lower()
+            ppg=float(pd.to_numeric(pd.Series([r.get("AvgPointsPerGame",0)]),errors="coerce").fillna(0).iloc[0])
+            if "core" in role or "starter" in role or ppg>=15: rb_credit=0.65
+            elif "rotation" in role or ppg>=8: rb_credit=0.45
+            else: rb_credit=0.25
+            corr += rb_credit
+            detail.append(f"QB+RB proxy:{r.get('Name','RB')} (+{rb_credit:.2f})")
+
         opp=opponent_from_game(q.get("game",""),q.TeamAbbrev)
         bring=df[(df.TeamAbbrev==opp)&df.Position.isin(["RB","WR","TE"])] if opp else df.iloc[0:0]
-        if len(bring): corr += 1.0
-    return env,float(min(corr,3.5))
+        if len(bring):
+            corr += 1.0
+            detail.append("Bring-back:"+",".join(bring["Name"].astype(str)))
+    if not detail: detail=["No modeled QB/game-stack pairing"]
+    return env,float(min(corr,3.5)),"; ".join(detail)
 
 def prepare_pool(mc, dst, own, matchups):
     skill = mc.copy()
@@ -600,7 +625,7 @@ def lineup_score(df, strategy, own_weight, leverage_weight):
         base = (0.60*df["proj"] + 0.22*df["ceiling"] + 0.15*df["p95_use"] + 0.03*df["p99_use"]).sum()
     else:
         base = (0.35*df["proj"] + 0.30*df["ceiling"] + 0.30*df["p95_use"] + 0.05*df["p99_use"]).sum()
-    env,corr=lineup_context_scores(df)
+    env,corr,_corr_detail=lineup_context_scores(df)
     context_bonus=(env-5.0)*0.80 + corr
     # Confidence is deliberately a modest lineup-level adjustment. Weekly research
     # gets full credit; DK-PPG fallback rows carry uncertainty without being banned.
@@ -949,9 +974,10 @@ def lineups_to_df(lineups, strategy=None, own_weight=0.25, leverage_weight=0.35,
             "Ownership Sum":round(float(x.ownership_pct.sum()),1),
             "Players":" | ".join(names)
         }
-        env,corr=lineup_context_scores(x)
+        env,corr,corr_detail=lineup_context_scores(x)
         row["Game Env"] = round(env,2)
         row["Correlation"] = round(corr,2)
+        row["Correlation Detail"] = corr_detail
         row["P99/Mean"] = round(float(x.p99_use.sum()/max(x.proj.sum(),0.01)),2)
         if strategy is not None:
             row["GPP Score"] = round(lineup_score(x,strategy,own_weight,leverage_weight),2)
@@ -1952,7 +1978,7 @@ elif view == "Lineup Builder":
     bank_size=st.slider("Candidate bank size",300,2000,key="classic_bank_size",step=100,disabled=False,help="V3.1.7 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
     solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,key="classic_solver_seconds",step=5,disabled=False)
 
-    st.info("V2.0.9 defaults: 15 lineups • 65% safety exposure ceiling • 3 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V2.0.9 evaluates every legal candidate against the same coherent full-slate simulations, measures near-optimal scenario success, and selects each additional lineup for NEW scenario coverage with a soft concentration cost. Exposure remains a safety ceiling rather than a target.")
+    st.info("V2.0.10 defaults: 15 lineups • 65% safety exposure ceiling • 3 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V2.0.10 evaluates every legal candidate against the same coherent full-slate simulations, measures near-optimal scenario success, and selects each additional lineup for NEW scenario coverage with a soft concentration cost. Exposure remains a safety ceiling rather than a target.")
 
     if st.button("Generate portfolio",type="primary"):
         with st.spinner("Generating diversified portfolio..."):
