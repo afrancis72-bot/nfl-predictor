@@ -1,14 +1,10 @@
-# NFL Predictor Pro — DFS Engine V2.0.3
+# NFL DFS Engine V2.0.4.2 — Active Simulation Slate Fix
 
-## Automatic current-slate market environment
-
-V2.0.3 keeps the V2.0.2 current-slate lock and adds an automatic weekly market-data step.
-
-Weekly workflow:
-1. Upload the current DraftKings Classic salary CSV. The DK file supplies the active roster, games, IDs, salaries, and slate date.
-2. Click **Auto-fetch current market totals & spreads**. The app queries the current NFL scoreboard market feed for the DK slate date and matches only the active games.
-3. Review the returned total/spread/source/status table. If any game cannot be resolved, that game remains unverified and may be entered manually.
-4. Click **Activate reviewed game environment** only after every active game has a valid total.
-5. V2 simulation/portfolio generation remains blocked until full current-slate coverage is verified.
-
-Safety behavior: no unresolved current game is ever filled from the bundled historical Week 4 environment. The automatic feed is a convenience source, not a silent fallback; unresolved or failed fetches remain visible.
+- Simulation tab now uses only the active uploaded DraftKings slate.
+- Bundled historical Week 4 Monte Carlo rows are blocked from the current-slate Simulation view.
+- Simulation requires both verified current game environment and current-week projection integrity.
+- Current slate game list is displayed before simulation.
+- Supports 10k / 25k / 50k / 100k coherent full-slate scenarios (50k default).
+- Simulation results show Mean, Median, binned Mode, P10/P25/P75/P90/P95 and current player/game metadata.
+- Cached simulation output is slate-signed; results from another slate are blocked automatically.
+- Current-slate simulation baseline is stored for the Simulation Validation tab and later actual-results grading.

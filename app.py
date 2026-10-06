@@ -1518,7 +1518,7 @@ if "classic_active_environment" not in st.session_state:
     st.session_state["classic_active_environment"]=pd.DataFrame(columns=["game","total","spread_home"])
 if "classic_environment_verified" not in st.session_state:
     st.session_state["classic_environment_verified"]=False
-# V2.0.4.1 session migration: a Streamlit redeploy can preserve an uploaded pool
+# V2.0.4.2 session migration: a Streamlit redeploy can preserve an uploaded pool
 # built by an older code version. Rebuild it against the currently verified
 # environment whenever required V2 weekly-projection columns are absent.
 _cached = st.session_state.get("classic_uploaded_pool")
@@ -1539,7 +1539,7 @@ if _cached is not None:
             st.session_state["classic_uploaded_pool"] = _cached
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.4.1")
+st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.4.2")
 st.caption("DraftKings NFL DFS • correlated game scripts • variance + uncertainty • scenario portfolios • calibration")
 st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; current-week projection integrity is required for optimizer eligibility; DK PPG alone never qualifies as a weekly projection. Re-check final injury news and ownership before contest entry.")
 
@@ -1688,12 +1688,44 @@ elif view == "Player Projections":
 
 elif view == "Simulation":
     st.subheader("Simulation")
-    st.caption("Legacy weekly Monte Carlo inputs are shown below. DFS Engine V2 additionally runs coherent full-slate game-script simulations during portfolio construction, with heavy tails and model uncertainty.")
-    metric=st.selectbox("Sort by",["mean","p90","p95","boom_25","boom_30"])
-    pos=st.multiselect("Position",["QB","RB","WR","TE"],default=["QB","RB","WR","TE"])
-    sx=mc[mc.Position.isin(pos)].sort_values(metric,ascending=False)
-    st.dataframe(sx,use_container_width=True,hide_index=True)
-    st.download_button("Download simulation CSV", mc.to_csv(index=False), "nfl_simulation_v8.csv","text/csv")
+    st.caption("DFS Engine V2 simulation for the ACTIVE DraftKings slate. One simulation row is one coherent full-slate scenario with correlated game scripts, heavy-tailed player variance and separate projection uncertainty. Historical bundled Week 4 Monte Carlo data are never shown here for an uploaded slate.")
+    active_upload=st.session_state.get("classic_uploaded_pool")
+    if active_upload is None:
+        st.warning("Upload and verify a current DraftKings slate on Slate Setup before running the V2 simulation. Bundled historical/demo simulations are intentionally blocked on this page.")
+    elif not st.session_state.get("classic_environment_verified",False):
+        st.error("V2 SAFETY GATE: current slate game environment is not verified. Return to Slate Setup and verify the active games before simulation.")
+    else:
+        integrity_ok, integrity_bad=weekly_projection_integrity(pool)
+        if not integrity_ok:
+            st.error(f"V2 PROJECTION-INTEGRITY GATE: {len(integrity_bad)} active player(s) lack a valid current-week baseline. Simulation is blocked rather than mixing current and historical data.")
+            st.dataframe(integrity_bad[[c for c in ["Name","Position","TeamAbbrev","game","Salary","weekly_projection_source"] if c in integrity_bad.columns]],hide_index=True,use_container_width=True)
+        else:
+            active_games=sorted(pool['game'].dropna().astype(str).unique().tolist())
+            st.success(f"ACTIVE SIMULATION SLATE: {len(active_games)} games • {int(pool['optimizer_eligible'].sum())} optimizer-eligible players")
+            st.write(" • ".join(active_games))
+            n_sim=st.select_slider("Simulation runs",options=[10000,25000,50000,100000],value=50000)
+            if st.button("Run active-slate simulation",type="primary"):
+                with st.spinner(f"Running {int(n_sim):,} coherent full-slate scenarios..."):
+                    sim_players,classic_sims=simulate_classic_v2(pool,int(n_sim))
+                    st.session_state['classic_v2_sim_players']=sim_players
+                    st.session_state['classic_v2_sims']=classic_sims
+                    st.session_state['classic_v2_sim_signature']='|'.join(active_games)
+                    st.session_state['classic_v2_sim_runs']=int(n_sim)
+            sp=st.session_state.get('classic_v2_sim_players'); ss=st.session_state.get('classic_v2_sims')
+            sig=st.session_state.get('classic_v2_sim_signature')
+            current_sig='|'.join(active_games)
+            if sp is not None and ss is not None and sig==current_sig:
+                summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
+                meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source'] if c in sp.columns]].copy()
+                summary=meta.merge(summary,on='Name',how='left')
+                positions=st.multiselect("Position",["QB","RB","WR","TE","DST"],default=["QB","RB","WR","TE","DST"],key='v2_sim_pos')
+                sort_metric=st.selectbox("Sort by",["Mean","Median","Mode (binned)","P75","P90","P95"],key='v2_sim_sort')
+                show=summary[summary['Position'].isin(positions)].sort_values(sort_metric,ascending=False)
+                st.caption(f"Results from {st.session_state.get('classic_v2_sim_runs',len(ss)):,} current-slate simulations. Mode is the most common 2-DK-point bin, not an exact continuous-value mode.")
+                st.dataframe(show,use_container_width=True,hide_index=True)
+                st.download_button("Download current-slate simulation CSV",summary.to_csv(index=False),"nfl_v2_current_slate_simulation.csv","text/csv")
+            elif sp is not None or ss is not None:
+                st.warning("A cached simulation belongs to a different slate and has been blocked. Run the active-slate simulation above.")
 
 elif view == "Lineup Builder":
     st.subheader("DraftKings Portfolio Optimizer")
