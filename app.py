@@ -1518,11 +1518,30 @@ if "classic_active_environment" not in st.session_state:
     st.session_state["classic_active_environment"]=pd.DataFrame(columns=["game","total","spread_home"])
 if "classic_environment_verified" not in st.session_state:
     st.session_state["classic_environment_verified"]=False
+# V2.0.4.1 session migration: a Streamlit redeploy can preserve an uploaded pool
+# built by an older code version. Rebuild it against the currently verified
+# environment whenever required V2 weekly-projection columns are absent.
+_cached = st.session_state.get("classic_uploaded_pool")
+if _cached is not None:
+    _required_v204 = {"p95_use","p99_use","team_implied_points","weekly_projection_source",
+                      "projection_confidence","weekly_projection_valid","role_status"}
+    if not _required_v204.issubset(set(_cached.columns)):
+        _env_now, _env_ok, _env_missing = current_slate_environment(_cached, st.session_state.get("classic_active_environment"))
+        if _env_ok:
+            _cached = rebuild_uploaded_weekly_projections(_cached, _env_now)
+            _cached = attach_game_environment(_cached, _env_now)
+            st.session_state["classic_uploaded_pool"] = _cached
+        else:
+            # Keep the roster visible, but do not fabricate current-week fields.
+            _cached = _cached.copy()
+            _cached["weekly_projection_valid"] = False
+            _cached["weekly_projection_source"] = "UNVERIFIED: current market environment missing after app upgrade"
+            st.session_state["classic_uploaded_pool"] = _cached
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.3")
+st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.4.1")
 st.caption("DraftKings NFL DFS • correlated game scripts • variance + uncertainty • scenario portfolios • calibration")
-st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
+st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; current-week projection integrity is required for optimizer eligibility; DK PPG alone never qualifies as a weekly projection. Re-check final injury news and ownership before contest entry.")
 
 view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis"])
 
@@ -1646,7 +1665,12 @@ elif view == "Player Projections":
     if teams: x=x[x.TeamAbbrev.isin(teams)]
     if q: x=x[x.Name.str.contains(q,case=False,na=False)]
     x["Value/1K"]=x["proj"]/(x["Salary"]/1000)
-    show=x.sort_values("proj",ascending=False)[["Name","Position","TeamAbbrev","game","Salary","proj","ceiling","p95_use","p99_use","ownership_pct","leverage_score","AvgPointsPerGame","team_implied_points","weekly_projection_source","projection_confidence","role_status","coverage_matchup_grade","individual_matchup_factor","expected_primary_coverage","individual_matchup_delta","projection_repaired","optimizer_eligible","Value/1K"]]
+    # Never crash the UI because a prior Streamlit session predates a display column.
+    _display_cols=["Name","Position","TeamAbbrev","game","Salary","proj","ceiling","p95_use","p99_use","ownership_pct","leverage_score","AvgPointsPerGame","team_implied_points","weekly_projection_source","projection_confidence","role_status","coverage_matchup_grade","individual_matchup_factor","expected_primary_coverage","individual_matchup_delta","projection_repaired","optimizer_eligible","Value/1K"]
+    for _c in _display_cols:
+        if _c not in x.columns:
+            x[_c]=np.nan
+    show=x.sort_values("proj",ascending=False)[_display_cols]
     st.dataframe(show,use_container_width=True,hide_index=True,
                  column_config={"proj":st.column_config.NumberColumn("Mean",format="%.2f"),
                                 "ceiling":st.column_config.NumberColumn("P90",format="%.2f"),
