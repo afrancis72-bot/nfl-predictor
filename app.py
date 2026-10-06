@@ -113,6 +113,46 @@ def classic_pool_from_upload(dk, base_pool):
         merged[c]=merged[c].fillna(default)
     return merged
 
+
+
+def current_slate_environment(pool, environment_rows):
+    """Return only environment rows belonging to the active slate and verify full coverage.
+    A new DK slate must never inherit unrelated prior-week game rows.
+    """
+    active_games=sorted({str(g).strip().upper() for g in pool.get("game", pd.Series(dtype=str)).dropna() if str(g).strip()})
+    if environment_rows is None or len(environment_rows)==0 or "game" not in environment_rows.columns:
+        return pd.DataFrame({"game":active_games}), False, active_games
+    env=environment_rows.copy()
+    env["game"]=env["game"].astype(str).str.strip().str.upper()
+    env=env[env["game"].isin(active_games)].drop_duplicates("game",keep="last")
+    total_col=next((c for c in ["game_total","total","vegas_total","over_under"] if c in env.columns),None)
+    if total_col is None:
+        return env, False, active_games
+    env[total_col]=pd.to_numeric(env[total_col],errors="coerce")
+    covered=set(env.loc[env[total_col].notna(),"game"])
+    missing=[g for g in active_games if g not in covered]
+    return env, len(missing)==0 and len(active_games)>0, missing
+
+def environment_editor_seed(pool, researched_games):
+    """Build an editor containing exactly the active DK games; prior-week rows are never displayed."""
+    active=sorted(pool["game"].dropna().astype(str).str.strip().str.upper().unique().tolist())
+    seed=pd.DataFrame({"game":active,"game_total":np.nan,"spread":np.nan})
+    if researched_games is None or len(researched_games)==0 or "game" not in researched_games.columns:
+        return seed
+    rg=researched_games.copy(); rg["game"]=rg["game"].astype(str).str.strip().str.upper()
+    total_col=next((c for c in ["game_total","total","vegas_total","over_under"] if c in rg.columns),None)
+    spread_col=next((c for c in ["spread","home_spread","line"] if c in rg.columns),None)
+    keep=["game"]+([total_col] if total_col else [])+([spread_col] if spread_col else [])
+    rg=rg[keep].drop_duplicates("game",keep="last")
+    rename={}
+    if total_col: rename[total_col]="game_total"
+    if spread_col: rename[spread_col]="spread"
+    rg=rg.rename(columns=rename)
+    seed=seed.drop(columns=["game_total","spread"]).merge(rg,on="game",how="left")
+    if "game_total" not in seed: seed["game_total"]=np.nan
+    if "spread" not in seed: seed["spread"]=np.nan
+    return seed[["game","game_total","spread"]]
+
 def calibrate_classic_tails(pool):
     """V3.1.6: bound pathological player tails while preserving ordering and upside."""
     x=pool.copy()
@@ -1321,9 +1361,13 @@ mc, comp, dst, own, games, matchups = load_base()
 base_pool = attach_game_environment(calibrate_classic_tails(prepare_pool(mc,dst,own,matchups)),games)
 if "classic_uploaded_pool" not in st.session_state:
     st.session_state["classic_uploaded_pool"]=None
+if "classic_active_environment" not in st.session_state:
+    st.session_state["classic_active_environment"]=games.copy()
+if "classic_environment_verified" not in st.session_state:
+    st.session_state["classic_environment_verified"]=True
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
-st.title("🏈 NFL Predictor Pro — DFS Engine V2")
+st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.1")
 st.caption("DraftKings NFL DFS • correlated game scripts • variance + uncertainty • scenario portfolios • calibration")
 st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; unmatched players are explicitly labeled DK PPG fallback. Re-check final injury news and ownership before contest entry.")
 
@@ -1336,8 +1380,13 @@ if view == "Slate Setup":
     c2.metric("DSTs", f"{len(dst):,}")
     c3.metric("Simulation runs", "50,000")
     c4.metric("Games", f"{pool['game'].nunique()}")
-    st.markdown("#### Verified game environment")
-    st.dataframe(games, use_container_width=True, hide_index=True)
+    st.markdown("#### Active game environment")
+    active_env, env_verified, env_missing = current_slate_environment(pool, st.session_state.get("classic_active_environment"))
+    if st.session_state.get("classic_uploaded_pool") is not None and not env_verified:
+        st.error("Current slate environment is NOT verified. Prior-week game data has been blocked. Enter/activate totals for every active game below before generating a V2 portfolio.")
+    elif env_verified:
+        st.success("Game environment verified for every game on the active slate.")
+    st.dataframe(active_env, use_container_width=True, hide_index=True)
     st.markdown("#### Weekly DraftKings Main Slate upload")
     st.caption("Upload the DraftKings Classic salary CSV here each week. The uploaded file becomes the active roster, salary, player-ID and game source for Classic projections and lineup construction.")
     up=st.file_uploader("Upload DraftKings NFL Classic salary CSV", type=["csv"], key="classic_salary_upload")
@@ -1347,8 +1396,18 @@ if view == "Slate Setup":
             dk=parse_classic_dk_csv(up)
             uploaded_pool=classic_pool_from_upload(dk,base_pool)
             uploaded_pool=calibrate_classic_tails(uploaded_pool)
-            # Preserve researched environment only for games represented by the weekly model.
-            uploaded_pool=attach_game_environment(uploaded_pool,games)
+            # V2.0.1: a newly uploaded slate starts UNVERIFIED. Never attach stale prior-week environments.
+            slate_games=sorted(uploaded_pool["game"].dropna().astype(str).str.strip().str.upper().unique().tolist())
+            previous_games=st.session_state.get("classic_uploaded_games",[])
+            if slate_games != previous_games:
+                st.session_state["classic_active_environment"]=environment_editor_seed(uploaded_pool,games)
+                st.session_state["classic_environment_verified"]=False
+                st.session_state["classic_uploaded_games"]=slate_games
+            env_now, env_ok, _ = current_slate_environment(uploaded_pool, st.session_state.get("classic_active_environment"))
+            if env_ok and st.session_state.get("classic_environment_verified",False):
+                uploaded_pool=attach_game_environment(uploaded_pool,env_now)
+            else:
+                uploaded_pool["game_env_score"]=np.nan
             st.session_state["classic_uploaded_pool"]=uploaded_pool
             matched=int((uploaded_pool["projection_source"]=="Weekly researched model").sum())
             fallback=len(uploaded_pool)-matched
@@ -1367,8 +1426,30 @@ if view == "Slate Setup":
             st.dataframe(uploaded_pool[["Name","Position","TeamAbbrev","game","Salary","ID","dk_status","injury_blocked","proj","projection_source","projection_confidence","optimizer_eligible"]].sort_values(["Position","Salary"],ascending=[True,False]),use_container_width=True,hide_index=True)
         except Exception as e:
             st.error(f"Could not activate DraftKings slate: {e}")
+    active_upload=st.session_state.get("classic_uploaded_pool")
+    if active_upload is not None:
+        st.markdown("#### Verify this slate's game environment")
+        st.caption("The table contains ONLY games from the uploaded DK slate. Enter the current market game total for every game; spread is optional but improves the environment score. This prevents any prior-week environment from leaking into a new slate.")
+        seed=environment_editor_seed(active_upload, st.session_state.get("classic_active_environment"))
+        edited_env=st.data_editor(seed,hide_index=True,use_container_width=True,disabled=["game"],key="classic_env_editor")
+        if st.button("Activate current game environment",type="primary",key="activate_current_env"):
+            checked, ok, missing=current_slate_environment(active_upload,edited_env)
+            if not ok:
+                st.session_state["classic_environment_verified"]=False
+                st.error("Environment not activated. Add a game total for: "+", ".join(missing))
+            else:
+                st.session_state["classic_active_environment"]=checked.copy()
+                st.session_state["classic_environment_verified"]=True
+                refreshed=active_upload.drop(columns=["game_env_score"],errors="ignore")
+                refreshed=attach_game_environment(refreshed,checked)
+                st.session_state["classic_uploaded_pool"]=refreshed
+                st.success("Current-slate environment activated. No prior-week game rows are being used.")
+                st.rerun()
     if u1.button("Use built-in weekly model slate"):
         st.session_state["classic_uploaded_pool"]=None
+        st.session_state["classic_active_environment"]=games.copy()
+        st.session_state["classic_environment_verified"]=True
+        st.session_state["classic_uploaded_games"]=[]
         st.rerun()
     active=st.session_state.get("classic_uploaded_pool")
     if active is not None:
@@ -1414,6 +1495,9 @@ elif view == "Simulation":
 
 elif view == "Lineup Builder":
     st.subheader("DraftKings Portfolio Optimizer")
+    if st.session_state.get("classic_uploaded_pool") is not None and not st.session_state.get("classic_environment_verified",False):
+        st.error("V2 SAFETY GATE: the uploaded slate's game environment has not been verified. Go to Slate Setup and activate current game totals first. Prior-week environment data will not be used as a fallback.")
+        st.stop()
     a,b,c,d=st.columns(4)
     _init_defaults(CLASSIC_DEFAULTS)
     st.button("Reset to Recommended Defaults",key="classic_reset_btn",on_click=_reset_defaults,args=(CLASSIC_DEFAULTS,))
