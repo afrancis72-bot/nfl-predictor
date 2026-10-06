@@ -108,9 +108,10 @@ def classic_pool_from_upload(dk, base_pool):
     if "dk_status" not in merged.columns:
         merged["dk_status"]=""
     merged["dk_status"]=merged["dk_status"].fillna("").astype(str).str.strip().str.upper()
-    blocked_statuses={"OUT","IR","INACTIVE","SUSPENDED","PUP","NFI"}
+    blocked_statuses={"OUT","D","IR","INACTIVE","SUSPENDED","PUP","NFI"}
     merged["injury_blocked"]=merged["dk_status"].isin(blocked_statuses)
-    merged["injury_flagged"]=merged["dk_status"].isin({"Q","D"})
+    # QUESTIONABLE remains eligible this early in the week, but is surfaced for review.
+    merged["injury_flagged"]=merged["dk_status"].isin({"Q"})
     merged.loc[merged["injury_blocked"],"optimizer_eligible"]=False
     merged["role_status"]=merged.get("role_status",pd.Series("",index=merged.index)).fillna("")
     merged.loc[~matched,"role_status"]="DK Fallback"
@@ -637,8 +638,8 @@ def random_candidate(pool, min_salary, max_salary, strategy, own_weight, leverag
     p = pool[(pool["optimizer_eligible"] == True) & ~pool.Name.isin(excludes)].copy()
     # V3.1.7 upstream tournament signals. These affect candidate opportunity, not
     # final exposure requirements, so stars are represented without being forced.
-    p["projection_confidence"]=pd.to_numeric(p.get("projection_confidence",1.0),errors="coerce").fillna(1.0).clip(0.70,1.0)
-    p["game_env_score"]=pd.to_numeric(p.get("game_env_score",5.0),errors="coerce").fillna(5.0).clip(0,10)
+    p["projection_confidence"]=pd.to_numeric(p["projection_confidence"] if "projection_confidence" in p.columns else pd.Series(1.0,index=p.index),errors="coerce").fillna(1.0).clip(0.70,1.0)
+    p["game_env_score"]=pd.to_numeric(p["game_env_score"] if "game_env_score" in p.columns else pd.Series(5.0,index=p.index),errors="coerce").fillna(5.0).clip(0,10)
     eligible_skill=p[p.Position.isin(["RB","WR","TE"])]
     elite_cut=float(eligible_skill["p95_use"].quantile(0.85)) if len(eligible_skill) else float("inf")
     slate_cut=float(eligible_skill["p95_use"].quantile(0.95)) if len(eligible_skill) else float("inf")
@@ -758,8 +759,8 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
     p=pool[(pool["optimizer_eligible"] == True) & ~pool.Name.isin(excludes)].copy().reset_index(drop=True)
     # V3.1.7 candidate-opportunity signals. They alter sampling probability only;
     # the MILP still decides the final portfolio under the existing exposure/QC rules.
-    p["projection_confidence"]=pd.to_numeric(p.get("projection_confidence",1.0),errors="coerce").fillna(1.0).clip(0.70,1.0)
-    p["game_env_score"]=pd.to_numeric(p.get("game_env_score",5.0),errors="coerce").fillna(5.0).clip(0,10)
+    p["projection_confidence"]=pd.to_numeric(p["projection_confidence"] if "projection_confidence" in p.columns else pd.Series(1.0,index=p.index),errors="coerce").fillna(1.0).clip(0.70,1.0)
+    p["game_env_score"]=pd.to_numeric(p["game_env_score"] if "game_env_score" in p.columns else pd.Series(5.0,index=p.index),errors="coerce").fillna(5.0).clip(0,10)
     skill_mask=p["Position"].isin(["RB","WR","TE"])
     elite_cut=float(p.loc[skill_mask,"p95_use"].quantile(0.85)) if skill_mask.any() else float("inf")
     slate_cut=float(p.loc[skill_mask,"p95_use"].quantile(0.95)) if skill_mask.any() else float("inf")
@@ -942,6 +943,24 @@ def validate_portfolio(lineups, n_lineups, max_exposure, min_unique, min_salary,
     over={k:v for k,v in counts.items() if v>max_count}
     if over:
         issues.append("Exposure violations: "+", ".join(f"{k} {v}/{n_lineups}" for k,v in sorted(over.items())))
+    # Second-line injury QC: even if an upstream eligibility filter regresses,
+    # an OUT/DOUBTFUL/etc. player makes the portfolio non-exportable.
+    injury_bad=[]
+    questionable=[]
+    for l in lineups:
+        if "dk_status" not in l.columns:
+            continue
+        for _,r in l[["Name","dk_status"]].drop_duplicates().iterrows():
+            st=str(r.get("dk_status","")).strip().upper()
+            nm=str(r.get("Name",""))
+            if st in {"OUT","D","IR","INACTIVE","SUSPENDED","PUP","NFI"}:
+                injury_bad.append((nm,st))
+            elif st=="Q":
+                questionable.append(nm)
+    injury_bad=sorted(set(injury_bad))
+    questionable=sorted(set(questionable))
+    if injury_bad:
+        issues.append("Injury eligibility violation: "+", ".join(f"{n} ({st})" for n,st in injury_bad))
     if len(set(keys)) != len(keys): issues.append("Duplicate lineups detected.")
     max_overlap=0; worst=None
     sets=[set(k) for k in keys]
@@ -951,7 +970,8 @@ def validate_portfolio(lineups, n_lineups, max_exposure, min_unique, min_salary,
             if ov>max_overlap: max_overlap=ov; worst=(i+1,j+1)
     if max_overlap > 9-int(min_unique):
         issues.append(f"Uniqueness violation: lineups {worst[0]} and {worst[1]} overlap by {max_overlap} players.")
-    return {"pass":not issues,"issues":issues,"max_overlap":max_overlap,"max_count":max_count,"counts":counts}
+    return {"pass":not issues,"issues":issues,"max_overlap":max_overlap,"max_count":max_count,"counts":counts,
+            "injury_bad":injury_bad,"questionable":questionable}
 
 def lineups_to_df(lineups, strategy=None, own_weight=0.25, leverage_weight=0.35, stack_rank=False):
     rows=[]
@@ -1759,7 +1779,7 @@ pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_up
 
 st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.4.2")
 st.caption("DraftKings NFL DFS • correlated game scripts • variance + uncertainty • scenario portfolios • calibration")
-st.warning("Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; current-week projection integrity is required for optimizer eligibility; DK PPG alone never qualifies as a weekly projection. Re-check final injury news and ownership before contest entry.")
+st.warning("V2.0.11 injury safety: OUT and DOUBTFUL (plus IR/inactive/suspended/PUP/NFI) are hard-blocked before simulation/optimization; QUESTIONABLE remains eligible but flagged. Slate re-activation invalidates prior portfolios. Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; current-week projection integrity is required for optimizer eligibility; DK PPG alone never qualifies as a weekly projection. Re-check final injury news and ownership before contest entry.")
 
 view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis"])
 
@@ -1799,7 +1819,15 @@ if view == "Slate Setup":
                 uploaded_pool=attach_game_environment(uploaded_pool,env_now)
             else:
                 uploaded_pool["game_env_score"]=np.nan
+            # Any slate activation can carry new injury designations. Invalidate prior
+            # portfolio/simulation artifacts so OUT/DOUBTFUL changes cannot leave a stale export.
             st.session_state["classic_uploaded_pool"]=uploaded_pool
+            st.session_state.pop("classic_portfolio_bundle",None)
+            st.session_state.pop("nfl_lineups",None)
+            st.session_state.pop("classic_v2_records",None)
+            st.session_state.pop("classic_v2_sim_players",None)
+            st.session_state.pop("classic_v2_sims",None)
+            st.session_state.pop("classic_v2_sim_signature",None)
             matched=int((uploaded_pool["projection_source"]=="Weekly researched model").sum())
             fallback=len(uploaded_pool)-matched
             blocked=uploaded_pool[uploaded_pool["injury_blocked"]].copy()
@@ -1809,9 +1837,9 @@ if view == "Slate Setup":
             if len(blocked):
                 st.warning(f"Injury-status gate excluded {len(blocked)} player(s) from optimization: "+", ".join(blocked["Name"].astype(str)+" ("+blocked["dk_status"].astype(str)+")"))
             else:
-                st.success("Injury-status gate: no OUT / IR / inactive players detected in this upload.")
+                st.success("Injury-status gate: no OUT / DOUBTFUL / IR / inactive players detected in this upload.")
             if len(flagged):
-                st.info("Availability watch (not automatically excluded): "+", ".join(flagged["Name"].astype(str)+" ("+flagged["dk_status"].astype(str)+")"))
+                st.info("QUESTIONABLE watch (still eligible): "+", ".join(flagged["Name"].astype(str)+" ("+flagged["dk_status"].astype(str)+")"))
             if fallback:
                 st.warning("Fallback rows do not have refreshed usage/air-yards/red-zone research. They remain clearly labeled and should not be treated as equivalent to weekly researched projections.")
             st.dataframe(uploaded_pool[["Name","Position","TeamAbbrev","game","Salary","ID","dk_status","injury_blocked","proj","projection_source","projection_confidence","optimizer_eligible"]].sort_values(["Position","Salary"],ascending=[True,False]),use_container_width=True,hide_index=True)
@@ -1978,7 +2006,7 @@ elif view == "Lineup Builder":
     bank_size=st.slider("Candidate bank size",300,2000,key="classic_bank_size",step=100,disabled=False,help="V3.1.7 generates this many strong legal candidates, then chooses the full portfolio simultaneously.")
     solver_seconds=st.slider("Portfolio solver time limit (seconds)",5,60,key="classic_solver_seconds",step=5,disabled=False)
 
-    st.info("V2.0.10 defaults: 15 lineups • 65% safety exposure ceiling • 3 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V2.0.10 evaluates every legal candidate against the same coherent full-slate simulations, measures near-optimal scenario success, and selects each additional lineup for NEW scenario coverage with a soft concentration cost. Exposure remains a safety ceiling rather than a target.")
+    st.info("V2.0.11 defaults: 15 lineups • 65% safety exposure ceiling • 3 minimum unique players • $47,500 salary floor • 88% projection-quality floor • QB + pass-catcher stack • no offensive player against selected DST. Ownership fade defaults to a chalk-friendly 0.15; leverage remains 0.35. V2.0.11 evaluates every legal candidate against the same coherent full-slate simulations, measures near-optimal scenario success, and selects each additional lineup for NEW scenario coverage with a soft concentration cost. Exposure remains a safety ceiling rather than a target.")
 
     if st.button("Generate portfolio",type="primary"):
         with st.spinner("Generating diversified portfolio..."):
@@ -2007,6 +2035,9 @@ elif view == "Lineup Builder":
             qc=validate_portfolio(lineups,int(n_lineups),float(max_exp),int(min_unique),int(min_salary),50000)
             if qc["pass"]:
                 st.success(f"Generated {len(lineups)} of {int(n_lineups)} requested lineups. FINAL QC: PASS")
+                st.success("Portfolio Injury QC: OUT/DOUBTFUL/IR/inactive players = 0")
+                if qc.get("questionable"):
+                    st.info(f"QUESTIONABLE players in portfolio ({len(qc['questionable'])}): "+", ".join(qc["questionable"])+" — review again before lock.")
             else:
                 st.error("FINAL QC: FAIL — export is not considered tournament-ready.")
                 for issue in qc["issues"]: st.write("• "+issue)
@@ -2032,6 +2063,9 @@ elif view == "Lineup Builder":
         solver_meta=bundle.get("solver_meta")
         if qc.get("pass"):
             st.success(f"Persisted portfolio ready: {len(ldf)} lineups. FINAL QC: PASS")
+            st.success("Portfolio Injury QC: OUT/DOUBTFUL/IR/inactive players = 0")
+            if qc.get("questionable"):
+                st.info(f"QUESTIONABLE players in portfolio ({len(qc['questionable'])}): "+", ".join(qc["questionable"])+" — review again before lock.")
         else:
             st.error("Persisted portfolio FINAL QC: FAIL — export is not considered tournament-ready.")
             for issue in qc.get("issues",[]): st.write("• "+issue)

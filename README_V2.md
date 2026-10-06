@@ -12,3 +12,11 @@ Built from the validated V2.0.9.1 base.
 
 ## Validation target
 Compare Maye + Rhamondre against genuinely unpaired QB lineups such as the prior Shough construction. Maye/Rhamondre should now receive bounded QB+RB proxy credit while a truly unpaired QB remains at zero unless an opponent bring-back or another modeled pairing is present.
+
+## V2.0.11 — Injury Eligibility Gate
+- OUT and DOUBTFUL are hard-excluded before simulation and candidate generation.
+- IR, inactive, suspended, PUP, and NFI remain hard-excluded.
+- QUESTIONABLE remains eligible and is explicitly flagged for pre-lock review.
+- Re-activating/reloading the slate invalidates prior simulations and portfolios so updated injury statuses require regeneration.
+- Final Portfolio Injury QC independently rejects any lineup containing a blocked injury status and reports QUESTIONABLE players.
+- Carries forward the V2.0.10.1 candidate-column compatibility safeguard; no projection, variance, correlation, or portfolio-selection methodology was changed.
