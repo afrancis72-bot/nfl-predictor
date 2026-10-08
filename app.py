@@ -2073,14 +2073,112 @@ elif view == "Lineup Builder":
     team_rb_share=rb1.slider("Max combined RB selections from one team",0.25,1.00,key="classic_team_rb_share",step=0.05,help="Portfolio-level cap across all RBs on the same team. At 55% in 20 lineups, one backfield can occupy at most 11 RB roster spots combined.")
     double_rb_limit=rb2.number_input("Max lineups with two RBs from same team",0,20,key="classic_double_rb_limit",step=1,help="Prevents individually acceptable RB exposures from becoming repeated same-backfield bets.")
 
-    st.markdown("#### RB Opportunity Audit")
-    rb_audit=pool[pool["Position"].astype(str).eq("RB")].copy()
-    if len(rb_audit):
-        rb_audit["Value / $1K"]=pd.to_numeric(rb_audit["proj"],errors="coerce")/(pd.to_numeric(rb_audit["Salary"],errors="coerce")/1000.0)
-        show_cols=[c for c in ["Name","TeamAbbrev","Salary","proj","ceiling","p95_use","team_implied_points","AvgPointsPerGame","opportunity_multiplier","opportunity_note","projection_source","Value / $1K"] if c in rb_audit.columns]
-        st.dataframe(rb_audit[show_cols].sort_values(["proj","Salary"],ascending=[False,False]),use_container_width=True,hide_index=True)
-        st.caption("Use this table to compare Brown/Swift/Monangai before and after any verified opportunity override. The optimizer still decides whether the player earns portfolio exposure.")
+    st.markdown("#### RB Opportunity & Portfolio Audit")
+rb_audit=pool[pool["Position"].astype(str).eq("RB")].copy()
 
+if len(rb_audit):
+    rb_audit["Value / $1K"]=pd.to_numeric(
+        rb_audit["proj"],errors="coerce"
+    )/(pd.to_numeric(rb_audit["Salary"],errors="coerce")/1000.0)
+
+    show_cols=[c for c in [
+        "Name","TeamAbbrev","Salary","proj","ceiling","p95_use",
+        "team_implied_points","AvgPointsPerGame",
+        "opportunity_multiplier","opportunity_note",
+        "projection_source","Value / $1K"
+    ] if c in rb_audit.columns]
+
+    st.dataframe(
+        rb_audit[show_cols].sort_values(
+            ["proj","Salary"],ascending=[False,False]
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.caption(
+        "Slate-wide RB opportunity audit. Use the optional test below "
+        "only when verified role or opportunity information is not yet "
+        "reflected in the current-week projection. No player is forced "
+        "into a lineup."
+    )
+
+    st.markdown("##### Optional RB Opportunity Test")
+
+    rb_names=rb_audit.sort_values(
+        ["proj","Salary"],ascending=[False,False]
+    )["Name"].drop_duplicates().tolist()
+
+    test_col1,test_col2=st.columns([2,1])
+
+    test_player=test_col1.selectbox(
+        "Running back",
+        rb_names,
+        key="classic_rb_test_player"
+    )
+
+    test_pct=test_col2.slider(
+        "Projection adjustment",
+        -20,
+        20,
+        0,
+        1,
+        key="classic_rb_test_pct",
+        format="%d%%"
+    )
+
+    selected_row=rb_audit[
+        rb_audit["Name"].astype(str).eq(str(test_player))
+    ].head(1)
+
+    if len(selected_row):
+        current_proj=float(
+            pd.to_numeric(
+                selected_row["proj"],errors="coerce"
+            ).iloc[0]
+        )
+
+        proposed_proj=current_proj*(1.0+(float(test_pct)/100.0))
+
+        st.caption(
+            f"Current projection: {current_proj:.2f} DK  →  "
+            f"Test projection: {proposed_proj:.2f} DK"
+        )
+
+    if st.button(
+        "Apply opportunity test",
+        key="classic_rb_test_apply"
+    ):
+        adjustment=1.0+(float(test_pct)/100.0)
+
+        mask=pool["Name"].astype(str).eq(str(test_player))
+
+        for col in ["proj","ceiling","p95_use","p99_use"]:
+            if col in pool.columns:
+                pool.loc[mask,col]=(
+                    pd.to_numeric(
+                        pool.loc[mask,col],
+                        errors="coerce"
+                    )*adjustment
+                )
+
+        st.session_state["classic_uploaded_pool"]=pool.copy()
+
+        for k in [
+            "classic_portfolio_bundle",
+            "nfl_lineups",
+            "classic_v2_records",
+            "classic_v2_sim_players",
+            "classic_v2_sims",
+            "classic_v2_sim_signature"
+        ]:
+            st.session_state.pop(k,None)
+
+        st.success(
+            f"{test_player} opportunity test applied at "
+            f"{test_pct:+d}%."
+        )
+        st.rerun()
     eligible=pool[pool["optimizer_eligible"] == True].sort_values(["Position","proj"],ascending=[True,False])
     names=eligible["Name"].drop_duplicates().tolist()
     locks=st.multiselect("Lock players",names,key="classic_locks")
