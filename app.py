@@ -2072,7 +2072,88 @@ elif view == "Lineup Builder":
     rb1,rb2=st.columns(2)
     team_rb_share=rb1.slider("Max combined RB selections from one team",0.25,1.00,key="classic_team_rb_share",step=0.05,help="Portfolio-level cap across all RBs on the same team. At 55% in 20 lineups, one backfield can occupy at most 11 RB roster spots combined.")
     double_rb_limit=rb2.number_input("Max lineups with two RBs from same team",0,20,key="classic_double_rb_limit",step=1,help="Prevents individually acceptable RB exposures from becoming repeated same-backfield bets.")
+    st.markdown("#### Optimizer Player Pool Audit")
 
+    optimizer_audit=pool.copy()
+
+    if len(optimizer_audit):
+
+        optimizer_audit["Value / $1K"]=pd.to_numeric(
+            optimizer_audit["proj"],errors="coerce"
+        )/(pd.to_numeric(
+            optimizer_audit["Salary"],errors="coerce"
+        )/1000.0)
+
+        audit_cols=[c for c in [
+            "Name",
+            "Position",
+            "TeamAbbrev",
+            "Salary",
+            "proj",
+            "ceiling",
+            "p95_use",
+            "team_implied_points",
+            "AvgPointsPerGame",
+            "projection_source",
+            "projection_confidence",
+            "optimizer_eligible",
+            "Value / $1K"
+        ] if c in optimizer_audit.columns]
+
+        player_search=st.text_input(
+            "Search optimizer player pool",
+            value="",
+            key="classic_optimizer_pool_search",
+            placeholder="Type a player name, team, or position"
+        )
+
+        optimizer_view=optimizer_audit.copy()
+
+        if player_search.strip():
+            q=player_search.strip().lower()
+
+            search_mask=pd.Series(
+                False,
+                index=optimizer_view.index
+            )
+
+            for cc in ["Name","Position","TeamAbbrev"]:
+                if cc in optimizer_view.columns:
+                    search_mask=search_mask | (
+                        optimizer_view[cc]
+                        .astype(str)
+                        .str.lower()
+                        .str.contains(q,regex=False,na=False)
+                    )
+
+            optimizer_view=optimizer_view[search_mask]
+
+        st.dataframe(
+            optimizer_view[audit_cols].sort_values(
+                ["Position","proj","Salary"],
+                ascending=[True,False,False]
+            ),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        if "optimizer_eligible" in optimizer_audit.columns:
+            eligible_count=int(
+                optimizer_audit["optimizer_eligible"]
+                .fillna(False)
+                .astype(bool)
+                .sum()
+            )
+        else:
+            eligible_count=len(optimizer_audit)
+
+        st.caption(
+            f"Canonical Classic player pool: "
+            f"{len(optimizer_audit)} players shown • "
+            f"{eligible_count} optimizer-eligible. "
+            "Search here to audit any player before "
+            "trusting portfolio exposure."
+        )
     st.markdown("#### RB Opportunity & Portfolio Audit")
 rb_audit=pool[pool["Position"].astype(str).eq("RB")].copy()
 
