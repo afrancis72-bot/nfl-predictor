@@ -406,7 +406,11 @@ def lineup_context_scores(df):
         q=qb.iloc[0]
         mates=df[(df.TeamAbbrev==q.TeamAbbrev)&df.Position.isin(["WR","TE"])]
         if len(mates):
-            n=min(2,len(mates)); corr += n*1.25
+            # Primary QB pass-catcher keeps the full stack bonus. A second
+            # pass-catcher receives a smaller incremental bonus so cheap secondary
+            # stack pieces cannot overpower materially better standalone plays.
+            n=min(2,len(mates))
+            corr += 1.25 + max(0,n-1)*0.50
             detail.append("QB+WR/TE:"+",".join(mates.head(2)["Name"].astype(str)))
 
         # QB+RB can be positively related through receptions/receiving TDs. Because
@@ -1351,7 +1355,7 @@ CLASSIC_DEFAULTS = {
     "classic_projection_floor": 0.88, "classic_portfolio_mode": "DFS Engine V2 Scenario Portfolio",
     "classic_bank_size": 1200, "classic_solver_seconds": 20,
     "classic_locks": [], "classic_excludes": [],
-    "classic_team_rb_share": 0.55, "classic_double_rb_limit": 1,
+    "classic_team_rb_share": 0.55, "classic_double_rb_limit": 0,
 }
 SHOWDOWN_DEFAULTS = {
     "sd_n_lineups": 20, "sd_max_player_exp": 0.75, "sd_max_cpt_exp": 0.50,
@@ -2072,194 +2076,15 @@ elif view == "Lineup Builder":
     rb1,rb2=st.columns(2)
     team_rb_share=rb1.slider("Max combined RB selections from one team",0.25,1.00,key="classic_team_rb_share",step=0.05,help="Portfolio-level cap across all RBs on the same team. At 55% in 20 lineups, one backfield can occupy at most 11 RB roster spots combined.")
     double_rb_limit=rb2.number_input("Max lineups with two RBs from same team",0,20,key="classic_double_rb_limit",step=1,help="Prevents individually acceptable RB exposures from becoming repeated same-backfield bets.")
-    st.markdown("#### Optimizer Player Pool Audit")
 
-    optimizer_audit=pool.copy()
+    st.markdown("#### RB Opportunity Audit")
+    rb_audit=pool[pool["Position"].astype(str).eq("RB")].copy()
+    if len(rb_audit):
+        rb_audit["Value / $1K"]=pd.to_numeric(rb_audit["proj"],errors="coerce")/(pd.to_numeric(rb_audit["Salary"],errors="coerce")/1000.0)
+        show_cols=[c for c in ["Name","TeamAbbrev","Salary","proj","ceiling","p95_use","team_implied_points","AvgPointsPerGame","opportunity_multiplier","opportunity_note","projection_source","Value / $1K"] if c in rb_audit.columns]
+        st.dataframe(rb_audit[show_cols].sort_values(["proj","Salary"],ascending=[False,False]),use_container_width=True,hide_index=True)
+        st.caption("Use this table to compare Brown/Swift/Monangai before and after any verified opportunity override. The optimizer still decides whether the player earns portfolio exposure.")
 
-    if len(optimizer_audit):
-
-        optimizer_audit["Value / $1K"]=pd.to_numeric(
-            optimizer_audit["proj"],errors="coerce"
-        )/(pd.to_numeric(
-            optimizer_audit["Salary"],errors="coerce"
-        )/1000.0)
-
-        audit_cols=[c for c in [
-            "Name",
-            "Position",
-            "TeamAbbrev",
-            "Salary",
-            "proj",
-            "ceiling",
-            "p95_use",
-            "team_implied_points",
-            "AvgPointsPerGame",
-            "projection_source",
-            "projection_confidence",
-            "optimizer_eligible",
-            "Value / $1K"
-        ] if c in optimizer_audit.columns]
-
-        player_search=st.text_input(
-            "Search optimizer player pool",
-            value="",
-            key="classic_optimizer_pool_search",
-            placeholder="Type a player name, team, or position"
-        )
-
-        optimizer_view=optimizer_audit.copy()
-
-        if player_search.strip():
-            q=player_search.strip().lower()
-
-            search_mask=pd.Series(
-                False,
-                index=optimizer_view.index
-            )
-
-            for cc in ["Name","Position","TeamAbbrev"]:
-                if cc in optimizer_view.columns:
-                    search_mask=search_mask | (
-                        optimizer_view[cc]
-                        .astype(str)
-                        .str.lower()
-                        .str.contains(q,regex=False,na=False)
-                    )
-
-            optimizer_view=optimizer_view[search_mask]
-
-        st.dataframe(
-            optimizer_view[audit_cols].sort_values(
-                ["Position","proj","Salary"],
-                ascending=[True,False,False]
-            ),
-            use_container_width=True,
-            hide_index=True
-        )
-
-        if "optimizer_eligible" in optimizer_audit.columns:
-            eligible_count=int(
-                optimizer_audit["optimizer_eligible"]
-                .fillna(False)
-                .astype(bool)
-                .sum()
-            )
-        else:
-            eligible_count=len(optimizer_audit)
-
-        st.caption(
-            f"Canonical Classic player pool: "
-            f"{len(optimizer_audit)} players shown • "
-            f"{eligible_count} optimizer-eligible. "
-            "Search here to audit any player before "
-            "trusting portfolio exposure."
-        )
-    st.markdown("#### RB Opportunity & Portfolio Audit")
-rb_audit=pool[pool["Position"].astype(str).eq("RB")].copy()
-
-if len(rb_audit):
-    rb_audit["Value / $1K"]=pd.to_numeric(
-        rb_audit["proj"],errors="coerce"
-    )/(pd.to_numeric(rb_audit["Salary"],errors="coerce")/1000.0)
-
-    show_cols=[c for c in [
-        "Name","TeamAbbrev","Salary","proj","ceiling","p95_use",
-        "team_implied_points","AvgPointsPerGame",
-        "opportunity_multiplier","opportunity_note",
-        "projection_source","Value / $1K"
-    ] if c in rb_audit.columns]
-
-    st.dataframe(
-        rb_audit[show_cols].sort_values(
-            ["proj","Salary"],ascending=[False,False]
-        ),
-        use_container_width=True,
-        hide_index=True
-    )
-
-    st.caption(
-        "Slate-wide RB opportunity audit. Use the optional test below "
-        "only when verified role or opportunity information is not yet "
-        "reflected in the current-week projection. No player is forced "
-        "into a lineup."
-    )
-
-    st.markdown("##### Optional RB Opportunity Test")
-
-    rb_names=rb_audit.sort_values(
-        ["proj","Salary"],ascending=[False,False]
-    )["Name"].drop_duplicates().tolist()
-
-    test_col1,test_col2=st.columns([2,1])
-
-    test_player=test_col1.selectbox(
-        "Running back",
-        rb_names,
-        key="classic_rb_test_player"
-    )
-
-    test_pct=test_col2.slider(
-        "Projection adjustment",
-        -20,
-        20,
-        0,
-        1,
-        key="classic_rb_test_pct",
-        format="%d%%"
-    )
-
-    selected_row=rb_audit[
-        rb_audit["Name"].astype(str).eq(str(test_player))
-    ].head(1)
-
-    if len(selected_row):
-        current_proj=float(
-            pd.to_numeric(
-                selected_row["proj"],errors="coerce"
-            ).iloc[0]
-        )
-
-        proposed_proj=current_proj*(1.0+(float(test_pct)/100.0))
-
-        st.caption(
-            f"Current projection: {current_proj:.2f} DK  →  "
-            f"Test projection: {proposed_proj:.2f} DK"
-        )
-
-    if st.button(
-        "Apply opportunity test",
-        key="classic_rb_test_apply"
-    ):
-        adjustment=1.0+(float(test_pct)/100.0)
-
-        mask=pool["Name"].astype(str).eq(str(test_player))
-
-        for col in ["proj","ceiling","p95_use","p99_use"]:
-            if col in pool.columns:
-                pool.loc[mask,col]=(
-                    pd.to_numeric(
-                        pool.loc[mask,col],
-                        errors="coerce"
-                    )*adjustment
-                )
-
-        st.session_state["classic_uploaded_pool"]=pool.copy()
-
-        for k in [
-            "classic_portfolio_bundle",
-            "nfl_lineups",
-            "classic_v2_records",
-            "classic_v2_sim_players",
-            "classic_v2_sims",
-            "classic_v2_sim_signature"
-        ]:
-            st.session_state.pop(k,None)
-
-        st.success(
-            f"{test_player} opportunity test applied at "
-            f"{test_pct:+d}%."
-        )
-        st.rerun()
     eligible=pool[pool["optimizer_eligible"] == True].sort_values(["Position","proj"],ascending=[True,False])
     names=eligible["Name"].drop_duplicates().tolist()
     locks=st.multiselect("Lock players",names,key="classic_locks")
