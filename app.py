@@ -409,9 +409,30 @@ def lineup_context_scores(df):
             # Primary QB pass-catcher keeps the full stack bonus. A second
             # pass-catcher receives a smaller incremental bonus so cheap secondary
             # stack pieces cannot overpower materially better standalone plays.
-            n=min(2,len(mates))
-            corr += 1.25 + max(0,n-1)*0.50
-            detail.append("QB+WR/TE:"+",".join(mates.head(2)["Name"].astype(str)))
+            # Primary pass catcher gets the full stack bonus.
+            # A second pass catcher must earn its bonus through actual projection strength.
+                  mates = mates.sort_values("proj", ascending=False)
+
+    primary = mates.iloc[0]
+    corr += 1.25
+
+    stack_names = [str(primary["Name"])]
+
+    if len(mates) > 1:
+       secondary = mates.iloc[1]
+
+       primary_proj = max(float(primary.get("proj", 0)), 0.01)
+       secondary_proj = max(float(secondary.get("proj", 0)), 0.0)
+
+       # Secondary bonus scales from 0 to 0.50 based on its projection
+       # relative to the primary pass catcher.
+       role_ratio = min(1.0, secondary_proj / primary_proj)
+       secondary_bonus = 0.50 * role_ratio
+
+       corr += secondary_bonus
+       stack_names.append(str(secondary["Name"]))
+
+detail.append("QB+WR/TE:" + ",".join(stack_names))
 
         # QB+RB can be positively related through receptions/receiving TDs. Because
         # target share is not yet an input, use current role/opportunity only as a
