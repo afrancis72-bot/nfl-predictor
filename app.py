@@ -1087,7 +1087,13 @@ def simulate_classic_v2(pool, n_sims=10000, seed=20261006):
         mean=max(.05,float(r['proj'])); p90=max(mean,float(r.get('ceiling',mean*1.5)))
         empirical=max(.75,(p90-mean)/1.2816)
         pos_floor={'QB':4.5,'RB':5.0,'WR':5.5,'TE':4.5,'DST':4.0}.get(pos,4.5)
-        sd=max(empirical,pos_floor,mean*{'QB':.30,'RB':.48,'WR':.58,'TE':.58,'DST':.65}.get(pos,.5))
+        # V2.0.13 low-salary tail calibration: the old absolute position floor
+        # (for example 5.5 DK points for every WR) could overpower a low-mean
+        # player's own P90-derived variance and manufacture too much simulated
+        # tournament tail. Scale that floor to the player's mean, while still
+        # respecting the empirical P90 spread and the normal position CV floor.
+        scaled_pos_floor=min(pos_floor, mean*0.60)
+        sd=max(empirical,scaled_pos_floor,mean*{'QB':.30,'RB':.48,'WR':.58,'TE':.58,'DST':.65}.get(pos,.5))
         # Model uncertainty shifts the center itself, separately from game-to-game variance.
         unc=rng.normal(0,{'QB':.07,'RB':.10,'WR':.12,'TE':.13,'DST':.16}.get(pos,.12),size=ns)*mean
         idio=rng.standard_t(5,size=ns)/np.sqrt(5/3)
