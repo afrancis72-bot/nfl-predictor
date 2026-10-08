@@ -437,8 +437,8 @@ detail.append("QB+WR/TE:" + ",".join(stack_names))
         # QB+RB can be positively related through receptions/receiving TDs. Because
         # target share is not yet an input, use current role/opportunity only as a
         # conservative proxy and keep the credit well below a WR/TE pairing.
-        rb=df[(df.TeamAbbrev==q.TeamAbbrev)&(df.Position=="RB")]
-        for _,r in rb.iterrows():
+            rb=df[(df.TeamAbbrev==q.TeamAbbrev)&(df.Position=="RB")]
+            for _,r in rb.iterrows():
             role=str(r.get("role_status","")).lower()
             ppg=float(pd.to_numeric(pd.Series([r.get("AvgPointsPerGame",0)]),errors="coerce").fillna(0).iloc[0])
             if "core" in role or "starter" in role or ppg>=15: rb_credit=0.65
