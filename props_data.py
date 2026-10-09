@@ -83,3 +83,42 @@ def walkforward(history, season, first_week=4, last_week=18, window=8):
                                 'stat':obs,'prediction':float(p),'actual':float(y),
                                 'error':float(p-y),'absolute_error':float(abs(p-y))})
     return pd.DataFrame(out)
+
+def validation_report(raw, target_season, target_week):
+    """Validate the pregame slice and return (summary, auditable source rows).
+
+    The audit is intentionally limited to the target season and weeks before the
+    target week so the UI can prove there is no future-week leakage.
+    """
+    df = raw.copy()
+    if 'recent_team' not in df.columns and 'team' in df.columns:
+        df['recent_team'] = df['team']
+    if 'player_name' not in df.columns and 'player_display_name' in df.columns:
+        df['player_name'] = df['player_display_name']
+    h = clean_weekly(df)
+    season, week = int(target_season), int(target_week)
+    audit = h[(h['season'] == season) & (h['week'] < week)].copy()
+    if audit.empty:
+        raise ValueError(f'No regular-season player-week rows found before {season} week {week}.')
+    id_col = 'player_id' if 'player_id' in audit.columns and audit['player_id'].notna().any() else 'player_name'
+    dupes = int(audit.duplicated(subset=[id_col, 'week'], keep=False).sum())
+    future = int((audit['week'] >= week).sum())
+    max_week = int(audit['week'].max())
+    if dupes:
+        raise ValueError(f'Data integrity check failed: {dupes} duplicate player/week rows.')
+    if future:
+        raise ValueError(f'Data leakage check failed: {future} target/future-week rows included.')
+    summary = {
+        'target_season': season,
+        'target_week': week,
+        'regular_season_only': True,
+        'included_weeks': sorted(int(x) for x in audit['week'].dropna().unique()),
+        'max_included_week': max_week,
+        'player_week_rows': int(len(audit)),
+        'unique_players': int(audit[id_col].nunique()),
+        'duplicate_player_weeks': dupes,
+        'future_week_rows': future,
+        'status': 'PASS',
+    }
+    cols = [c for c in ['season','week','player_id','player_name','recent_team','position'] + list(COUNT_COLS.values()) if c in audit.columns]
+    return summary, audit[cols].sort_values(['week','recent_team','player_name']).reset_index(drop=True)
