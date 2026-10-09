@@ -2,6 +2,7 @@ from pathlib import Path
 from props_data import fetch_weekly as props_fetch_weekly, make_rates as props_make_rates, walkforward as props_walkforward, validation_report as props_validation_report
 from props_lab import standardize as props_standardize, simulate as props_simulate
 from props_matchup import fetch_schedule as props_fetch_schedule, matchup_factors as props_matchup_factors, apply_matchups as props_apply_matchups, variance_diagnostics as props_variance_diagnostics, stabilize_variance as props_stabilize_variance
+from dfs_stats_engine import simulate_stat_driven_dfs
 import io
 import math
 import random
@@ -2190,13 +2191,24 @@ elif view == "Simulation":
             st.success(f"ACTIVE SIMULATION SLATE: {len(active_games)} games • {int(pool['optimizer_eligible'].sum())} optimizer-eligible players")
             st.write(" • ".join(active_games))
             n_sim=st.select_slider("Simulation runs",options=[10000,25000,50000,100000],value=50000)
+            sim_engine=st.radio("Simulation engine",["Stat-driven football simulation","Legacy fantasy-point simulation"],horizontal=True,key="classic_sim_engine")
+            st.caption("Stat-driven mode simulates attempts, sacks, carries, targets, receptions, yards, touchdowns and turnovers first, then applies DraftKings scoring. The opposing DST is scored from the same game outcomes.")
             if st.button("Run active-slate simulation",type="primary"):
                 with st.spinner(f"Running {int(n_sim):,} coherent full-slate scenarios..."):
-                    sim_players,classic_sims=simulate_classic_v2(pool,int(n_sim))
+                    if sim_engine=="Stat-driven football simulation":
+                        season=int(st.session_state.get('props_season',2026)); week=int(st.session_state.get('props_week',5)); window=int(st.session_state.get('props_window',8))
+                        raw=props_fetch_weekly([season-1,season])
+                        rates=props_make_rates(raw,season,week,window)
+                        sim_players,classic_sims,stat_draws=simulate_stat_driven_dfs(pool,rates,int(n_sim))
+                        st.session_state['classic_stat_draws']=stat_draws
+                    else:
+                        sim_players,classic_sims=simulate_classic_v2(pool,int(n_sim))
+                        st.session_state.pop('classic_stat_draws',None)
                     st.session_state['classic_v2_sim_players']=sim_players
                     st.session_state['classic_v2_sims']=classic_sims
                     st.session_state['classic_v2_sim_signature']='|'.join(active_games)
                     st.session_state['classic_v2_sim_runs']=int(n_sim)
+                    st.session_state['classic_v2_sim_engine']=sim_engine
             sp=st.session_state.get('classic_v2_sim_players'); ss=st.session_state.get('classic_v2_sims')
             sig=st.session_state.get('classic_v2_sim_signature')
             current_sig='|'.join(active_games)
@@ -2268,7 +2280,11 @@ elif view == "Lineup Builder":
                 attempts=max(60000,int(bank_size)*120)
             )
             if portfolio_mode == "DFS Engine V2 Scenario Portfolio":
-                sim_players,classic_sims=simulate_classic_v2(pool,10000)
+                season=int(st.session_state.get('props_season',2026)); week=int(st.session_state.get('props_week',5)); window=int(st.session_state.get('props_window',8))
+                raw=props_fetch_weekly([season-1,season]); rates=props_make_rates(raw,season,week,window)
+                sim_players,classic_sims,stat_draws=simulate_stat_driven_dfs(pool,rates,10000)
+                st.session_state['classic_stat_draws']=stat_draws
+                st.session_state['classic_v2_sim_engine']='Stat-driven football simulation'
                 records=v2_rescore_classic_candidates(candidate_items,sim_players,classic_sims)
                 lineups,solver_meta=select_v2_portfolio(records,int(n_lineups),float(max_exp),int(min_unique),float(team_rb_share),int(double_rb_limit))
                 st.session_state['classic_v2_sim_players']=sim_players; st.session_state['classic_v2_sims']=classic_sims
