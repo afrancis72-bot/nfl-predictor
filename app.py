@@ -2214,8 +2214,9 @@ elif view == "Simulation":
             current_sig='|'.join(active_games)
             if sp is not None and ss is not None and sig==current_sig:
                 summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
-                meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source'] if c in sp.columns]].copy()
+                meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source','simulation_engine'] if c in sp.columns]].copy()
                 summary=meta.merge(summary,on='Name',how='left')
+                summary['engine_version']=('V3.0.6' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
                 positions=st.multiselect("Position",["QB","RB","WR","TE","DST"],default=["QB","RB","WR","TE","DST"],key='v2_sim_pos')
                 sort_metric=st.selectbox("Sort by",["Mean","Median","Mode (binned)","P75","P90","P95"],key='v2_sim_sort')
                 show=summary[summary['Position'].isin(positions)].sort_values(sort_metric,ascending=False)
