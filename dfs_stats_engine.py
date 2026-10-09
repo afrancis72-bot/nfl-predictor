@@ -152,6 +152,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
             qb_carry=_safe(qr.get('carries_pg') if qr is not None else np.nan,3.0)
             cbase=np.append(np.maximum(carry_rates,0),[max(qb_carry,0),max(team_rush*.06,.5)])
             cprob=cbase/cbase.sum(); carr=_multinomial_rows(rng,rushes,cprob)
+            oth_carries=carr[:,-1].copy()
 
             team_rec_yd=np.zeros(ns); team_comp=np.zeros(ns); player_rec={}; player_rush={}
             for j,(_,p) in enumerate(skill.iterrows()):
@@ -168,13 +169,17 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
                 player_rec[j]=(tt,recs,recyd); player_rush[j]=(cc,rushyd)
                 team_rec_yd+=recyd; team_comp+=recs
 
-            # Unmodeled catches/yards reconcile QB production with team allocation.
-            oth_t=targ[:,-1]; oth_c=rng.binomial(oth_t,.62); oth_y=np.where(oth_c>0,rng.gamma(np.maximum(oth_c,1)*2.0,4.5),0.)
+            # Explicit accounting-only OTHER receiver bucket.
+            oth_t=targ[:,-1]
+            team_catch_rate=float(np.clip(comp_pg/max(pass_pg,1),.35,.82))
+            oth_c=rng.binomial(oth_t,team_catch_rate)
+            oth_y=np.where(oth_c>0,rng.gamma(np.maximum(oth_c,1)*2.0,4.5),0.)
             team_comp+=oth_c; team_rec_yd+=oth_y
             # Blend receiver-generated yards toward QB historical yards/attempt without breaking correlation.
             hist_ypa=pass_yd_pg/max(pass_pg,1); generated_ypa=team_rec_yd/np.maximum(attempts,1)
             scale=np.clip(hist_ypa/np.maximum(generated_ypa,.1),.72,1.35)
             team_rec_yd*=scale
+            oth_y*=scale
             for j in player_rec: player_rec[j]=(player_rec[j][0],player_rec[j][1],player_rec[j][2]*scale)
 
             # Shared TD/turnover scoring. Implied points anchor scoring environment.
@@ -186,12 +191,47 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
             int_rate=np.clip(int_pg/max(pass_pg,1),.005,.065); ints=rng.binomial(attempts,int_rate)
 
             # Allocate receiving and rushing TDs by opportunity shares.
-            rec_td_alloc=np.zeros((ns,len(skill)),dtype=np.int8); rush_td_alloc=np.zeros((ns,len(skill)),dtype=np.int8)
-            tp=np.maximum(target_rates,0)+.15; tp=tp/tp.sum() if tp.sum()>0 else np.repeat(1/len(skill),len(skill))
-            cp=np.maximum(carry_rates,0)+.10; cp=cp/cp.sum() if cp.sum()>0 else np.repeat(1/len(skill),len(skill))
+            rec_td_full=np.zeros((ns,len(skill)+1),dtype=np.int8)
+            rush_td_full=np.zeros((ns,len(skill)+1),dtype=np.int8)
+            tp=np.append(np.maximum(target_rates,0)+.15,max(leftover,.15)); tp=tp/tp.sum()
+            cp=np.append(np.maximum(carry_rates,0)+.10,max(team_rush*.06,.10)); cp=cp/cp.sum()
             for s in range(ns):
-                if pass_td[s]>0: rec_td_alloc[s]=rng.multinomial(int(pass_td[s]),tp)
-                if rush_td[s]>0: rush_td_alloc[s]=rng.multinomial(int(rush_td[s]),cp)
+                if pass_td[s]>0: rec_td_full[s]=rng.multinomial(int(pass_td[s]),tp)
+                if rush_td[s]>0: rush_td_full[s]=rng.multinomial(int(rush_td[s]),cp)
+            rec_td_alloc=rec_td_full[:,:len(skill)]
+            rush_td_alloc=rush_td_full[:,:len(skill)]
+            oth_rec_td=rec_td_full[:,-1]
+            oth_rush_td=rush_td_full[:,-1]
+
+            # Explicit accounting-only OTHER rusher. Never enters DFS eligibility.
+            modeled_ypc=[]
+            for z in rr:
+                c=max(_safe(z.get('carries_pg') if z is not None else np.nan,0),.1)
+                modeled_ypc.append(_safe(z.get('rushing_yards_pg') if z is not None else np.nan,c*4.0)/c)
+            oth_ypc=float(np.clip(np.nanmean(modeled_ypc) if modeled_ypc else 4.0,2.5,6.5))
+            oth_rush_y=np.where(oth_carries>0,
+                                np.maximum(0.,rng.normal(oth_carries*oth_ypc,
+                                np.sqrt(np.maximum(oth_carries,1))*1.8,ns)),0.)
+
+            stat_draws[f"__OTHER_RECEIVER__|{team}"]={
+                'targets':oth_t,'receptions':oth_c,'receiving_yards':oth_y,'receiving_tds':oth_rec_td}
+            stat_draws[f"__OTHER_RUSHER__|{team}"]={
+                'carries':oth_carries,'rushing_yards':oth_rush_y,'rushing_tds':oth_rush_td}
+
+            # Fail closed if team accounting does not conserve the simulated football totals.
+            modeled_rec=np.sum([player_rec[j][1] for j in player_rec],axis=0) if player_rec else np.zeros(ns)
+            modeled_rec_y=np.sum([player_rec[j][2] for j in player_rec],axis=0) if player_rec else np.zeros(ns)
+            if not np.array_equal(team_comp,modeled_rec+oth_c):
+                raise ValueError(f'V3.0.8 completion conservation failed for {team}')
+            if not np.allclose(team_rec_yd,modeled_rec_y+oth_y,atol=.001):
+                raise ValueError(f'V3.0.8 passing-yard conservation failed for {team}')
+            if not np.array_equal(pass_td,np.sum(rec_td_alloc,axis=1)+oth_rec_td):
+                raise ValueError(f'V3.0.8 passing-TD conservation failed for {team}')
+            skill_carries=np.sum(carr[:,:len(skill)],axis=1) if len(skill) else np.zeros(ns,dtype=int)
+            if not np.array_equal(rushes,skill_carries+carr[:,-2]+oth_carries):
+                raise ValueError(f'V3.0.8 rush-attempt conservation failed for {team}')
+            if not np.array_equal(rush_td,np.sum(rush_td_alloc,axis=1)+oth_rush_td):
+                raise ValueError(f'V3.0.8 rushing-TD conservation failed for {team}')
 
             # QB DK score.
             qidx=name_index.get((qname,team,'QB')) if qbrow is not None else None
@@ -255,7 +295,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
         elif float(np.mean(non_td))<0.15 and float(np.mean(td))>0.02:
             broken.append(f"{name}: TD-only output (non-TD mean={np.mean(non_td):.3f})")
     if broken:
-        raise ValueError('V3.0.6 skill allocation validation failed: '
+        raise ValueError('V3.0.8 skill allocation validation failed: '
                          +'; '.join(broken[:18])
                          + '. No lineup CSV will be generated. Inspect nflverse baselines and team allocation.')
 
