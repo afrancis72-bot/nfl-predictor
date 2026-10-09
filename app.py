@@ -1,7 +1,7 @@
 from pathlib import Path
 from props_data import fetch_weekly as props_fetch_weekly, make_rates as props_make_rates, walkforward as props_walkforward, validation_report as props_validation_report
-from props_lab import standardize as props_standardize, simulate as props_simulate, compare as props_compare, fetch_odds as props_fetch_odds
-from props_matchup import fetch_schedule as props_fetch_schedule, matchup_factors as props_matchup_factors, apply_matchups as props_apply_matchups, variance_diagnostics as props_variance_diagnostics
+from props_lab import standardize as props_standardize, simulate as props_simulate
+from props_matchup import fetch_schedule as props_fetch_schedule, matchup_factors as props_matchup_factors, apply_matchups as props_apply_matchups, variance_diagnostics as props_variance_diagnostics, stabilize_variance as props_stabilize_variance
 import io
 import math
 import random
@@ -1836,8 +1836,8 @@ st.warning("V2.0.12 RB portfolio controls + V2.0.11 injury safety: OUT and DOUBT
 view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis","Player Props Lab"])
 
 if view == "Player Props Lab":
-    st.subheader("Player Props Lab — experimental")
-    st.info("Separate statistical engine. Existing Classic/Showdown optimizer is unchanged. These are modeled outcomes, NOT verified prop forecasts. Historical Week 4 data is NOT used automatically.")
+    st.subheader("Player Props Lab — matchup-adjusted statistical predictions")
+    st.info("Separate statistical engine; Classic/Showdown remains unchanged. The bold Model Prediction is the median of the simulated distribution. Predictions use only pregame data and remain estimates, not guarantees.")
     st.markdown("**Step 1 — load pregame NFL statistics automatically (or upload your own CSV).**")
     st.caption("Official-derived weekly player stats from nflverse; only games BEFORE the selected week enter projections. No DK fantasy-point reverse engineering.")
     # No timezone lookup needed here: season/week are selected explicitly.
@@ -1884,8 +1884,8 @@ if view == "Player Props Lab":
             st.dataframe(audit_rows[audit_rows.player_name==selected],use_container_width=True,hide_index=True)
             st.download_button('Download all included source player-weeks',audit_rows.to_csv(index=False),'nfl_props_source_audit.csv','text/csv')
     if frame is not None and not frame.empty and source is None and 'props_history' in st.session_state:
-        st.markdown('#### Matchup adjustments (optional, experimental)')
-        st.caption('Uses the nflverse game schedule and ONLY completed weeks before the target week. Opponent-allowed rates are shrunk heavily toward league average (8-game prior) and capped at ±15%. This is not validated predictive opponent strength.')
+        st.markdown('#### Current-week schedule, role & opponent adjustment')
+        st.caption('Schedule filtering removes bye/unmatched teams. A conservative opportunity screen removes players without a projectable current role. Opponent rates use only completed prior weeks, are shrunk heavily toward league average, and capped at ±15%.')
         @st.cache_data(ttl=21600,show_spinner=False)
         def _props_schedule_cached():
             return props_fetch_schedule()
@@ -1904,41 +1904,21 @@ if view == "Player Props Lab":
             with st.expander('Inspect opponent factors and source evidence'):
                 st.dataframe(factors,use_container_width=True,hide_index=True)
                 st.download_button('Download opponent factors',factors.to_csv(index=False),'nfl_opponent_factors.csv','text/csv')
-            enable=st.checkbox('Apply opponent factors to simulation',value=False,key='props_apply_opponents',on_change=lambda: (st.session_state.pop('props_summary',None),st.session_state.pop('props_draws',None)))
-            if enable:
-                try:
-                    # Compatibility-safe call: V2.6 does not require a keyword-only audit API.
-                    _before_matchup = frame.copy()
-                    try:
-                        _result = props_apply_matchups(frame, factors, return_audit=True)
-                    except TypeError as _exc:
-                        if "return_audit" not in str(_exc):
-                            raise
-                        _result = props_apply_matchups(frame, factors)
-                    if isinstance(_result, tuple) and len(_result) == 2:
-                        frame, matchup_audit = _result
-                    else:
-                        frame = _result
-                        _matched_teams = set(frame['team'].dropna().astype(str)) if 'team' in frame else set()
-                        _excluded = _before_matchup[~_before_matchup['team'].astype(str).isin(_matched_teams)].copy() if 'team' in _before_matchup else _before_matchup.iloc[0:0].copy()
-                        matchup_audit = {
-                            'matched_players': int(len(frame)),
-                            'excluded_players': int(len(_excluded)),
-                            'matched_teams': sorted(_matched_teams),
-                            'excluded_teams': sorted(set(_excluded['team'].dropna().astype(str))) if 'team' in _excluded else [],
-                            'excluded': _excluded,
-                        }
-                    st.session_state['props_matchup_audit']=matchup_audit
-                    st.success(f"Opponent factors applied to {matchup_audit['matched_players']} scheduled players; {matchup_audit['excluded_players']} unmatched/bye players excluded.")
-                    if matchup_audit['excluded_players']:
-                        with st.expander('Excluded from target-week matchup set'):
-                            cols=[c for c in ['player','team','position','games_played'] if c in matchup_audit['excluded'].columns]
-                            st.dataframe(matchup_audit['excluded'][cols],use_container_width=True,hide_index=True)
-                except Exception as exc:
-                    st.error(f'Opponent adjustment not applied: {exc}')
+            enable=st.checkbox('Apply opponent factors to prediction',value=True,key='props_apply_opponents',on_change=lambda: (st.session_state.pop('props_summary',None),st.session_state.pop('props_draws',None)))
+            try:
+                frame, matchup_audit = props_apply_matchups(frame, factors, return_audit=True, apply_factors=enable, role_filter=True)
+                st.session_state['props_matchup_audit']=matchup_audit
+                label='Opponent-adjusted' if enable else 'Neutral-opponent'
+                st.success(f"{label} Week {int(week)} pool: {matchup_audit['matched_players']} projectable scheduled players; {matchup_audit.get('bye_or_unmatched_players',0)} bye/unmatched and {matchup_audit.get('low_role_players',0)} low-opportunity players excluded.")
+                if matchup_audit['excluded_players']:
+                    with st.expander('Excluded from current-week prediction pool'):
+                        cols=[c for c in ['player','team','position','games_played'] if c in matchup_audit['excluded'].columns]
+                        st.dataframe(matchup_audit['excluded'][cols],use_container_width=True,hide_index=True)
+            except Exception as exc:
+                st.error(f'Current-week filtering/opponent adjustment not applied: {exc}')
     if frame is not None and not frame.empty:
         st.dataframe(frame.head(25),use_container_width=True,hide_index=True)
-    st.warning("Pregame baseline does NOT automatically verify active roster, injuries, opponent matchups, or depth chart. Filter to confirmed active players before interpreting betting outputs.")
+    st.warning("The role screen is opportunity-based; it does not verify final injury/inactive news or depth-chart changes. Check final game-day status before using a prediction.")
     c1,c2=st.columns(2)
     count=c1.select_slider("Simulations",options=[1000,5000,10000,25000,50000,100000],value=10000,key='props_n')
     seed=c2.number_input("Reproducible seed",min_value=1,max_value=99999999,value=20261009,key='props_seed')
@@ -1947,9 +1927,13 @@ if view == "Player Props Lab":
             try:
                 with st.spinner("Simulating correlated football-stat outcomes..."):
                     summary,draws=props_simulate(frame,int(count),int(seed))
+                    variance_audit=pd.DataFrame()
+                    if 'props_history' in st.session_state and st.session_state.get('props_loaded_parameters')==(int(season),int(week),int(window)):
+                        summary,draws,variance_audit=props_stabilize_variance(summary,draws,st.session_state['props_history'],int(season),int(week))
                 st.session_state['props_summary']=summary
                 st.session_state['props_draws']=draws
-                st.success(f"Generated {int(count):,} scenarios. Model remains experimental and uncalibrated.")
+                st.session_state['props_variance_audit']=variance_audit
+                st.success(f"Generated {int(count):,} scenarios. Model Prediction = simulation median; variance is conservatively stabilized toward observed game-to-game variation.")
             except Exception as exc: st.error(f"Simulation: {exc}")
     else: st.warning("Load NFL statistics or upload observed player rates before simulating.")
     if 'props_history' in st.session_state:
@@ -1975,17 +1959,27 @@ if view == "Player Props Lab":
         default_stats=[m for m in available_stats if m in ('passing_yards','rushing_yards','receiving_yards','receptions')]
         selected_stats=st.multiselect('Filter prop types',available_stats,default=default_stats,key='props_filter_stat')
         filtered=summary[summary.position.isin(selected_pos)&summary.stat.isin(selected_stats)].copy()
-        st.caption(f'{len(filtered):,} matching player/stat rows. Position-irrelevant zero categories are excluded by default.')
-        st.dataframe(filtered,use_container_width=True,hide_index=True)
+        filtered['Model Prediction']=filtered['median']
+        # Confidence describes distribution stability/sample support, not a claimed win rate.
+        gp=frame[['player','team','games_played']].drop_duplicates() if frame is not None else pd.DataFrame(columns=['player','team','games_played'])
+        filtered=filtered.merge(gp,on=['player','team'],how='left')
+        rel=(pd.to_numeric(filtered['sd'],errors='coerce')/pd.to_numeric(filtered['Model Prediction'],errors='coerce').replace(0,np.nan)).replace([np.inf,-np.inf],np.nan)
+        filtered['Confidence']=np.select([(filtered.games_played>=4)&(rel<=.35),(filtered.games_played>=3)&(rel<=.55)],['A','B'],default='C')
+        display_cols=[c for c in ['player','position','team','stat','Model Prediction','mean','sd','p10','p90','games_played','Confidence'] if c in filtered.columns]
+        st.caption(f'{len(filtered):,} matching player/stat rows. **Model Prediction is the median**; confidence reflects sample support + distribution stability, not a betting hit rate.')
+        st.dataframe(filtered[display_cols].sort_values(['position','stat','Model Prediction'],ascending=[True,True,False]),use_container_width=True,hide_index=True)
         st.download_button('Download filtered player-stat summary',filtered.to_csv(index=False),'nfl_props_summary_filtered.csv','text/csv')
         st.download_button('Download full player-stat summary',summary.to_csv(index=False),'nfl_props_summary.csv','text/csv')
         if 'props_history' in st.session_state and st.session_state.get('props_loaded_parameters')==(int(season),int(week),int(window)):
-            with st.expander('Variance diagnostics — simulated vs observed SD'):
-                st.caption('Compares simulated SD to observed current-season game-to-game SD. Only 3–4 observed games are available for Week 5, so these comparisons are noisy and are NOT evidence of predictive calibration. No automatic variance correction is applied.')
+            with st.expander('Variance stabilization audit'):
+                st.caption('Shows simulated versus observed current-season game-to-game SD. Observed SD gets only 25% weight and each adjustment is capped at ±25% because early-season samples are small. This is stabilization, not proof of predictive calibration.')
                 try:
                     diag=props_variance_diagnostics(summary,st.session_state['props_history'],int(season),int(week))
                     st.dataframe(diag[diag.position.isin(selected_pos)&diag.stat.isin(selected_stats)],use_container_width=True,hide_index=True)
                     st.download_button('Download variance diagnostics',diag.to_csv(index=False),'nfl_props_variance_diagnostics.csv','text/csv')
+                    if 'props_variance_audit' in st.session_state and not st.session_state['props_variance_audit'].empty:
+                        st.markdown('**Applied variance stabilization**')
+                        st.dataframe(st.session_state['props_variance_audit'],use_container_width=True,hide_index=True)
                 except Exception as exc: st.error(f'Variance diagnostic: {exc}')
         st.caption("For memory safety, raw scenarios export is limited to one selected player at a time.")
         names=sorted({k[0] for k in draws})
@@ -1993,32 +1987,7 @@ if view == "Player Props Lab":
         matching=[(t,v) for (p,t),v in draws.items() if p==chosen]
         if len(matching)==1:
             st.download_button("Download raw player simulations",pd.DataFrame(matching[0][1]).to_csv(index=False),'nfl_props_raw_player.csv','text/csv')
-        st.markdown("#### Step 2 — market odds")
-        st.caption("Upload odds CSV (player, market, line, side, price, optional bookmaker) or fetch live player props using your own The Odds API key. API requests may consume paid credits. Odds refresh only when you click.")
-        odds_upload=st.file_uploader("Odds CSV",type=['csv'],key='props_odds_upload')
-        key=st.text_input("The Odds API key (optional)",type='password',key='props_odds_key')
-        if st.button("Fetch NFL player props from API",disabled=not bool(key)):
-            try:
-                with st.spinner("Fetching available NFL markets..."):
-                    live=props_fetch_odds(key)
-                st.session_state['props_odds']=live
-                st.success(f"Fetched {len(live)} market outcomes")
-            except Exception as exc: st.error(f"Odds API error: {exc}")
-        if odds_upload is not None:
-            try: st.session_state['props_odds']=pd.read_csv(odds_upload)
-            except Exception as exc: st.error(str(exc))
-        if 'props_odds' in st.session_state:
-            try:
-                scored=props_compare(summary,draws,st.session_state['props_odds'])
-                if scored.empty: st.warning("No matching markets. Verify exact player names and supported prop types.")
-                else:
-                    position_lookup=summary[['player','team','position']].drop_duplicates()
-                    scored=scored.merge(position_lookup,on=['player','team'],how='left')
-                    shown=scored[scored.position.isin(selected_pos)&scored.market.isin(selected_stats)]
-                    st.dataframe(shown,use_container_width=True,hide_index=True)
-                    st.download_button('Download filtered prop comparisons',shown.to_csv(index=False),'nfl_props_comparisons.csv','text/csv')
-                    st.warning("EV estimates are uncalibrated. Do not interpret positive EV as a verified betting edge until historical holdout tests pass.")
-            except Exception as exc: st.error(f"Odds comparison: {exc}")
+        st.caption("Compare the Model Prediction directly with the line at your sportsbook. No sportsbook API or betting line is required by this app.")
 
 if view == "Slate Setup":
     st.subheader("Slate Setup")

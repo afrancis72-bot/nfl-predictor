@@ -87,7 +87,7 @@ def matchup_factors(history,schedules,season,week, min_games=2, prior_strength=8
                                'reason':reason})
     return pd.DataFrame(output)
 
-def apply_matchups(rates, factors, return_audit=False):
+def apply_matchups(rates, factors, return_audit=False, apply_factors=True, role_filter=True):
     d=rates.copy()
     if 'position' not in d or 'team' not in d: raise ValueError('Player baselines require position and team')
     d['team']=d['team'].map(normalize_team)
@@ -98,16 +98,30 @@ def apply_matchups(rates, factors, return_audit=False):
     scheduled=d[d.opponent.notna()].copy()
     if scheduled.empty:
         raise ValueError('No player baselines matched the target-week schedule after team-code normalization.')
-    for rate in METRICS:
-        if rate not in scheduled: continue
-        f=fct[fct.stat_rate==rate][['team','position','factor']].rename(columns={'factor':'_factor'})
-        scheduled=scheduled.merge(f,on=['team','position'],how='left',validate='many_to_one')
-        scheduled[rate]=pd.to_numeric(scheduled[rate],errors='coerce')*scheduled['_factor'].fillna(1.)
-        scheduled=scheduled.drop(columns=['_factor'])
-    audit={'matched_players':int(len(scheduled)),'excluded_players':int(len(excluded)),
+    # Current-week projectable-role screen. This is an opportunity filter, not an injury/active-roster claim.
+    role_excluded=scheduled.iloc[0:0].copy()
+    if role_filter:
+        pos=scheduled['position'].astype(str).str.upper()
+        pa=pd.to_numeric(scheduled.get('pass_attempts_pg',0),errors='coerce').fillna(0)
+        ca=pd.to_numeric(scheduled.get('carries_pg',0),errors='coerce').fillna(0)
+        tg=pd.to_numeric(scheduled.get('targets_pg',0),errors='coerce').fillna(0)
+        role_ok=((pos=='QB')&(pa>=10)) | ((pos=='RB')&((ca+tg)>=3)) | (pos.isin(['WR','TE'])&(tg>=2))
+        role_excluded=scheduled[~role_ok].copy()
+        scheduled=scheduled[role_ok].copy()
+    if apply_factors:
+        for rate in METRICS:
+            if rate not in scheduled: continue
+            f=fct[fct.stat_rate==rate][['team','position','factor']].rename(columns={'factor':'_factor'})
+            scheduled=scheduled.merge(f,on=['team','position'],how='left',validate='many_to_one')
+            scheduled[rate]=pd.to_numeric(scheduled[rate],errors='coerce')*scheduled['_factor'].fillna(1.)
+            scheduled=scheduled.drop(columns=['_factor'])
+    all_excluded=pd.concat([excluded,role_excluded],ignore_index=True)
+    audit={'matched_players':int(len(scheduled)),'excluded_players':int(len(all_excluded)),
            'matched_teams':sorted(scheduled.team.dropna().unique().tolist()),
-           'excluded_teams':sorted(excluded.team.dropna().unique().tolist()),
-           'excluded':excluded}
+           'excluded_teams':sorted(all_excluded.team.dropna().unique().tolist()),
+           'bye_or_unmatched_players':int(len(excluded)),
+           'low_role_players':int(len(role_excluded)),
+           'excluded':all_excluded}
     return (scheduled.reset_index(drop=True),audit) if return_audit else scheduled.reset_index(drop=True)
 
 def variance_diagnostics(summary, history, season, week):
@@ -128,3 +142,37 @@ def variance_diagnostics(summary, history, season, week):
                      'observed_sd':round(actual_sd,2),'simulated_sd':round(sim_sd,2),
                      'sim_to_observed_sd':round(sim_sd/actual_sd,2) if actual_sd>0 else np.nan})
     return pd.DataFrame(rows)
+
+
+def stabilize_variance(summary, draws, history, season, week, weight_observed=.25, min_games=3, cap_low=.75, cap_high=1.25):
+    """Shrink simulated spread modestly toward observed current-season game-to-game SD.
+    With only 3-4 games early in a season, observed SD receives 25% weight and the
+    scale change is capped at +/-25%. This is variance stabilization, not proof of
+    predictive calibration. Returns updated summary/draws plus an audit table.
+    """
+    h=included_history(history,season,week)
+    srcmap={'pass_attempts':'attempts','completions':'completions','passing_yards':'passing_yards',
+            'carries':'carries','rushing_yards':'rushing_yards','targets':'targets',
+            'receptions':'receptions','receiving_yards':'receiving_yards'}
+    out=summary.copy(); new_draws={k:{m:np.asarray(v,dtype=float).copy() for m,v in vals.items()} for k,vals in draws.items()}
+    audits=[]
+    for idx,r in out.iterrows():
+        metric=str(r['stat']); src=srcmap.get(metric)
+        if src is None: continue
+        obs=h[(h.player_name.astype(str)==str(r.player)) & (h.recent_team.astype(str)==str(r.team))][src].dropna()
+        if len(obs)<min_games: continue
+        key=(str(r.player),str(r.team))
+        if key not in new_draws or metric not in new_draws[key]: continue
+        v=new_draws[key][metric]; sim_sd=float(np.std(v)); obs_sd=float(obs.std(ddof=1))
+        if not np.isfinite(sim_sd) or sim_sd<=0 or not np.isfinite(obs_sd): continue
+        blended=(1-weight_observed)*sim_sd+weight_observed*obs_sd
+        scale=float(np.clip(blended/sim_sd,cap_low,cap_high))
+        med=float(np.median(v)); nv=med+(v-med)*scale
+        if metric in ('pass_attempts','completions','carries','targets','receptions'): nv=np.maximum(0,np.rint(nv))
+        else: nv=np.maximum(0,nv)
+        new_draws[key][metric]=nv
+        out.at[idx,'mean']=round(float(np.mean(nv)),2); out.at[idx,'median']=round(float(np.median(nv)),2)
+        out.at[idx,'p10']=round(float(np.percentile(nv,10)),2); out.at[idx,'p90']=round(float(np.percentile(nv,90)),2); out.at[idx,'sd']=round(float(np.std(nv)),2)
+        audits.append({'player':r.player,'team':r.team,'position':r.get('position',''),'stat':metric,'observed_games':len(obs),
+                       'raw_sim_sd':round(sim_sd,2),'observed_sd':round(obs_sd,2),'scale_applied':round(scale,3),'final_sd':round(float(np.std(nv)),2)})
+    return out,new_draws,pd.DataFrame(audits)
