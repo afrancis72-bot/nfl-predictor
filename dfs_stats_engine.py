@@ -224,6 +224,35 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
                 stat_draws[str(x.loc[didx,'Name'])]={'sacks':sacks,'interceptions':ints,'fumble_recoveries':fum,'defensive_tds':def_td,'safeties':saf,'points_allowed':pts_allowed}
             processed.add(team)
 
+    # Verify that skill-player non-touchdown points were actually generated.
+    # A previous broken deployment returned only 0/6/12 scores while passing
+    # through the older mean>0 gate.  That result must never reach an optimizer.
+    broken=[]
+    for _, row in x[x['Position'].astype(str).isin(['RB','WR','TE'])].iterrows():
+        name=str(row['Name'])
+        stats=stat_draws.get(name)
+        if stats is None:
+            broken.append(f"{name}: no simulated football stats")
+            continue
+        non_td=(np.asarray(stats['receptions'],float)
+                +.1*np.asarray(stats['receiving_yards'],float)
+                +.1*np.asarray(stats['rushing_yards'],float))
+        idx=name_index.get((str(row['_name']),str(row['TeamAbbrev']),str(row['Position'])))
+        if idx is None:
+            broken.append(f"{name}: missing lineup index")
+            continue
+        td=np.asarray(stats['receiving_tds'],float)+np.asarray(stats['rushing_tds'],float)
+        if not np.allclose(out[:,idx],non_td+6*td
+                           +3*(np.asarray(stats['receiving_yards'])>=100)
+                           +3*(np.asarray(stats['rushing_yards'])>=100),atol=.0001):
+            broken.append(f"{name}: DK scoring differs from simulated stats")
+        elif float(np.mean(non_td))<0.15 and float(np.mean(td))>0.02:
+            broken.append(f"{name}: TD-only output (non-TD mean={np.mean(non_td):.3f})")
+    if broken:
+        raise ValueError('V3.0.6 skill allocation validation failed: '
+                         +'; '.join(broken[:18])
+                         + '. No lineup CSV will be generated. Inspect nflverse baselines and team allocation.')
+
     # Fail closed on players that could not be generated rather than silently inventing points.
     means=out.mean(axis=0)
     missing=(means==0)&(~x.Position.astype(str).eq('DST'))&(pd.to_numeric(x.proj,errors='coerce').fillna(0)>1)
@@ -234,3 +263,4 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
     x['portfolio_relevant']=True
     x['sim_p99_sanity']=np.percentile(out,99,axis=0); x['sim_max_sanity']=out.max(axis=0)
     return x,out,stat_draws
+
