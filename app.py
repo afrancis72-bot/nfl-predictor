@@ -1907,7 +1907,27 @@ if view == "Player Props Lab":
             enable=st.checkbox('Apply opponent factors to simulation',value=False,key='props_apply_opponents',on_change=lambda: (st.session_state.pop('props_summary',None),st.session_state.pop('props_draws',None)))
             if enable:
                 try:
-                    frame, matchup_audit=props_apply_matchups(frame,factors,return_audit=True)
+                    # Compatibility-safe call: V2.6 does not require a keyword-only audit API.
+                    _before_matchup = frame.copy()
+                    try:
+                        _result = props_apply_matchups(frame, factors, return_audit=True)
+                    except TypeError as _exc:
+                        if "return_audit" not in str(_exc):
+                            raise
+                        _result = props_apply_matchups(frame, factors)
+                    if isinstance(_result, tuple) and len(_result) == 2:
+                        frame, matchup_audit = _result
+                    else:
+                        frame = _result
+                        _matched_teams = set(frame['team'].dropna().astype(str)) if 'team' in frame else set()
+                        _excluded = _before_matchup[~_before_matchup['team'].astype(str).isin(_matched_teams)].copy() if 'team' in _before_matchup else _before_matchup.iloc[0:0].copy()
+                        matchup_audit = {
+                            'matched_players': int(len(frame)),
+                            'excluded_players': int(len(_excluded)),
+                            'matched_teams': sorted(_matched_teams),
+                            'excluded_teams': sorted(set(_excluded['team'].dropna().astype(str))) if 'team' in _excluded else [],
+                            'excluded': _excluded,
+                        }
                     st.session_state['props_matchup_audit']=matchup_audit
                     st.success(f"Opponent factors applied to {matchup_audit['matched_players']} scheduled players; {matchup_audit['excluded_players']} unmatched/bye players excluded.")
                     if matchup_audit['excluded_players']:
