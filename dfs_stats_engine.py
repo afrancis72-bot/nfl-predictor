@@ -64,10 +64,24 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
         for ti,team in enumerate(gteams):
             opp=gteams[1-ti]; tx=gx[gx.TeamAbbrev==team]
             qbrows=tx[tx.Position.astype(str)=='QB']
-            if qbrows.empty: continue
-            # Highest-projected QB is treated as active starter for team-volume generation.
-            qbrow=qbrows.sort_values('proj',ascending=False).iloc[0]; qname=str(qbrow['_name'])
-            qr=rm.loc[(qname,team)] if (qname,team) in rm.index else None
+            # Team simulation must not disappear just because the active DK optimizer pool
+            # has no eligible QB (injury/status/salary filtering can remove him).  Use the
+            # best observed QB baseline for team-volume generation, while only assigning QB
+            # DK points when an eligible QB is actually present in the pool.
+            qbrow = None
+            qname = ''
+            qr = None
+            if not qbrows.empty:
+                qbrow=qbrows.sort_values('proj',ascending=False).iloc[0]
+                qname=str(qbrow['_name'])
+                qr=rm.loc[(qname,team)] if (qname,team) in rm.index else None
+            if qr is None:
+                team_qbs=r[(r['team'].astype(str)==team) & (r['position'].astype(str).str.upper()=='QB')].copy()
+                if not team_qbs.empty:
+                    team_qbs['_pa']=pd.to_numeric(team_qbs.get('pass_attempts_pg'),errors='coerce').fillna(0)
+                    qr=team_qbs.sort_values(['_pa','games_played'],ascending=False).iloc[0]
+                    if not qname:
+                        qname=str(qr['_name'])
             pass_pg=_safe(qr.get('pass_attempts_pg') if qr is not None else np.nan, 32.0)
             comp_pg=_safe(qr.get('completions_pg') if qr is not None else np.nan, pass_pg*.65)
             pass_yd_pg=_safe(qr.get('pass_yards_pg') if qr is not None else np.nan, 220.0)
@@ -147,7 +161,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
                 if rush_td[s]>0: rush_td_alloc[s]=rng.multinomial(int(rush_td[s]),cp)
 
             # QB DK score.
-            qidx=name_index.get((qname,team,'QB'))
+            qidx=name_index.get((qname,team,'QB')) if qbrow is not None else None
             if qidx is not None:
                 qb_carries=carr[:,-2]; qb_ypc=_safe(qr.get('rushing_yards_pg') if qr is not None else np.nan,15)/max(qb_carry,.5)
                 qb_rushyd=np.where(qb_carries>0,rng.normal(qb_carries*qb_ypc,np.sqrt(np.maximum(qb_carries,1))*2.2,ns),0.)
