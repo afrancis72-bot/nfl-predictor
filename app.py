@@ -2246,6 +2246,14 @@ elif view == "Simulation":
                         rates=props_make_rates(raw,season,week,window)
                         sim_players,classic_sims,stat_draws=simulate_stat_driven_dfs(pool,rates,int(n_sim))
                         st.session_state['classic_stat_draws']=stat_draws
+                        # V3.0.8.1 diagnostic: inspect engine output immediately at return boundary.
+                        other_keys=[str(k) for k in stat_draws.keys() if str(k).startswith('__OTHER_')]
+                        recv_keys=[k for k in other_keys if k.startswith('__OTHER_RECEIVER__')]
+                        rush_keys=[k for k in other_keys if k.startswith('__OTHER_RUSHER__')]
+                        st.session_state['v308_other_diag']={
+                            'total':len(other_keys),'receiver':len(recv_keys),'rusher':len(rush_keys),
+                            'sample':other_keys[:8]
+                        }
                     else:
                         sim_players,classic_sims=simulate_classic_v2(pool,int(n_sim))
                         st.session_state.pop('classic_stat_draws',None)
@@ -2269,7 +2277,18 @@ elif view == "Simulation":
                 st.dataframe(show,use_container_width=True,hide_index=True)
                 st.download_button("Download current-slate simulation CSV",summary.to_csv(index=False),"nfl_v2_current_slate_simulation.csv","text/csv")
                 if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation':
+                    diag=st.session_state.get('v308_other_diag',{})
+                    st.info(
+                        f"V3.0.8.1 accounting diagnostic — OTHER records at engine return: "
+                        f"{diag.get('total',0)} total | {diag.get('receiver',0)} receiver | "
+                        f"{diag.get('rusher',0)} rusher"
+                    )
+                    if diag.get('sample'):
+                        st.caption("Sample accounting keys: "+", ".join(diag['sample']))
                     audit_stats=st.session_state.get('classic_stat_draws')
+                    if audit_stats:
+                        export_other=[str(k) for k in audit_stats.keys() if str(k).startswith('__OTHER_')]
+                        st.caption(f"OTHER records reaching audit export: {len(export_other)}")
                     if audit_stats:
                         audit_csv=build_stat_sim_audit_csv(sp,ss,audit_stats,max_sims=1000)
                         if audit_csv is not None:
