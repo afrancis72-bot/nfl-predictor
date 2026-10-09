@@ -6,6 +6,12 @@ import pandas as pd
 from props_data import included_history
 
 SCHEDULE_URL = 'https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv'
+TEAM_ALIASES = {'JAX':'JAC','WSH':'WAS','LAR':'LA','LAC':'LAC','LV':'LV','OAK':'LV','SD':'LAC','STL':'LA'}
+
+def normalize_team(x):
+    v=str(x).upper().strip()
+    return TEAM_ALIASES.get(v,v)
+
 METRICS = {'pass_yards_pg':'passing_yards', 'rushing_yards_pg':'rushing_yards',
            'receiving_yards_pg':'receiving_yards', 'receptions_pg':'receptions',
            'completions_pg':'completions', 'targets_pg':'targets',
@@ -23,7 +29,7 @@ def _schedule(schedules, season, week):
     s['season']=pd.to_numeric(s.season,errors='coerce')
     s['week']=pd.to_numeric(s.week,errors='coerce')
     s=s[(s.season==int(season)) & s.week.between(1,int(week))]
-    for c in ('home_team','away_team'): s[c]=s[c].astype(str).str.upper().str.strip()
+    for c in ('home_team','away_team'): s[c]=s[c].map(normalize_team)
     s=s.drop_duplicates(['season','week','home_team','away_team'])
     if s.duplicated(['season','week','home_team']).any() or s.duplicated(['season','week','away_team']).any():
         raise ValueError('Schedule has duplicate team/week games')
@@ -44,7 +50,10 @@ def matchup_factors(history,schedules,season,week, min_games=2, prior_strength=8
     if current.empty: raise ValueError('Target-week schedule unavailable; opponent adjustments disabled')
     joined=h.merge(past,on=['season','week'],how='left',suffixes=('','_sched'))
     # Assign defense by actual team for each player-game, not by row order.
-    joined=joined[joined.recent_team.astype(str).str.upper().eq(joined.team)].copy()
+    joined['recent_team']=joined['recent_team'].map(normalize_team)
+    joined['team']=joined['team'].map(normalize_team)
+    joined['opponent']=joined['opponent'].map(normalize_team)
+    joined=joined[joined.recent_team.eq(joined.team)].copy()
     if joined.empty: raise ValueError('No historical player-games matched schedule team/week')
     defenses=past[['season','week','opponent']].drop_duplicates().groupby('opponent').size()
     output=[]
@@ -78,20 +87,28 @@ def matchup_factors(history,schedules,season,week, min_games=2, prior_strength=8
                                'reason':reason})
     return pd.DataFrame(output)
 
-def apply_matchups(rates, factors):
+def apply_matchups(rates, factors, return_audit=False):
     d=rates.copy()
     if 'position' not in d or 'team' not in d: raise ValueError('Player baselines require position and team')
-    opponents=factors[['team','opponent']].drop_duplicates()
+    d['team']=d['team'].map(normalize_team)
+    fct=factors.copy(); fct['team']=fct['team'].map(normalize_team); fct['opponent']=fct['opponent'].map(normalize_team)
+    opponents=fct[['team','opponent']].drop_duplicates()
     d=d.merge(opponents,on='team',how='left',validate='many_to_one')
-    if d.opponent.isna().any():
-        raise ValueError('Some player teams have no target-week matchup (bye or team-code mismatch). Filter to scheduled players first.')
+    excluded=d[d.opponent.isna()].copy()
+    scheduled=d[d.opponent.notna()].copy()
+    if scheduled.empty:
+        raise ValueError('No player baselines matched the target-week schedule after team-code normalization.')
     for rate in METRICS:
-        if rate not in d: continue
-        f=factors[factors.stat_rate==rate][['team','position','factor']].rename(columns={'factor':'_factor'})
-        d=d.merge(f,on=['team','position'],how='left',validate='many_to_one')
-        d[rate]=pd.to_numeric(d[rate],errors='coerce')*d['_factor'].fillna(1.)
-        d=d.drop(columns=['_factor'])
-    return d
+        if rate not in scheduled: continue
+        f=fct[fct.stat_rate==rate][['team','position','factor']].rename(columns={'factor':'_factor'})
+        scheduled=scheduled.merge(f,on=['team','position'],how='left',validate='many_to_one')
+        scheduled[rate]=pd.to_numeric(scheduled[rate],errors='coerce')*scheduled['_factor'].fillna(1.)
+        scheduled=scheduled.drop(columns=['_factor'])
+    audit={'matched_players':int(len(scheduled)),'excluded_players':int(len(excluded)),
+           'matched_teams':sorted(scheduled.team.dropna().unique().tolist()),
+           'excluded_teams':sorted(excluded.team.dropna().unique().tolist()),
+           'excluded':excluded}
+    return (scheduled.reset_index(drop=True),audit) if return_audit else scheduled.reset_index(drop=True)
 
 def variance_diagnostics(summary, history, season, week):
     """Descriptive per-player historical SD vs simulated SD; no claim of calibration."""

@@ -1907,11 +1907,15 @@ if view == "Player Props Lab":
             enable=st.checkbox('Apply opponent factors to simulation',value=False,key='props_apply_opponents',on_change=lambda: (st.session_state.pop('props_summary',None),st.session_state.pop('props_draws',None)))
             if enable:
                 try:
-                    frame=props_apply_matchups(frame,factors)
-                    st.success('Opponent factors applied. Only players with a scheduled matchup are included.')
+                    frame, matchup_audit=props_apply_matchups(frame,factors,return_audit=True)
+                    st.session_state['props_matchup_audit']=matchup_audit
+                    st.success(f"Opponent factors applied to {matchup_audit['matched_players']} scheduled players; {matchup_audit['excluded_players']} unmatched/bye players excluded.")
+                    if matchup_audit['excluded_players']:
+                        with st.expander('Excluded from target-week matchup set'):
+                            cols=[c for c in ['player','team','position','games_played'] if c in matchup_audit['excluded'].columns]
+                            st.dataframe(matchup_audit['excluded'][cols],use_container_width=True,hide_index=True)
                 except Exception as exc:
                     st.error(f'Opponent adjustment not applied: {exc}')
-                    frame=None
     if frame is not None and not frame.empty:
         st.dataframe(frame.head(25),use_container_width=True,hide_index=True)
     st.warning("Pregame baseline does NOT automatically verify active roster, injuries, opponent matchups, or depth chart. Filter to confirmed active players before interpreting betting outputs.")
