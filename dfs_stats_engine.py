@@ -14,7 +14,13 @@ def _team(x):
     s=str(x).upper().strip(); return TEAM_ALIASES.get(s,s)
 
 def _clean_name(x):
-    return " ".join(str(x).lower().replace(".","").replace("'","").replace("-"," ").split())
+    """Canonical player identity for cross-source matching."""
+    s=" ".join(str(x).lower().replace(".","").replace("'","").replace("-"," ").split())
+    parts=s.split()
+    suffixes={"jr","sr","ii","iii","iv","v"}
+    while parts and parts[-1] in suffixes:
+        parts.pop()
+    return " ".join(parts)
 
 def _opp(game, team):
     g=str(game).split()[0]
@@ -57,7 +63,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
         details=', '.join(f"{row['Name']} ({row['TeamAbbrev']})" for _,row in unmatched.head(20).iterrows())
         raise ValueError(
             f'Stat baseline identity mismatch for {len(unmatched)} eligible offensive players: '
-            +details+'. Check player_display_name vs player_name in nflverse data; '
+            +details+'. Canonical name + current-team matching failed after suffix normalization; '
             'simulation aborted rather than producing TD-only fantasy scores.'
         )
     # Even matched names are unusable when their historical opportunity columns
@@ -263,4 +269,3 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
     x['portfolio_relevant']=True
     x['sim_p99_sanity']=np.percentile(out,99,axis=0); x['sim_max_sanity']=out.max(axis=0)
     return x,out,stat_draws
-
