@@ -93,7 +93,7 @@ def simulate(frame, n=10000, seed=20261009):
             v=np.asarray(values,dtype=float)
             rows.append({'player':player,'team':team,'stat':metric,'mean':round(float(v.mean()),2),
                          'median':round(float(np.median(v)),2),'p10':round(float(np.percentile(v,10)),2),
-                         'p90':round(float(np.percentile(v,90)),2),'sd':round(float(v.std()),2)})
+                         'p90':round(float(np.percentile(v,90)),2),'sd':round(float(v.std()),2),'position':str(d.loc[(d.player==player)&(d.team==team),'position'].iloc[0])})
     return pd.DataFrame(rows),result
 
 def american_implied(odds):
