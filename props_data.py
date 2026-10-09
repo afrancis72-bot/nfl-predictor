@@ -22,6 +22,13 @@ def fetch_weekly(seasons, reader=None):
 
 def clean_weekly(raw):
     df=raw.copy()
+    # nflverse has changed a few column names across releases. Normalize the
+    # supported aliases before validating so the props/DFS pipeline is not
+    # coupled to one historical schema.
+    if 'recent_team' not in df.columns and 'team' in df.columns:
+        df['recent_team'] = df['team']
+    if 'player_name' not in df.columns and 'player_display_name' in df.columns:
+        df['player_name'] = df['player_display_name']
     required={'season','week','player_name','recent_team','position'}
     missing=required-set(df.columns)
     if missing: raise ValueError('nflverse data missing columns: '+', '.join(sorted(missing)))
@@ -36,6 +43,23 @@ def clean_weekly(raw):
     df['player_name']=df.player_name.astype(str).str.strip()
     df['recent_team']=df.recent_team.astype(str).str.strip().str.upper()
     return df.sort_values(['season','week']).reset_index(drop=True)
+
+def included_history(history, target_season, target_week):
+    """Return leakage-safe regular-season observations before the target week.
+
+    Matchup and variance routines intentionally use the target season only: their
+    schedule joins are week-specific and early-season variance should describe the
+    current role/team rather than silently mixing prior-season observations.
+    """
+    h = clean_weekly(history)
+    season, week = int(target_season), int(target_week)
+    h = h[(h['season'] == season) & (h['week'] < week)].copy()
+    if h.empty:
+        raise ValueError(f'No regular-season history found before {season} week {week}.')
+    # Normalize team strings once for downstream schedule joins while leaving the
+    # public clean_weekly contract unchanged.
+    h['recent_team'] = h['recent_team'].astype(str).str.strip().str.upper()
+    return h.reset_index(drop=True)
 
 def make_rates(history, target_season, target_week, window=8, prior_seasons=1):
     """Uses only games before target kickoff week. Weights recent games more.
