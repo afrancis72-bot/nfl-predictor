@@ -29,10 +29,23 @@ def build_stat_sim_audit_csv(sim_players, dk_points, stat_draws, max_sims=1000):
             if arr.ndim==1 and len(arr)>=n:
                 d[stat_name]=arr[:n]
         frames.append(pd.DataFrame(d))
+    for name,stats in stat_draws.items():
+        if not str(name).startswith('__OTHER_'):
+            continue
+        label,team=(str(name).split('|',1)+[''])[:2]
+        d={'simulation_id':np.arange(1,n+1,dtype=np.int32),
+           'player':np.repeat(label.strip('_'),n),
+           'position':np.repeat('ACCOUNTING',n),
+           'team':np.repeat(team,n),'game':np.repeat('',n),
+           'dk_points':np.repeat(np.nan,n)}
+        for stat_name,values in stats.items():
+            arr=np.asarray(values)
+            if arr.ndim==1 and len(arr)>=n: d[stat_name]=arr[:n]
+        frames.append(pd.DataFrame(d))
     if not frames:
         return None
     audit=pd.concat(frames,ignore_index=True,sort=False)
-    audit['engine_version']='V3.0.7'
+    audit['engine_version']='V3.0.8'
     return audit.to_csv(index=False)
 
 import io
@@ -2248,7 +2261,7 @@ elif view == "Simulation":
                 summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
                 meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source','simulation_engine'] if c in sp.columns]].copy()
                 summary=meta.merge(summary,on='Name',how='left')
-                summary['engine_version']=('V3.0.7' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
+                summary['engine_version']=('V3.0.8' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
                 positions=st.multiselect("Position",["QB","RB","WR","TE","DST"],default=["QB","RB","WR","TE","DST"],key='v2_sim_pos')
                 sort_metric=st.selectbox("Sort by",["Mean","Median","Mode (binned)","P75","P90","P95"],key='v2_sim_sort')
                 show=summary[summary['Position'].isin(positions)].sort_values(sort_metric,ascending=False)
