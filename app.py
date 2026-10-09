@@ -1,4 +1,5 @@
 from pathlib import Path
+from props_lab import standardize as props_standardize, simulate as props_simulate, compare as props_compare, fetch_odds as props_fetch_odds
 import io
 import math
 import random
@@ -1830,7 +1831,63 @@ st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.12")
 st.caption("DraftKings NFL DFS • correlated game scripts • variance + uncertainty • scenario portfolios • calibration")
 st.warning("V2.0.12 RB portfolio controls + V2.0.11 injury safety: OUT and DOUBTFUL (plus IR/inactive/suspended/PUP/NFI) are hard-blocked before simulation/optimization; QUESTIONABLE remains eligible but flagged. Slate re-activation invalidates prior portfolios. Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; current-week projection integrity is required for optimizer eligibility; DK PPG alone never qualifies as a weekly projection. Re-check final injury news and ownership before contest entry.")
 
-view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis"])
+view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis","Player Props Lab"])
+
+if view == "Player Props Lab":
+    st.subheader("Player Props Lab — experimental")
+    st.info("Separate statistical engine. Existing Classic/Showdown optimizer is unchanged. These are modeled outcomes, NOT verified prop forecasts. Historical Week 4 data is NOT used automatically.")
+    st.markdown("**Step 1 — upload current, observed per-game player football statistics.** Required: player, team, position, and relevant *_pg fields (e.g., targets_pg, receptions_pg, receiving_yards_pg, carries_pg, rushing_yards_pg, pass_attempts_pg). Games played is recommended. Missing stats are not interpreted as verified zeros.")
+    source=st.file_uploader("Weekly observed-stat CSV",type=['csv'],key='props_stats_upload')
+    c1,c2=st.columns(2)
+    count=c1.select_slider("Simulations",options=[1000,5000,10000,25000,50000,100000],value=10000,key='props_n')
+    seed=c2.number_input("Reproducible seed",min_value=1,max_value=99999999,value=20261009,key='props_seed')
+    if source is not None:
+        try:
+            frame=props_standardize(pd.read_csv(source))
+            st.caption(f"{len(frame)} player rows loaded; verify that stats are current, observed and pregame-only.")
+            st.dataframe(frame.head(20),use_container_width=True,hide_index=True)
+            if st.button("Run football-stat simulations",type='primary'):
+                with st.spinner("Simulating correlated football-stat outcomes..."):
+                    summary,draws=props_simulate(frame,int(count),int(seed))
+                st.session_state['props_summary']=summary
+                st.session_state['props_draws']=draws
+                st.success(f"Generated {int(count):,} scenarios. Statistical model is experimental and requires backtesting.")
+        except Exception as exc: st.error(f"Statistics input: {exc}")
+    else: st.warning("Upload actual football statistics to enable simulations. DK salary and fantasy points are not sufficient.")
+    if 'props_summary' in st.session_state:
+        summary=st.session_state['props_summary']; draws=st.session_state['props_draws']
+        st.markdown("#### Player distributions")
+        st.dataframe(summary,use_container_width=True,hide_index=True)
+        st.download_button("Download player-stat summary",summary.to_csv(index=False),'nfl_props_summary.csv','text/csv')
+        st.caption("For memory safety, raw scenarios export is limited to one selected player at a time.")
+        names=sorted({k[0] for k in draws})
+        chosen=st.selectbox("Raw simulation export — player",names,key='props_player')
+        matching=[(t,v) for (p,t),v in draws.items() if p==chosen]
+        if len(matching)==1:
+            st.download_button("Download raw player simulations",pd.DataFrame(matching[0][1]).to_csv(index=False),'nfl_props_raw_player.csv','text/csv')
+        st.markdown("#### Step 2 — market odds")
+        st.caption("Upload odds CSV (player, market, line, side, price, optional bookmaker) or fetch live player props using your own The Odds API key. API requests may consume paid credits. Odds refresh only when you click.")
+        odds_upload=st.file_uploader("Odds CSV",type=['csv'],key='props_odds_upload')
+        key=st.text_input("The Odds API key (optional)",type='password',key='props_odds_key')
+        if st.button("Fetch NFL player props from API",disabled=not bool(key)):
+            try:
+                with st.spinner("Fetching available NFL markets..."):
+                    live=props_fetch_odds(key)
+                st.session_state['props_odds']=live
+                st.success(f"Fetched {len(live)} market outcomes")
+            except Exception as exc: st.error(f"Odds API error: {exc}")
+        if odds_upload is not None:
+            try: st.session_state['props_odds']=pd.read_csv(odds_upload)
+            except Exception as exc: st.error(str(exc))
+        if 'props_odds' in st.session_state:
+            try:
+                scored=props_compare(summary,draws,st.session_state['props_odds'])
+                if scored.empty: st.warning("No matching markets. Verify exact player names and supported prop types.")
+                else:
+                    st.dataframe(scored,use_container_width=True,hide_index=True)
+                    st.download_button("Download ranked prop comparisons",scored.to_csv(index=False),'nfl_props_comparisons.csv','text/csv')
+                    st.warning("EV estimates are uncalibrated. Do not interpret positive EV as a verified betting edge until historical holdout tests pass.")
+            except Exception as exc: st.error(f"Odds comparison: {exc}")
 
 if view == "Slate Setup":
     st.subheader("Slate Setup")
