@@ -3,6 +3,38 @@ from props_data import fetch_weekly as props_fetch_weekly, make_rates as props_m
 from props_lab import standardize as props_standardize, simulate as props_simulate
 from props_matchup import fetch_schedule as props_fetch_schedule, matchup_factors as props_matchup_factors, apply_matchups as props_apply_matchups, variance_diagnostics as props_variance_diagnostics, stabilize_variance as props_stabilize_variance
 from dfs_stats_engine import simulate_stat_driven_dfs
+
+def build_stat_sim_audit_csv(sim_players, dk_points, stat_draws, max_sims=1000):
+    """Long-form audit sample: one row per player per simulation iteration."""
+    if sim_players is None or dk_points is None or not stat_draws:
+        return None
+    n=min(int(max_sims), int(dk_points.shape[0]))
+    frames=[]
+    meta_cols=[c for c in ['Name','Position','TeamAbbrev','game'] if c in sim_players.columns]
+    for idx,row in sim_players.reset_index(drop=True).iterrows():
+        name=str(row['Name'])
+        stats=stat_draws.get(name)
+        if stats is None:
+            continue
+        d={
+            'simulation_id': np.arange(1,n+1,dtype=np.int32),
+            'player': np.repeat(name,n),
+            'position': np.repeat(str(row.get('Position','')),n),
+            'team': np.repeat(str(row.get('TeamAbbrev','')),n),
+            'game': np.repeat(str(row.get('game','')),n),
+            'dk_points': np.asarray(dk_points[:n,idx],dtype=float),
+        }
+        for stat_name,values in stats.items():
+            arr=np.asarray(values)
+            if arr.ndim==1 and len(arr)>=n:
+                d[stat_name]=arr[:n]
+        frames.append(pd.DataFrame(d))
+    if not frames:
+        return None
+    audit=pd.concat(frames,ignore_index=True,sort=False)
+    audit['engine_version']='V3.0.7'
+    return audit.to_csv(index=False)
+
 import io
 import math
 import random
@@ -2216,13 +2248,25 @@ elif view == "Simulation":
                 summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
                 meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source','simulation_engine'] if c in sp.columns]].copy()
                 summary=meta.merge(summary,on='Name',how='left')
-                summary['engine_version']=('V3.0.6' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
+                summary['engine_version']=('V3.0.7' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
                 positions=st.multiselect("Position",["QB","RB","WR","TE","DST"],default=["QB","RB","WR","TE","DST"],key='v2_sim_pos')
                 sort_metric=st.selectbox("Sort by",["Mean","Median","Mode (binned)","P75","P90","P95"],key='v2_sim_sort')
                 show=summary[summary['Position'].isin(positions)].sort_values(sort_metric,ascending=False)
                 st.caption(f"Results from {st.session_state.get('classic_v2_sim_runs',len(ss)):,} current-slate simulations. Mode is the most common 2-DK-point bin, not an exact continuous-value mode.")
                 st.dataframe(show,use_container_width=True,hide_index=True)
                 st.download_button("Download current-slate simulation CSV",summary.to_csv(index=False),"nfl_v2_current_slate_simulation.csv","text/csv")
+                if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation':
+                    audit_stats=st.session_state.get('classic_stat_draws')
+                    if audit_stats:
+                        audit_csv=build_stat_sim_audit_csv(sp,ss,audit_stats,max_sims=1000)
+                        if audit_csv is not None:
+                            st.download_button(
+                                "Download simulation audit sample (1,000 iterations)",
+                                audit_csv,
+                                "nfl_v3_simulation_audit_1000.csv",
+                                "text/csv",
+                                help="Long-form football-stat audit: one row per player per simulation iteration, with the DK points generated from that same iteration."
+                            )
             elif sp is not None or ss is not None:
                 st.warning("A cached simulation belongs to a different slate and has been blocked. Run the active-slate simulation above.")
 
