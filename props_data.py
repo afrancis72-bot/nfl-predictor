@@ -21,10 +21,24 @@ def fetch_weekly(seasons, reader=None):
     return pd.concat(frames,ignore_index=True)
 
 def clean_weekly(raw):
+    """Normalize nflverse weekly schemas (current `team` and legacy `recent_team`)."""
     df=raw.copy()
+    # Current stats_player_week releases use `team`; older exports used `recent_team`.
+    # Keep the rest of the application on one stable internal schema.
+    if 'recent_team' not in df.columns:
+        for alias in ('team', 'team_abbr', 'team_abbreviation'):
+            if alias in df.columns:
+                df['recent_team']=df[alias]
+                break
+    elif 'team' in df.columns:
+        df['recent_team']=df['recent_team'].replace(r'^\s*$',np.nan,regex=True).fillna(df['team'])
+    if 'player_name' not in df.columns and 'player_display_name' in df.columns:
+        df['player_name']=df['player_display_name']
     required={'season','week','player_name','recent_team','position'}
     missing=required-set(df.columns)
-    if missing: raise ValueError('nflverse data missing columns: '+', '.join(sorted(missing)))
+    if missing:
+        raise ValueError('nflverse data missing columns: '+', '.join(sorted(missing))+
+                         '. Available columns: '+', '.join(map(str,df.columns[:25])))
     for col in COUNT_COLS.values():
         if col not in df: df[col]=np.nan
         df[col]=pd.to_numeric(df[col],errors='coerce')
@@ -32,9 +46,10 @@ def clean_weekly(raw):
     df['week']=pd.to_numeric(df.week,errors='coerce')
     if 'season_type' in df: df=df[df.season_type.astype(str).str.upper().eq('REG')]
     df=df[df.position.astype(str).str.upper().isin(['QB','RB','WR','TE'])]
+    df['player_name']=df['player_name'].astype('string').str.strip()
+    df['recent_team']=df['recent_team'].astype('string').str.strip().str.upper()
     df=df.dropna(subset=['season','week','player_name','recent_team'])
-    df['player_name']=df.player_name.astype(str).str.strip()
-    df['recent_team']=df.recent_team.astype(str).str.strip().str.upper()
+    df=df[(df.player_name!='')&(df.recent_team!='')]
     return df.sort_values(['season','week']).reset_index(drop=True)
 
 def make_rates(history, target_season, target_week, window=8, prior_seasons=1):
