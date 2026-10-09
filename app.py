@@ -1,5 +1,5 @@
 from pathlib import Path
-from props_data import fetch_weekly as props_fetch_weekly, make_rates as props_make_rates, walkforward as props_walkforward
+from props_data import fetch_weekly as props_fetch_weekly, make_rates as props_make_rates, walkforward as props_walkforward, validation_report as props_validation_report
 from props_lab import standardize as props_standardize, simulate as props_simulate, compare as props_compare, fetch_odds as props_fetch_odds
 import io
 import math
@@ -1851,21 +1851,37 @@ if view == "Player Props Lab":
             with st.spinner("Retrieving nflverse weekly football statistics..."):
                 raw=_props_cached_stats(int(season))
                 frame=props_make_rates(raw,int(season),int(week),int(window))
+                validation, source_audit=props_validation_report(raw,int(season),int(week))
             if frame.empty: raise ValueError("No players with at least two prior observed games.")
             st.session_state['props_auto_frame']=frame
             st.session_state['props_history']=raw
+            st.session_state['props_validation']=validation
+            st.session_state['props_source_audit']=source_audit
+            st.session_state['props_loaded_parameters']=(int(season),int(week),int(window))
             st.session_state.pop('props_summary',None)
             st.session_state.pop('props_draws',None)
             st.success(f"Loaded {len(frame)} player baselines, strictly before {int(season)} week {int(week)}.")
-        except Exception as exc: st.error(f"NFL statistics download: {exc}")
+        except Exception as exc:
+            for k in ('props_auto_frame','props_history','props_validation','props_source_audit','props_loaded_parameters','props_summary','props_draws'):
+                st.session_state.pop(k,None)
+            st.error(f"NFL statistics download / validation failed: {exc}")
     source=st.file_uploader("Optional: override with observed-stat CSV",type=['csv'],key='props_stats_upload')
     frame=None
     if source is not None:
         try: frame=props_standardize(pd.read_csv(source))
         except Exception as exc: st.error(f"CSV error: {exc}")
-    elif 'props_auto_frame' in st.session_state:
+    elif 'props_auto_frame' in st.session_state and st.session_state.get('props_loaded_parameters')==(int(season),int(week),int(window)):
         frame=props_standardize(st.session_state['props_auto_frame'])
         st.caption("Automatic rates loaded. Re-click Load when changing season/week/window.")
+    if st.session_state.get('props_loaded_parameters')==(int(season),int(week),int(window)) and 'props_validation' in st.session_state:
+        st.success('DATA VALIDATED — current-season regular-season player-weeks only; no duplicate IDs or future weeks.')
+        st.json(st.session_state['props_validation'])
+        with st.expander('Source audit — inspect every included player-week'):
+            audit_rows=st.session_state['props_source_audit']
+            players=sorted(audit_rows.player_name.dropna().unique())
+            selected=st.selectbox('Inspect player source games',players,key='props_audit_player')
+            st.dataframe(audit_rows[audit_rows.player_name==selected],use_container_width=True,hide_index=True)
+            st.download_button('Download all included source player-weeks',audit_rows.to_csv(index=False),'nfl_props_source_audit.csv','text/csv')
     if frame is not None and not frame.empty:
         st.dataframe(frame.head(25),use_container_width=True,hide_index=True)
     st.warning("Pregame baseline does NOT automatically verify active roster, injuries, opponent matchups, or depth chart. Filter to confirmed active players before interpreting betting outputs.")
