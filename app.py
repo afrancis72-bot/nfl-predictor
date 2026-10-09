@@ -1,4 +1,5 @@
 from pathlib import Path
+from props_data import fetch_weekly as props_fetch_weekly, make_rates as props_make_rates, walkforward as props_walkforward
 from props_lab import standardize as props_standardize, simulate as props_simulate, compare as props_compare, fetch_odds as props_fetch_odds
 import io
 import math
@@ -1836,24 +1837,62 @@ view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation"
 if view == "Player Props Lab":
     st.subheader("Player Props Lab — experimental")
     st.info("Separate statistical engine. Existing Classic/Showdown optimizer is unchanged. These are modeled outcomes, NOT verified prop forecasts. Historical Week 4 data is NOT used automatically.")
-    st.markdown("**Step 1 — upload current, observed per-game player football statistics.** Required: player, team, position, and relevant *_pg fields (e.g., targets_pg, receptions_pg, receiving_yards_pg, carries_pg, rushing_yards_pg, pass_attempts_pg). Games played is recommended. Missing stats are not interpreted as verified zeros.")
-    source=st.file_uploader("Weekly observed-stat CSV",type=['csv'],key='props_stats_upload')
+    st.markdown("**Step 1 — load pregame NFL statistics automatically (or upload your own CSV).**")
+    st.caption("Official-derived weekly player stats from nflverse; only games BEFORE the selected week enter projections. No DK fantasy-point reverse engineering.")
+    today=pd.Timestamp.now(tz='US/Eastern')
+    season=st.number_input("NFL season",min_value=2020,max_value=2035,value=2026,step=1,key='props_season')
+    week=st.number_input("Target week (pregame)",min_value=1,max_value=18,value=5,step=1,key='props_week')
+    window=st.slider("Recent observed games",min_value=3,max_value=16,value=8,key='props_window')
+    @st.cache_data(ttl=21600,show_spinner=False)
+    def _props_cached_stats(year):
+        return props_fetch_weekly([int(year)-1,int(year)])
+    if st.button("Load NFL statistics automatically",key='props_auto_load'):
+        try:
+            with st.spinner("Retrieving nflverse weekly football statistics..."):
+                raw=_props_cached_stats(int(season))
+                frame=props_make_rates(raw,int(season),int(week),int(window))
+            if frame.empty: raise ValueError("No players with at least two prior observed games.")
+            st.session_state['props_auto_frame']=frame
+            st.session_state['props_history']=raw
+            st.session_state.pop('props_summary',None)
+            st.session_state.pop('props_draws',None)
+            st.success(f"Loaded {len(frame)} player baselines, strictly before {int(season)} week {int(week)}.")
+        except Exception as exc: st.error(f"NFL statistics download: {exc}")
+    source=st.file_uploader("Optional: override with observed-stat CSV",type=['csv'],key='props_stats_upload')
+    frame=None
+    if source is not None:
+        try: frame=props_standardize(pd.read_csv(source))
+        except Exception as exc: st.error(f"CSV error: {exc}")
+    elif 'props_auto_frame' in st.session_state:
+        frame=props_standardize(st.session_state['props_auto_frame'])
+        st.caption("Automatic rates loaded. Re-click Load when changing season/week/window.")
+    if frame is not None and not frame.empty:
+        st.dataframe(frame.head(25),use_container_width=True,hide_index=True)
+    st.warning("Pregame baseline does NOT automatically verify active roster, injuries, opponent matchups, or depth chart. Filter to confirmed active players before interpreting betting outputs.")
     c1,c2=st.columns(2)
     count=c1.select_slider("Simulations",options=[1000,5000,10000,25000,50000,100000],value=10000,key='props_n')
     seed=c2.number_input("Reproducible seed",min_value=1,max_value=99999999,value=20261009,key='props_seed')
-    if source is not None:
-        try:
-            frame=props_standardize(pd.read_csv(source))
-            st.caption(f"{len(frame)} player rows loaded; verify that stats are current, observed and pregame-only.")
-            st.dataframe(frame.head(20),use_container_width=True,hide_index=True)
-            if st.button("Run football-stat simulations",type='primary'):
+    if frame is not None and not frame.empty:
+        if st.button("Run football-stat simulations",type='primary'):
+            try:
                 with st.spinner("Simulating correlated football-stat outcomes..."):
                     summary,draws=props_simulate(frame,int(count),int(seed))
                 st.session_state['props_summary']=summary
                 st.session_state['props_draws']=draws
-                st.success(f"Generated {int(count):,} scenarios. Statistical model is experimental and requires backtesting.")
-        except Exception as exc: st.error(f"Statistics input: {exc}")
-    else: st.warning("Upload actual football statistics to enable simulations. DK salary and fantasy points are not sufficient.")
+                st.success(f"Generated {int(count):,} scenarios. Model remains experimental and uncalibrated.")
+            except Exception as exc: st.error(f"Simulation: {exc}")
+    else: st.warning("Load NFL statistics or upload observed player rates before simulating.")
+    if 'props_history' in st.session_state:
+        with st.expander("Historical accuracy — walk-forward baseline audit"):
+            st.caption("Evaluates weighted pregame STAT MEANS against subsequent actual player statistics. This is NOT a calibrated simulation hit-rate or verified betting edge.")
+            if st.button("Run historical baseline audit"):
+                try:
+                    audit=props_walkforward(st.session_state['props_history'],int(season)-1,4,18,int(window))
+                    if audit.empty: st.warning("No historical matched observations.")
+                    else:
+                        st.dataframe(audit.groupby('stat',as_index=False).agg(observations=('actual','size'),MAE=('absolute_error','mean'),bias=('error','mean')),use_container_width=True,hide_index=True)
+                        st.download_button("Download walk-forward predictions",audit.to_csv(index=False),'nfl_props_walkforward.csv','text/csv')
+                except Exception as exc: st.error(f"Audit: {exc}")
     if 'props_summary' in st.session_state:
         summary=st.session_state['props_summary']; draws=st.session_state['props_draws']
         st.markdown("#### Player distributions")
