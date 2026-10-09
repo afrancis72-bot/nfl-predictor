@@ -47,6 +47,33 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009):
     r['team']=r['team'].map(_team); r['_name']=r['player'].map(_clean_name)
     x['TeamAbbrev']=x['TeamAbbrev'].map(_team); x['_name']=x['Name'].map(_clean_name)
     statcols=[c for c in r.columns if c not in {'player','team','position','game','source','latest_observed_season','latest_observed_week'}]
+    # Never generate zero-volume player stats and assign arbitrary TDs.
+    # Such rows previously yielded 0/6/12 DK-point distributions.
+    eligible=x[x['Position'].astype(str).isin(['QB','RB','WR','TE'])]
+    baseline_keys=set(zip(r['_name'].astype(str),r['team'].astype(str)))
+    unmatched=eligible[[ (str(row['_name']),str(row['TeamAbbrev'])) not in baseline_keys
+                         for _,row in eligible.iterrows() ]]
+    if not unmatched.empty:
+        details=', '.join(f"{row['Name']} ({row['TeamAbbrev']})" for _,row in unmatched.head(20).iterrows())
+        raise ValueError(
+            f'Stat baseline identity mismatch for {len(unmatched)} eligible offensive players: '
+            +details+'. Check player_display_name vs player_name in nflverse data; '
+            'simulation aborted rather than producing TD-only fantasy scores.'
+        )
+    # Even matched names are unusable when their historical opportunity columns
+    # are absent/empty. Reject those rows before the optimizer can trust them.
+    bad_rates=[]
+    for _,row in eligible.iterrows():
+        matched=r[(r['_name']==str(row['_name'])) & (r['team']==str(row['TeamAbbrev']))]
+        if matched.empty: continue
+        z=matched.iloc[-1]
+        fields=['pass_attempts_pg','carries_pg'] if str(row['Position'])=='QB' else ['targets_pg','carries_pg']
+        volume=sum(max(0.,_safe(z.get(f),0.)) for f in fields)
+        if volume < .05:
+            bad_rates.append(f"{row['Name']} ({row['TeamAbbrev']})")
+    if bad_rates:
+        raise ValueError('Stat baselines have no observed opportunity for: '+', '.join(bad_rates[:20])+
+                         '. Check nflverse source schema/history and active roster; cannot safely simulate.')
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}

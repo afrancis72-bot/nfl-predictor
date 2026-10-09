@@ -38,6 +38,21 @@ def clean_weekly(raw):
                     df[canonical] = df[alt]
                     break
 
+    # nflverse player_name can be abbreviated (e.g. 'J.Gibbs'), while
+    # player_display_name is the full DK-compatible name. Prefer the latter
+    # for identity matching, including when BOTH fields exist.
+    if 'player_display_name' in df.columns:
+        full = df['player_display_name'].astype('string').str.strip()
+        good = full.notna() & full.ne('')
+        if 'player_name' not in df.columns:
+            df['player_name'] = full
+        else:
+            df.loc[good, 'player_name'] = full.loc[good]
+
+    # Current nflverse uses passing_interceptions, not interceptions.
+    if 'passing_interceptions' in df.columns:
+        df['interceptions'] = df['passing_interceptions']
+
     required={'season','week','player_name','recent_team','position'}
     missing=required-set(df.columns)
     if missing:
