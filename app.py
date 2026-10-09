@@ -1839,7 +1839,7 @@ if view == "Player Props Lab":
     st.info("Separate statistical engine. Existing Classic/Showdown optimizer is unchanged. These are modeled outcomes, NOT verified prop forecasts. Historical Week 4 data is NOT used automatically.")
     st.markdown("**Step 1 — load pregame NFL statistics automatically (or upload your own CSV).**")
     st.caption("Official-derived weekly player stats from nflverse; only games BEFORE the selected week enter projections. No DK fantasy-point reverse engineering.")
-    today=pd.Timestamp.now(tz='US/Eastern')
+    # No timezone lookup needed here: season/week are selected explicitly.
     season=st.number_input("NFL season",min_value=2020,max_value=2035,value=2026,step=1,key='props_season')
     week=st.number_input("Target week (pregame)",min_value=1,max_value=18,value=5,step=1,key='props_week')
     window=st.slider("Recent observed games",min_value=3,max_value=16,value=8,key='props_window')
