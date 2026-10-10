@@ -2238,7 +2238,7 @@ elif view == "Simulation":
             n_sim=st.select_slider("Simulation runs",options=[10000,25000,50000,100000],value=50000)
             sim_engine=st.radio("Simulation engine",["Stat-driven football simulation","Legacy fantasy-point simulation"],horizontal=True,key="classic_sim_engine")
             st.caption("Stat-driven mode simulates attempts, sacks, carries, targets, receptions, yards, touchdowns and turnovers first, then applies DraftKings scoring. The opposing DST is scored from the same game outcomes.")
-            st.markdown("#### V3.1.2 — Injury-aware opportunity model")
+            st.markdown("#### V3.1.3 — Injury-aware opportunity model")
             injury_mode=st.checkbox("Redistribute confirmed OUT players' opportunities",value=False,
                                     help="Manual confirmed OUT list only. Does not automatically verify injuries.")
             injury_text=st.text_area("Confirmed OUT players (one per line: TEAM | Full player name)",
@@ -2268,6 +2268,26 @@ elif view == "Simulation":
                         rates=props_make_rates(raw,season,week,window)
                         sim_players,classic_sims,stat_draws=simulate_stat_driven_dfs(
                             pool,rates,int(n_sim),out_players=out_players)
+                        # V3.1.3 handshake: engine must echo the exact OUT identities it received.
+                        engine_injury_meta=stat_draws.get('__INJURY_META__',{}) if isinstance(stat_draws,dict) else {}
+                        engine_out_count=int(engine_injury_meta.get('out_count',-1))
+                        engine_out_players=list(engine_injury_meta.get('out_players',[]))
+                        def _v313_canon(v):
+                            s=str(v).lower().replace('.','').replace("'","").replace('-',' ')
+                            parts=" ".join(s.split()).split()
+                            while parts and parts[-1] in {'jr','sr','ii','iii','iv','v'}: parts.pop()
+                            return " ".join(parts)
+                        expected_engine_out=sorted([
+                            f"{str(p['team']).strip().upper()}|{_v313_canon(p['player'])}" for p in out_players
+                        ])
+                        if engine_out_count!=len(out_players) or sorted(engine_out_players)!=expected_engine_out:
+                            raise ValueError(
+                                "V3.1.3 injury handoff mismatch. "
+                                f"UI requested {len(out_players)} OUT: {expected_engine_out}; "
+                                f"engine received {engine_out_count}: {sorted(engine_out_players)}. "
+                                "Results blocked; no CSV will be generated."
+                            )
+                        st.session_state['classic_v313_engine_injury_meta']=engine_injury_meta.copy()
                         # Hard validation: requested OUT identities may never survive.
                         def _v311_nm(v):
                             s=str(v).lower().replace('.','').replace("'","").replace('-',' ')
@@ -2305,10 +2325,32 @@ elif view == "Simulation":
                 if st.session_state.get('classic_v31_injury_mode')!=bool(injury_mode):
                     st.warning('Injury settings changed. Rerun simulation before building lineups.')
                     st.stop()
+                # V3.1.3 export gate: never allow an injury-aware CSV unless engine echo
+                # matches the currently selected UI injury list.
+                engine_meta=st.session_state.get('classic_v313_engine_injury_meta',{}) or {}
+                engine_out_count=int(engine_meta.get('out_count',-1))
+                engine_out_players=sorted(list(engine_meta.get('out_players',[])))
+                def _v313_export_canon(v):
+                    s=str(v).lower().replace('.','').replace("'","").replace('-',' ')
+                    parts=" ".join(s.split()).split()
+                    while parts and parts[-1] in {'jr','sr','ii','iii','iv','v'}: parts.pop()
+                    return " ".join(parts)
+                expected_out=sorted([f"{p['team'].strip().upper()}|{_v313_export_canon(p['player'])}" for p in active_out])
+                if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation':
+                    if engine_out_count!=len(active_out) or engine_out_players!=expected_out:
+                        st.error(
+                            f"INJURY HANDOFF BLOCKED: UI/stored request={len(active_out)} {expected_out}; "
+                            f"engine echo={engine_out_count} {engine_out_players}. Rerun simulation. Downloads disabled."
+                        )
+                        st.stop()
                 summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
                 meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source','simulation_engine'] if c in sp.columns]].copy()
                 summary=meta.merge(summary,on='Name',how='left')
-                summary['engine_version']=('V3.1.2' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
+                summary['engine_version']=('V3.1.3' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
+                summary['injury_out_count']=engine_out_count if engine_out_count>=0 else 0
+                summary['injury_out_players']='; '.join(engine_out_players)
+                if engine_out_count>=0:
+                    st.success(f"Engine injury handshake PASS: {engine_out_count}/{len(active_out)} OUT players received — "+('; '.join(engine_out_players) if engine_out_players else 'none'))
                 positions=st.multiselect("Position",["QB","RB","WR","TE","DST"],default=["QB","RB","WR","TE","DST"],key='v2_sim_pos')
                 sort_metric=st.selectbox("Sort by",["Mean","Median","Mode (binned)","P75","P90","P95"],key='v2_sim_sort')
                 show=summary[summary['Position'].isin(positions)].sort_values(sort_metric,ascending=False)
@@ -2404,6 +2446,16 @@ elif view == "Lineup Builder":
                         survived_pf.append(str(row.get('Name','')))
                 if survived_pf:
                     raise ValueError("V3.1.2 portfolio injury gate failed; OUT player(s) survived: "+", ".join(survived_pf))
+                portfolio_engine_meta=stat_draws.get('__INJURY_META__',{}) if isinstance(stat_draws,dict) else {}
+                pf_count=int(portfolio_engine_meta.get('out_count',-1))
+                pf_players=sorted(list(portfolio_engine_meta.get('out_players',[])))
+                expected_pf=sorted([f"{p['team'].strip().upper()}|{_v312_nm(p['player'])}" for p in portfolio_out_players])
+                if pf_count!=len(portfolio_out_players) or pf_players!=expected_pf:
+                    raise ValueError(
+                        f"V3.1.3 portfolio injury handoff mismatch: expected {len(portfolio_out_players)} {expected_pf}; "
+                        f"engine received {pf_count} {pf_players}"
+                    )
+                st.session_state['classic_v313_engine_injury_meta']=portfolio_engine_meta.copy()
                 st.session_state['classic_stat_draws']=stat_draws
                 st.session_state['classic_v2_sim_engine']='Stat-driven football simulation'
                 records=v2_rescore_classic_candidates(candidate_items,sim_players,classic_sims)
