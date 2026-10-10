@@ -86,15 +86,26 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     if bad_rates:
         raise ValueError('Stat baselines have no observed opportunity for: '+', '.join(bad_rates[:20])+
                          '. Check nflverse source schema/history and active roster; cannot safely simulate.')
-    missing_out=out_keys-set(zip(r['_name'].astype(str),r['team'].astype(str)))
-    if missing_out:
-        raise ValueError('OUT player missing historical baseline: '+', '.join(f'{n} ({t})' for n,t in sorted(missing_out)))
+    # Automated feeds can contain OUT/IR depth players with no observed-stat baseline.
+    # They must still be excluded from the DFS pool, but there is no historical
+    # opportunity to redistribute.  Only OUT players present in `rates` can
+    # contribute missing targets/carries later in the team-allocation logic.
+    rate_keys=set(zip(r['_name'].astype(str),r['team'].astype(str)))
+    missing_out=out_keys-rate_keys
+    redistributable_out=out_keys & rate_keys
     if any((n,t) in out_keys for n,t in zip(x['_name'],x['TeamAbbrev'])):
         raise ValueError('OUT player remained in eligible simulation pool')
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__INJURY_META__']={'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),'out_count':len(out_keys)}
+    stat_draws['__INJURY_META__']={
+        'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
+        'out_count':len(out_keys),
+        'redistributable_out_players':sorted([f"{t}|{n}" for n,t in redistributable_out]),
+        'redistributable_out_count':len(redistributable_out),
+        'zero_baseline_out_players':sorted([f"{t}|{n}" for n,t in missing_out]),
+        'zero_baseline_out_count':len(missing_out),
+    }
     name_index={(str(row['_name']),str(row['TeamAbbrev']),str(row['Position'])):i for i,row in x.iterrows()}
     teams=sorted(x['TeamAbbrev'].dropna().astype(str).unique())
     games=sorted(x['game'].dropna().astype(str).unique())
@@ -164,7 +175,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # Separate confirmed-OUT historical usage from the genuine OTHER bucket.
             # OUT opportunity is redistributed exactly once.
             team_hist=r[(r['team']==team)&(r['position'].astype(str).str.upper().isin(['RB','WR','TE']))].copy()
-            out_hist=team_hist[[ (str(z['_name']),team) in out_keys for _,z in team_hist.iterrows() ]] if out_keys else team_hist.iloc[0:0]
+            out_hist=team_hist[[ (str(z['_name']),team) in redistributable_out for _,z in team_hist.iterrows() ]] if redistributable_out else team_hist.iloc[0:0]
             missing_t=float(pd.to_numeric(out_hist.get('targets_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
             missing_c=float(pd.to_numeric(out_hist.get('carries_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
             leftover=max(pass_pg*.10, pass_pg-target_rates.sum()-missing_t, .5)
