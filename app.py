@@ -45,7 +45,7 @@ def build_stat_sim_audit_csv(sim_players, dk_points, stat_draws, max_sims=1000):
     if not frames:
         return None
     audit=pd.concat(frames,ignore_index=True,sort=False)
-    audit['engine_version']='V3.0.8'
+    audit['engine_version']='V3.1'
     return audit.to_csv(index=False)
 
 import io
@@ -2238,38 +2238,59 @@ elif view == "Simulation":
             n_sim=st.select_slider("Simulation runs",options=[10000,25000,50000,100000],value=50000)
             sim_engine=st.radio("Simulation engine",["Stat-driven football simulation","Legacy fantasy-point simulation"],horizontal=True,key="classic_sim_engine")
             st.caption("Stat-driven mode simulates attempts, sacks, carries, targets, receptions, yards, touchdowns and turnovers first, then applies DraftKings scoring. The opposing DST is scored from the same game outcomes.")
+            st.markdown("#### V3.1 — Injury-aware opportunity model")
+            injury_mode=st.checkbox("Redistribute confirmed OUT players' opportunities",value=False,
+                                    help="Manual confirmed OUT list only. Does not automatically verify injuries.")
+            injury_text=st.text_area("Confirmed OUT players (one per line: TEAM | Full player name)",
+                value="",height=105,disabled=not injury_mode,
+                placeholder="CIN | Ja'Marr Chase\nCIN | Tee Higgins")
+            st.caption("Uses proportional remaining target/carry shares, including OTHER. No automatic injury feed or historical absence-split calibration in this first version. Do not enter questionable players as OUT.")
+            out_players=[]
+            if injury_mode:
+                for line in injury_text.splitlines():
+                    if not line.strip(): continue
+                    pieces=line.split('|',1)
+                    if len(pieces)!=2 or not pieces[0].strip() or not pieces[1].strip():
+                        st.error(f"Invalid OUT line: {line}. Use TEAM | Player name")
+                        st.stop()
+                    out_players.append({'team':pieces[0].strip().upper(),'player':pieces[1].strip()})
+                if out_players:
+                    st.warning(f"{len(out_players)} manually specified OUT player(s). Verify availability before running; this is not a live injury feed.")
+            import hashlib
+            injury_signature=hashlib.sha256(str(sorted((p['team'],p['player'].lower()) for p in out_players)).encode()).hexdigest()[:12]
             if st.button("Run active-slate simulation",type="primary"):
                 with st.spinner(f"Running {int(n_sim):,} coherent full-slate scenarios..."):
                     if sim_engine=="Stat-driven football simulation":
                         season=int(st.session_state.get('props_season',2026)); week=int(st.session_state.get('props_week',5)); window=int(st.session_state.get('props_window',8))
                         raw=props_fetch_weekly([season-1,season])
                         rates=props_make_rates(raw,season,week,window)
-                        sim_players,classic_sims,stat_draws=simulate_stat_driven_dfs(pool,rates,int(n_sim))
+                        sim_players,classic_sims,stat_draws=simulate_stat_driven_dfs(
+                            pool,rates,int(n_sim),out_players=out_players)
+                        st.session_state['classic_v31_out_players']=out_players.copy()
                         st.session_state['classic_stat_draws']=stat_draws
-                        # V3.0.8.1 diagnostic: inspect engine output immediately at return boundary.
-                        other_keys=[str(k) for k in stat_draws.keys() if str(k).startswith('__OTHER_')]
-                        recv_keys=[k for k in other_keys if k.startswith('__OTHER_RECEIVER__')]
-                        rush_keys=[k for k in other_keys if k.startswith('__OTHER_RUSHER__')]
-                        st.session_state['v308_other_diag']={
-                            'total':len(other_keys),'receiver':len(recv_keys),'rusher':len(rush_keys),
-                            'sample':other_keys[:8]
-                        }
                     else:
                         sim_players,classic_sims=simulate_classic_v2(pool,int(n_sim))
                         st.session_state.pop('classic_stat_draws',None)
                     st.session_state['classic_v2_sim_players']=sim_players
                     st.session_state['classic_v2_sims']=classic_sims
                     st.session_state['classic_v2_sim_signature']='|'.join(active_games)
+                    st.session_state['classic_v31_injury_signature']=injury_signature
+                    st.session_state['classic_v31_injury_mode']=bool(injury_mode)
                     st.session_state['classic_v2_sim_runs']=int(n_sim)
                     st.session_state['classic_v2_sim_engine']=sim_engine
             sp=st.session_state.get('classic_v2_sim_players'); ss=st.session_state.get('classic_v2_sims')
             sig=st.session_state.get('classic_v2_sim_signature')
             current_sig='|'.join(active_games)
-            if sp is not None and ss is not None and sig==current_sig:
+            if sp is not None and ss is not None and sig==current_sig and st.session_state.get('classic_v31_injury_signature')!=injury_signature:
+                st.warning('Injury selections have changed since the last simulation. Run the simulation again; previous results are hidden.')
+            if sp is not None and ss is not None and sig==current_sig and st.session_state.get('classic_v31_injury_signature')==injury_signature:
+                if st.session_state.get('classic_v31_injury_mode')!=bool(injury_mode):
+                    st.warning('Injury settings changed. Rerun simulation before building lineups.')
+                    st.stop()
                 summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
                 meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source','simulation_engine'] if c in sp.columns]].copy()
                 summary=meta.merge(summary,on='Name',how='left')
-                summary['engine_version']=('V3.0.8' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
+                summary['engine_version']=('V3.1' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
                 positions=st.multiselect("Position",["QB","RB","WR","TE","DST"],default=["QB","RB","WR","TE","DST"],key='v2_sim_pos')
                 sort_metric=st.selectbox("Sort by",["Mean","Median","Mode (binned)","P75","P90","P95"],key='v2_sim_sort')
                 show=summary[summary['Position'].isin(positions)].sort_values(sort_metric,ascending=False)
@@ -2277,18 +2298,7 @@ elif view == "Simulation":
                 st.dataframe(show,use_container_width=True,hide_index=True)
                 st.download_button("Download current-slate simulation CSV",summary.to_csv(index=False),"nfl_v2_current_slate_simulation.csv","text/csv")
                 if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation':
-                    diag=st.session_state.get('v308_other_diag',{})
-                    st.info(
-                        f"V3.0.8.1 accounting diagnostic — OTHER records at engine return: "
-                        f"{diag.get('total',0)} total | {diag.get('receiver',0)} receiver | "
-                        f"{diag.get('rusher',0)} rusher"
-                    )
-                    if diag.get('sample'):
-                        st.caption("Sample accounting keys: "+", ".join(diag['sample']))
                     audit_stats=st.session_state.get('classic_stat_draws')
-                    if audit_stats:
-                        export_other=[str(k) for k in audit_stats.keys() if str(k).startswith('__OTHER_')]
-                        st.caption(f"OTHER records reaching audit export: {len(export_other)}")
                     if audit_stats:
                         audit_csv=build_stat_sim_audit_csv(sp,ss,audit_stats,max_sims=1000)
                         if audit_csv is not None:
