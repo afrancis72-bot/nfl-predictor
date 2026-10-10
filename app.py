@@ -2338,8 +2338,11 @@ elif view == "Simulation":
                             parts=" ".join(s.split()).split()
                             while parts and parts[-1] in {'jr','sr','ii','iii','iv','v'}: parts.pop()
                             return " ".join(parts)
+                        def _v313_team(v):
+                            t=str(v).strip().upper()
+                            return {'JAC':'JAX','WAS':'WSH','LA':'LAR'}.get(t,t)
                         expected_engine_out=sorted([
-                            f"{str(p['team']).strip().upper()}|{_v313_canon(p['player'])}" for p in out_players
+                            f"{_v313_team(p['team'])}|{_v313_canon(p['player'])}" for p in out_players
                         ])
                         if engine_out_count!=len(out_players) or sorted(engine_out_players)!=expected_engine_out:
                             raise ValueError(
@@ -2355,10 +2358,10 @@ elif view == "Simulation":
                             parts=" ".join(s.split()).split()
                             while parts and parts[-1] in {'jr','sr','ii','iii','iv','v'}: parts.pop()
                             return " ".join(parts)
-                        requested={(_v311_nm(p['player']),p['team'].strip().upper()) for p in out_players}
+                        requested={(_v311_nm(p['player']),_v313_team(p['team'])) for p in out_players}
                         survived=[]
                         for _,row in sim_players.iterrows():
-                            if (_v311_nm(row.get('Name','')),str(row.get('TeamAbbrev','')).strip().upper()) in requested:
+                            if (_v311_nm(row.get('Name','')),_v313_team(row.get('TeamAbbrev',''))) in requested:
                                 survived.append(str(row.get('Name','')))
                         if survived:
                             raise ValueError("V3.1.1 injury gate failed; OUT player(s) survived simulation: "+", ".join(survived))
@@ -2396,7 +2399,10 @@ elif view == "Simulation":
                     parts=" ".join(s.split()).split()
                     while parts and parts[-1] in {'jr','sr','ii','iii','iv','v'}: parts.pop()
                     return " ".join(parts)
-                expected_out=sorted([f"{p['team'].strip().upper()}|{_v313_export_canon(p['player'])}" for p in active_out])
+                def _v313_export_team(v):
+                    t=str(v).strip().upper()
+                    return {'JAC':'JAX','WAS':'WSH','LA':'LAR'}.get(t,t)
+                expected_out=sorted([f"{_v313_export_team(p['team'])}|{_v313_export_canon(p['player'])}" for p in active_out])
                 if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation':
                     if engine_out_count!=len(active_out) or engine_out_players!=expected_out:
                         st.error(
@@ -2500,17 +2506,20 @@ elif view == "Lineup Builder":
                     parts=" ".join(s.split()).split()
                     while parts and parts[-1] in {'jr','sr','ii','iii','iv','v'}: parts.pop()
                     return " ".join(parts)
-                requested_pf={(_v312_nm(p['player']),p['team'].strip().upper()) for p in portfolio_out_players}
+                def _v312_team(v):
+                    t=str(v).strip().upper()
+                    return {'JAC':'JAX','WAS':'WSH','LA':'LAR'}.get(t,t)
+                requested_pf={(_v312_nm(p['player']),_v312_team(p['team'])) for p in portfolio_out_players}
                 survived_pf=[]
                 for _,row in sim_players.iterrows():
-                    if (_v312_nm(row.get('Name','')),str(row.get('TeamAbbrev','')).strip().upper()) in requested_pf:
+                    if (_v312_nm(row.get('Name','')),_v312_team(row.get('TeamAbbrev',''))) in requested_pf:
                         survived_pf.append(str(row.get('Name','')))
                 if survived_pf:
                     raise ValueError("V3.1.2 portfolio injury gate failed; OUT player(s) survived: "+", ".join(survived_pf))
                 portfolio_engine_meta=stat_draws.get('__INJURY_META__',{}) if isinstance(stat_draws,dict) else {}
                 pf_count=int(portfolio_engine_meta.get('out_count',-1))
                 pf_players=sorted(list(portfolio_engine_meta.get('out_players',[])))
-                expected_pf=sorted([f"{p['team'].strip().upper()}|{_v312_nm(p['player'])}" for p in portfolio_out_players])
+                expected_pf=sorted([f"{_v312_team(p['team'])}|{_v312_nm(p['player'])}" for p in portfolio_out_players])
                 if pf_count!=len(portfolio_out_players) or pf_players!=expected_pf:
                     raise ValueError(
                         f"V3.1.3 portfolio injury handoff mismatch: expected {len(portfolio_out_players)} {expected_pf}; "
