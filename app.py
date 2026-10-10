@@ -2238,29 +2238,62 @@ elif view == "Simulation":
             n_sim=st.select_slider("Simulation runs",options=[10000,25000,50000,100000],value=50000)
             sim_engine=st.radio("Simulation engine",["Stat-driven football simulation","Legacy fantasy-point simulation"],horizontal=True,key="classic_sim_engine")
             st.caption("Stat-driven mode simulates attempts, sacks, carries, targets, receptions, yards, touchdowns and turnovers first, then applies DraftKings scoring. The opposing DST is scored from the same game outcomes.")
-            st.markdown("#### V3.1.3 — Injury-aware opportunity model")
-            injury_mode=st.checkbox("Redistribute confirmed OUT players' opportunities",value=False,
-                                    help="Manual confirmed OUT list only. Does not automatically verify injuries.")
-            injury_text=st.text_area("Confirmed OUT players (one per line: TEAM | Full player name)",
-                value="",height=105,disabled=not injury_mode,
-                placeholder="CIN | Ja'Marr Chase\nCIN | Tee Higgins")
-            st.caption("Uses proportional remaining target/carry shares, including OTHER. No automatic injury feed or historical absence-split calibration in this first version. Do not enter questionable players as OUT.")
-            out_players=[]
+            st.markdown("#### V3.1.4 — Injury-aware opportunity model")
+            injury_mode=st.checkbox(
+                "Redistribute confirmed OUT players' opportunities",
+                key="v314_injury_mode",
+                help="Manual confirmed OUT list only. Does not automatically verify injuries."
+            )
+            injury_text=st.text_area(
+                "Confirmed OUT players (one per line: TEAM | Full player name)",
+                key="v314_injury_text",
+                height=105,
+                disabled=not injury_mode,
+                placeholder="CIN | Ja'Marr Chase\nCIN | Tee Higgins"
+            )
+            st.caption("Uses proportional remaining target/carry shares, including OTHER. No automatic injury feed or historical absence-split calibration. Do not enter questionable players as OUT.")
+
+            # Parse and persist a staged injury list on every rerun.
+            parsed_out=[]
+            parse_error=None
             if injury_mode:
                 for line in injury_text.splitlines():
-                    if not line.strip(): continue
+                    if not line.strip():
+                        continue
                     pieces=line.split('|',1)
                     if len(pieces)!=2 or not pieces[0].strip() or not pieces[1].strip():
-                        st.error(f"Invalid OUT line: {line}. Use TEAM | Player name")
-                        st.stop()
-                    out_players.append({'team':pieces[0].strip().upper(),'player':pieces[1].strip()})
+                        parse_error=f"Invalid OUT line: {line}. Use TEAM | Player name"
+                        break
+                    parsed_out.append({'team':pieces[0].strip().upper(),'player':pieces[1].strip()})
+            if parse_error:
+                st.error(parse_error)
+                st.session_state['v314_staged_out_players']=[]
+            else:
+                st.session_state['v314_staged_out_players']=parsed_out if injury_mode else []
+
+            out_players=list(st.session_state.get('v314_staged_out_players',[]))
+            if injury_mode:
                 if out_players:
-                    st.warning(f"{len(out_players)} manually specified OUT player(s). Verify availability before running; this is not a live injury feed.")
-                    st.dataframe(pd.DataFrame(out_players).rename(columns={'team':'Team','player':'Confirmed OUT'}),
-                                 hide_index=True,use_container_width=True)
+                    st.success(f"{len(out_players)} OUT player(s) staged for the next simulation.")
+                    st.dataframe(
+                        pd.DataFrame(out_players).rename(columns={'team':'Team','player':'Confirmed OUT'}),
+                        hide_index=True,use_container_width=True
+                    )
+                else:
+                    st.warning("Injury-aware mode is ON, but 0 OUT players are staged. Enter at least one player before running.")
+
             import hashlib
             injury_signature=hashlib.sha256(str(sorted((p['team'],p['player'].lower()) for p in out_players)).encode()).hexdigest()[:12]
             if st.button("Run active-slate simulation",type="primary"):
+                run_out_players=list(st.session_state.get('v314_staged_out_players',[]))
+                if injury_mode and not run_out_players:
+                    st.error("V3.1.4 blocked the run: injury-aware mode is ON but 0 OUT players are staged.")
+                    st.stop()
+                # Snapshot exactly what this click will send to the engine.
+                out_players=run_out_players
+                st.info("Run snapshot — engine will exclude: "+(
+                    "; ".join(f"{p['team']} | {p['player']}" for p in out_players) if out_players else "none"
+                ))
                 with st.spinner(f"Running {int(n_sim):,} coherent full-slate scenarios..."):
                     if sim_engine=="Stat-driven football simulation":
                         season=int(st.session_state.get('props_season',2026)); week=int(st.session_state.get('props_week',5)); window=int(st.session_state.get('props_window',8))
@@ -2346,7 +2379,7 @@ elif view == "Simulation":
                 summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
                 meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source','simulation_engine'] if c in sp.columns]].copy()
                 summary=meta.merge(summary,on='Name',how='left')
-                summary['engine_version']=('V3.1.3' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
+                summary['engine_version']=('V3.1.4' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
                 summary['injury_out_count']=engine_out_count if engine_out_count>=0 else 0
                 summary['injury_out_players']='; '.join(engine_out_players)
                 if engine_out_count>=0:
