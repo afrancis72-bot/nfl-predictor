@@ -94,6 +94,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
+    stat_draws['__INJURY_META__']={'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),'out_count':len(out_keys)}
     name_index={(str(row['_name']),str(row['TeamAbbrev']),str(row['Position'])):i for i,row in x.iterrows()}
     teams=sorted(x['TeamAbbrev'].dropna().astype(str).unique())
     games=sorted(x['game'].dropna().astype(str).unique())
@@ -160,22 +161,17 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             rushes=np.maximum(5,rng.poisson(np.maximum(5,team_rush*pace*np.exp(-.10*team_script))))
 
             # Target allocation from one team pass-attempt budget.
-            leftover=max(pass_pg*.10, pass_pg-target_rates.sum(), .5)
-            # Redistribute only explicitly confirmed OUT usage. Off-pool injured
-            # players are part of the existing OTHER budget, not extra volume.
-            if out_keys:
-                offpool=r[(r['team']==team)&(r['position'].astype(str).str.upper().isin(['RB','WR','TE']))].copy()
-                offpool=offpool[[ (str(z['_name']),team) in out_keys for _,z in offpool.iterrows() ]]
-                missing_t=float(pd.to_numeric(offpool.get('targets_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).sum())
-                missing_c=float(pd.to_numeric(offpool.get('carries_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).sum())
+            # Separate confirmed-OUT historical usage from the genuine OTHER bucket.
+            # OUT opportunity is redistributed exactly once.
+            team_hist=r[(r['team']==team)&(r['position'].astype(str).str.upper().isin(['RB','WR','TE']))].copy()
+            out_hist=team_hist[[ (str(z['_name']),team) in out_keys for _,z in team_hist.iterrows() ]] if out_keys else team_hist.iloc[0:0]
+            missing_t=float(pd.to_numeric(out_hist.get('targets_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
+            missing_c=float(pd.to_numeric(out_hist.get('carries_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
+            leftover=max(pass_pg*.10, pass_pg-target_rates.sum()-missing_t, .5)
+            carry_other=max(team_rush*.06,.5)
+            if missing_t>0 or missing_c>0:
                 target_rates,leftover=redistribute(target_rates,leftover,missing_volume=missing_t)
-                # Existing team rushing budget already contains eligible RB carries,
-                # while off-pool OUT carries may not be present in it. Add those
-                # carries to the baseline before reallocating them.
-                carry_other=max(team_rush*.06,.5)+missing_c
                 carry_rates,carry_other=redistribute(carry_rates,carry_other,missing_volume=missing_c)
-            else:
-                carry_other=max(team_rush*.06,.5)
             tprob=np.append(np.maximum(target_rates,0),leftover); tprob=tprob/tprob.sum()
             targ=_multinomial_rows(rng,attempts,tprob)
             # Carry allocation includes QB and an unmodeled bucket.

@@ -2238,7 +2238,7 @@ elif view == "Simulation":
             n_sim=st.select_slider("Simulation runs",options=[10000,25000,50000,100000],value=50000)
             sim_engine=st.radio("Simulation engine",["Stat-driven football simulation","Legacy fantasy-point simulation"],horizontal=True,key="classic_sim_engine")
             st.caption("Stat-driven mode simulates attempts, sacks, carries, targets, receptions, yards, touchdowns and turnovers first, then applies DraftKings scoring. The opposing DST is scored from the same game outcomes.")
-            st.markdown("#### V3.1 — Injury-aware opportunity model")
+            st.markdown("#### V3.1.1 — Injury-aware opportunity model")
             injury_mode=st.checkbox("Redistribute confirmed OUT players' opportunities",value=False,
                                     help="Manual confirmed OUT list only. Does not automatically verify injuries.")
             injury_text=st.text_area("Confirmed OUT players (one per line: TEAM | Full player name)",
@@ -2256,6 +2256,8 @@ elif view == "Simulation":
                     out_players.append({'team':pieces[0].strip().upper(),'player':pieces[1].strip()})
                 if out_players:
                     st.warning(f"{len(out_players)} manually specified OUT player(s). Verify availability before running; this is not a live injury feed.")
+                    st.dataframe(pd.DataFrame(out_players).rename(columns={'team':'Team','player':'Confirmed OUT'}),
+                                 hide_index=True,use_container_width=True)
             import hashlib
             injury_signature=hashlib.sha256(str(sorted((p['team'],p['player'].lower()) for p in out_players)).encode()).hexdigest()[:12]
             if st.button("Run active-slate simulation",type="primary"):
@@ -2266,6 +2268,19 @@ elif view == "Simulation":
                         rates=props_make_rates(raw,season,week,window)
                         sim_players,classic_sims,stat_draws=simulate_stat_driven_dfs(
                             pool,rates,int(n_sim),out_players=out_players)
+                        # Hard validation: requested OUT identities may never survive.
+                        def _v311_nm(v):
+                            s=str(v).lower().replace('.','').replace("'","").replace('-',' ')
+                            parts=" ".join(s.split()).split()
+                            while parts and parts[-1] in {'jr','sr','ii','iii','iv','v'}: parts.pop()
+                            return " ".join(parts)
+                        requested={(_v311_nm(p['player']),p['team'].strip().upper()) for p in out_players}
+                        survived=[]
+                        for _,row in sim_players.iterrows():
+                            if (_v311_nm(row.get('Name','')),str(row.get('TeamAbbrev','')).strip().upper()) in requested:
+                                survived.append(str(row.get('Name','')))
+                        if survived:
+                            raise ValueError("V3.1.1 injury gate failed; OUT player(s) survived simulation: "+", ".join(survived))
                         st.session_state['classic_v31_out_players']=out_players.copy()
                         st.session_state['classic_stat_draws']=stat_draws
                     else:
