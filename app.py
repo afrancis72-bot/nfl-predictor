@@ -2238,7 +2238,7 @@ elif view == "Simulation":
             n_sim=st.select_slider("Simulation runs",options=[10000,25000,50000,100000],value=50000)
             sim_engine=st.radio("Simulation engine",["Stat-driven football simulation","Legacy fantasy-point simulation"],horizontal=True,key="classic_sim_engine")
             st.caption("Stat-driven mode simulates attempts, sacks, carries, targets, receptions, yards, touchdowns and turnovers first, then applies DraftKings scoring. The opposing DST is scored from the same game outcomes.")
-            st.markdown("#### V3.2 — Automatic injury-aware opportunity model")
+            st.markdown("#### V3.2.1 — NFL official injury report + DraftKings")
             from injury_feed import fetch_live, match_to_pool, confirmed_out, norm_name, norm_team
             injury_mode=st.checkbox("Apply confirmed absences to simulations",value=True,key="v32_injury_mode")
             auto_injury=st.checkbox("Automatically check live injury feed",value=True,key="v32_auto_injury")
@@ -2247,7 +2247,7 @@ elif view == "Simulation":
                 key="v314_injury_text",height=100,
                 placeholder="CHI | Kyle Monangai\nNE | Stefon Diggs"
             )
-            st.caption("Live source: ESPN public injury feed (unofficial API). Only exact team + player matches with explicit OUT/inactive/IR statuses are auto-excluded. QUESTIONABLE and DOUBTFUL are flagged, not automatically excluded. Manual overrides are scenario assumptions, not verified statuses.")
+            st.caption("Live source: NFL.com official public injury report (HTML; no private NFL API access). Only exact team + player matches with explicit OUT/inactive/IR statuses are auto-excluded. QUESTIONABLE and DOUBTFUL are flagged, not automatically excluded. Manual overrides are scenario assumptions, not verified statuses.")
             parsed_out=[]
             for line in injury_text.splitlines():
                 if not line.strip(): continue
@@ -2259,7 +2259,7 @@ elif view == "Simulation":
             # Network calls are cached for 10 minutes. Cache failures are never interpreted as no injuries.
             @st.cache_data(ttl=600,show_spinner=False)
             def _v32_fetch_injuries():
-                return fetch_live()
+                return fetch_live(season=int(st.session_state.get("props_season",2026)),week=int(st.session_state.get("props_week",5)))
             feed_ok=False
             feed_matches=pd.DataFrame()
             auto_out=[]
@@ -2267,16 +2267,16 @@ elif view == "Simulation":
                 try:
                     live_feed=_v32_fetch_injuries()
                     feed_matches=match_to_pool(live_feed,pool)
-                    feed_ok=True
+                    feed_ok=not live_feed.empty
                     fetched=live_feed['fetched_at'].iloc[0] if not live_feed.empty else 'unknown'
                     st.info(f"Injury feed checked: {fetched} UTC | {len(feed_matches)} exact slate matches | {len(live_feed)} league entries")
                     if not feed_matches.empty:
                         st.dataframe(feed_matches[['team','matched_name','status','raw_status','report_date','source']].rename(columns={'matched_name':'Player'}),hide_index=True,use_container_width=True)
                         auto_out=confirmed_out(feed_matches)
                     else:
-                        st.warning('No injury records matched the active slate. Automatic exclusions cannot be trusted; check manually.')
+                        st.warning('NFL report returned no exact matches. Official feed cannot be trusted for this slate; check DK and manual entries.')
                 except Exception as e:
-                    st.error(f"Live injury feed unavailable or invalid: {e}. No automatic injury decisions were made.")
+                    st.error(f"Official NFL injury report unavailable or invalid: {e}. No automatic injury decisions were made.")
             # DraftKings status gate is a second automatic source, even if ESPN fails.
             dk_out=[]
             if injury_mode and 'dk_status' in pool.columns:
@@ -2286,7 +2286,7 @@ elif view == "Simulation":
                         dk_out.append({'team':norm_team(p['TeamAbbrev']),'player':str(p['Name'])})
             # De-duplicate by canonical identity; preserve manual selections as explicit scenarios.
             by_key={}
-            for origin,items in [('ESPN',auto_out),('DK',dk_out),('MANUAL',parsed_out)]:
+            for origin,items in [('NFL',auto_out),('DK',dk_out),('MANUAL',parsed_out)]:
                 for p in items:
                     key=(norm_team(p['team']),norm_name(p['player']))
                     by_key[key]={**p,'team':key[0],'source':origin}
@@ -2294,7 +2294,7 @@ elif view == "Simulation":
             st.session_state['v314_staged_out_players']=[{'team':p['team'],'player':p['player']} for p in staged]
             out_players=list(st.session_state['v314_staged_out_players'])
             if injury_mode:
-                st.success(f"{len(out_players)} total OUT scenario players staged: {len(auto_out)} ESPN, {len(dk_out)} DK, {len(parsed_out)} manual (deduplicated)")
+                st.success(f"{len(out_players)} total OUT scenario players staged: {len(auto_out)} NFL, {len(dk_out)} DK, {len(parsed_out)} manual (deduplicated)")
                 if staged:
                     st.dataframe(pd.DataFrame(staged),hide_index=True,use_container_width=True)
                 if auto_injury and not feed_ok:
