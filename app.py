@@ -2238,56 +2238,75 @@ elif view == "Simulation":
             n_sim=st.select_slider("Simulation runs",options=[10000,25000,50000,100000],value=50000)
             sim_engine=st.radio("Simulation engine",["Stat-driven football simulation","Legacy fantasy-point simulation"],horizontal=True,key="classic_sim_engine")
             st.caption("Stat-driven mode simulates attempts, sacks, carries, targets, receptions, yards, touchdowns and turnovers first, then applies DraftKings scoring. The opposing DST is scored from the same game outcomes.")
-            st.markdown("#### V3.1.4 — Injury-aware opportunity model")
-            injury_mode=st.checkbox(
-                "Redistribute confirmed OUT players' opportunities",
-                key="v314_injury_mode",
-                help="Manual confirmed OUT list only. Does not automatically verify injuries."
-            )
+            st.markdown("#### V3.2 — Automatic injury-aware opportunity model")
+            from injury_feed import fetch_live, match_to_pool, confirmed_out, norm_name, norm_team
+            injury_mode=st.checkbox("Apply confirmed absences to simulations",value=True,key="v32_injury_mode")
+            auto_injury=st.checkbox("Automatically check live injury feed",value=True,key="v32_auto_injury")
             injury_text=st.text_area(
-                "Confirmed OUT players (one per line: TEAM | Full player name)",
-                key="v314_injury_text",
-                height=105,
-                disabled=not injury_mode,
-                placeholder="CIN | Ja'Marr Chase\nCIN | Tee Higgins"
+                "Manual confirmed OUT overrides (TEAM | Full player name, one per line)",
+                key="v314_injury_text",height=100,
+                placeholder="CHI | Kyle Monangai\nNE | Stefon Diggs"
             )
-            st.caption("Uses proportional remaining target/carry shares, including OTHER. No automatic injury feed or historical absence-split calibration. Do not enter questionable players as OUT.")
-
-            # Parse and persist a staged injury list on every rerun.
+            st.caption("Live source: ESPN public injury feed (unofficial API). Only exact team + player matches with explicit OUT/inactive/IR statuses are auto-excluded. QUESTIONABLE and DOUBTFUL are flagged, not automatically excluded. Manual overrides are scenario assumptions, not verified statuses.")
             parsed_out=[]
-            parse_error=None
+            for line in injury_text.splitlines():
+                if not line.strip(): continue
+                pieces=line.split('|',1)
+                if len(pieces)!=2 or not pieces[0].strip() or not pieces[1].strip():
+                    st.error(f"Invalid manual OUT line: {line}. Use TEAM | Player name")
+                    st.stop()
+                parsed_out.append({'team':norm_team(pieces[0]),'player':pieces[1].strip()})
+            # Network calls are cached for 10 minutes. Cache failures are never interpreted as no injuries.
+            @st.cache_data(ttl=600,show_spinner=False)
+            def _v32_fetch_injuries():
+                return fetch_live()
+            feed_ok=False
+            feed_matches=pd.DataFrame()
+            auto_out=[]
+            if injury_mode and auto_injury:
+                try:
+                    live_feed=_v32_fetch_injuries()
+                    feed_matches=match_to_pool(live_feed,pool)
+                    feed_ok=True
+                    fetched=live_feed['fetched_at'].iloc[0] if not live_feed.empty else 'unknown'
+                    st.info(f"Injury feed checked: {fetched} UTC | {len(feed_matches)} exact slate matches | {len(live_feed)} league entries")
+                    if not feed_matches.empty:
+                        st.dataframe(feed_matches[['team','matched_name','status','raw_status','report_date','source']].rename(columns={'matched_name':'Player'}),hide_index=True,use_container_width=True)
+                        auto_out=confirmed_out(feed_matches)
+                    else:
+                        st.warning('No injury records matched the active slate. Automatic exclusions cannot be trusted; check manually.')
+                except Exception as e:
+                    st.error(f"Live injury feed unavailable or invalid: {e}. No automatic injury decisions were made.")
+            # DraftKings status gate is a second automatic source, even if ESPN fails.
+            dk_out=[]
+            if injury_mode and 'dk_status' in pool.columns:
+                for _,p in pool.iterrows():
+                    status=str(p.get('dk_status','')).strip().upper()
+                    if status in {'O','OUT','IR','INACTIVE','SUSPENDED','PUP','NFI'}:
+                        dk_out.append({'team':norm_team(p['TeamAbbrev']),'player':str(p['Name'])})
+            # De-duplicate by canonical identity; preserve manual selections as explicit scenarios.
+            by_key={}
+            for origin,items in [('ESPN',auto_out),('DK',dk_out),('MANUAL',parsed_out)]:
+                for p in items:
+                    key=(norm_team(p['team']),norm_name(p['player']))
+                    by_key[key]={**p,'team':key[0],'source':origin}
+            staged=list(by_key.values()) if injury_mode else []
+            st.session_state['v314_staged_out_players']=[{'team':p['team'],'player':p['player']} for p in staged]
+            out_players=list(st.session_state['v314_staged_out_players'])
             if injury_mode:
-                for line in injury_text.splitlines():
-                    if not line.strip():
-                        continue
-                    pieces=line.split('|',1)
-                    if len(pieces)!=2 or not pieces[0].strip() or not pieces[1].strip():
-                        parse_error=f"Invalid OUT line: {line}. Use TEAM | Player name"
-                        break
-                    parsed_out.append({'team':pieces[0].strip().upper(),'player':pieces[1].strip()})
-            if parse_error:
-                st.error(parse_error)
-                st.session_state['v314_staged_out_players']=[]
-            else:
-                st.session_state['v314_staged_out_players']=parsed_out if injury_mode else []
-
-            out_players=list(st.session_state.get('v314_staged_out_players',[]))
-            if injury_mode:
-                if out_players:
-                    st.success(f"{len(out_players)} OUT player(s) staged for the next simulation.")
-                    st.dataframe(
-                        pd.DataFrame(out_players).rename(columns={'team':'Team','player':'Confirmed OUT'}),
-                        hide_index=True,use_container_width=True
-                    )
-                else:
-                    st.warning("Injury-aware mode is ON, but 0 OUT players are staged. Enter at least one player before running.")
-
+                st.success(f"{len(out_players)} total OUT scenario players staged: {len(auto_out)} ESPN, {len(dk_out)} DK, {len(parsed_out)} manual (deduplicated)")
+                if staged:
+                    st.dataframe(pd.DataFrame(staged),hide_index=True,use_container_width=True)
+                if auto_injury and not feed_ok:
+                    st.warning('Automatic injury feed FAILED. Review DK statuses and manual entries; this is not a complete injury check.')
+                if feed_ok and not feed_matches.empty and (feed_matches.status=='QUESTIONABLE').any():
+                    st.warning('QUESTIONABLE/DOUBTFUL players remain active unless explicitly added as manual OUT scenarios.')
             import hashlib
             injury_signature=hashlib.sha256(str(sorted((p['team'],p['player'].lower()) for p in out_players)).encode()).hexdigest()[:12]
             if st.button("Run active-slate simulation",type="primary"):
                 run_out_players=list(st.session_state.get('v314_staged_out_players',[]))
-                if injury_mode and not run_out_players:
-                    st.error("V3.1.4 blocked the run: injury-aware mode is ON but 0 OUT players are staged.")
+                if injury_mode and auto_injury and not feed_ok and not run_out_players:
+                    st.error("Live injury feed failed and no verified/manual exclusions are staged. Review injuries before simulating.")
                     st.stop()
                 # Snapshot exactly what this click will send to the engine.
                 out_players=run_out_players
@@ -2379,7 +2398,7 @@ elif view == "Simulation":
                 summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
                 meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source','simulation_engine'] if c in sp.columns]].copy()
                 summary=meta.merge(summary,on='Name',how='left')
-                summary['engine_version']=('V3.1.4' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
+                summary['engine_version']=('V3.2' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
                 summary['injury_out_count']=engine_out_count if engine_out_count>=0 else 0
                 summary['injury_out_players']='; '.join(engine_out_players)
                 if engine_out_count>=0:
