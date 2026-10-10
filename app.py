@@ -2238,7 +2238,7 @@ elif view == "Simulation":
             n_sim=st.select_slider("Simulation runs",options=[10000,25000,50000,100000],value=50000)
             sim_engine=st.radio("Simulation engine",["Stat-driven football simulation","Legacy fantasy-point simulation"],horizontal=True,key="classic_sim_engine")
             st.caption("Stat-driven mode simulates attempts, sacks, carries, targets, receptions, yards, touchdowns and turnovers first, then applies DraftKings scoring. The opposing DST is scored from the same game outcomes.")
-            st.markdown("#### V3.1.1 — Injury-aware opportunity model")
+            st.markdown("#### V3.1.2 — Injury-aware opportunity model")
             injury_mode=st.checkbox("Redistribute confirmed OUT players' opportunities",value=False,
                                     help="Manual confirmed OUT list only. Does not automatically verify injuries.")
             injury_text=st.text_area("Confirmed OUT players (one per line: TEAM | Full player name)",
@@ -2299,13 +2299,16 @@ elif view == "Simulation":
             if sp is not None and ss is not None and sig==current_sig and st.session_state.get('classic_v31_injury_signature')!=injury_signature:
                 st.warning('Injury selections have changed since the last simulation. Run the simulation again; previous results are hidden.')
             if sp is not None and ss is not None and sig==current_sig and st.session_state.get('classic_v31_injury_signature')==injury_signature:
+                active_out=st.session_state.get('classic_v31_out_players',[]) or []
+                if active_out:
+                    st.success("Active simulation injury exclusions: "+", ".join(f"{p['team']} | {p['player']}" for p in active_out))
                 if st.session_state.get('classic_v31_injury_mode')!=bool(injury_mode):
                     st.warning('Injury settings changed. Rerun simulation before building lineups.')
                     st.stop()
                 summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
                 meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source','simulation_engine'] if c in sp.columns]].copy()
                 summary=meta.merge(summary,on='Name',how='left')
-                summary['engine_version']=('V3.1' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
+                summary['engine_version']=('V3.1.2' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
                 positions=st.multiselect("Position",["QB","RB","WR","TE","DST"],default=["QB","RB","WR","TE","DST"],key='v2_sim_pos')
                 sort_metric=st.selectbox("Sort by",["Mean","Median","Mode (binned)","P75","P90","P95"],key='v2_sim_sort')
                 show=summary[summary['Position'].isin(positions)].sort_values(sort_metric,ascending=False)
@@ -2384,7 +2387,23 @@ elif view == "Lineup Builder":
             if portfolio_mode == "DFS Engine V2 Scenario Portfolio":
                 season=int(st.session_state.get('props_season',2026)); week=int(st.session_state.get('props_week',5)); window=int(st.session_state.get('props_window',8))
                 raw=props_fetch_weekly([season-1,season]); rates=props_make_rates(raw,season,week,window)
-                sim_players,classic_sims,stat_draws=simulate_stat_driven_dfs(pool,rates,10000)
+                # Preserve the exact injury context used by the active-slate simulation.
+                portfolio_out_players=st.session_state.get('classic_v31_out_players',[]) or []
+                sim_players,classic_sims,stat_draws=simulate_stat_driven_dfs(
+                    pool,rates,10000,out_players=portfolio_out_players)
+                # Hard guard: portfolio generation may never silently erase injury context.
+                def _v312_nm(v):
+                    s=str(v).lower().replace('.','').replace("'","").replace('-',' ')
+                    parts=" ".join(s.split()).split()
+                    while parts and parts[-1] in {'jr','sr','ii','iii','iv','v'}: parts.pop()
+                    return " ".join(parts)
+                requested_pf={(_v312_nm(p['player']),p['team'].strip().upper()) for p in portfolio_out_players}
+                survived_pf=[]
+                for _,row in sim_players.iterrows():
+                    if (_v312_nm(row.get('Name','')),str(row.get('TeamAbbrev','')).strip().upper()) in requested_pf:
+                        survived_pf.append(str(row.get('Name','')))
+                if survived_pf:
+                    raise ValueError("V3.1.2 portfolio injury gate failed; OUT player(s) survived: "+", ".join(survived_pf))
                 st.session_state['classic_stat_draws']=stat_draws
                 st.session_state['classic_v2_sim_engine']='Stat-driven football simulation'
                 records=v2_rescore_classic_candidates(candidate_items,sim_players,classic_sims)
