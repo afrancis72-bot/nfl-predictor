@@ -2238,16 +2238,16 @@ elif view == "Simulation":
             n_sim=st.select_slider("Simulation runs",options=[10000,25000,50000,100000],value=50000)
             sim_engine=st.radio("Simulation engine",["Stat-driven football simulation","Legacy fantasy-point simulation"],horizontal=True,key="classic_sim_engine")
             st.caption("Stat-driven mode simulates attempts, sacks, carries, targets, receptions, yards, touchdowns and turnovers first, then applies DraftKings scoring. The opposing DST is scored from the same game outcomes.")
-            st.markdown("#### V3.2.1 — NFL official injury report + DraftKings")
+            st.markdown("#### V3.2.2 — NFL weekly injury report + DraftKings")
             from injury_feed import fetch_live, match_to_pool, confirmed_out, norm_name, norm_team
             injury_mode=st.checkbox("Apply confirmed absences to simulations",value=True,key="v32_injury_mode")
             auto_injury=st.checkbox("Automatically check live injury feed",value=True,key="v32_auto_injury")
             injury_text=st.text_area(
                 "Manual confirmed OUT overrides (TEAM | Full player name, one per line)",
                 key="v314_injury_text",height=100,
-                placeholder="CHI | Kyle Monangai\nNE | Stefon Diggs"
+                placeholder="CHI | Kyle Monangai\nWAS | Stefon Diggs"
             )
-            st.caption("Live source: NFL.com official public injury report (HTML; no private NFL API access). Only exact team + player matches with explicit OUT/inactive/IR statuses are auto-excluded. QUESTIONABLE and DOUBTFUL are flagged, not automatically excluded. Manual overrides are scenario assumptions, not verified statuses.")
+            st.caption("Live source: NFL.com official weekly injury news article (HTML; no private NFL API access). Only exact team + player matches with explicit OUT/inactive/IR statuses are auto-excluded. QUESTIONABLE and DOUBTFUL are flagged, not automatically excluded. Manual overrides are scenario assumptions, not verified statuses.")
             parsed_out=[]
             for line in injury_text.splitlines():
                 if not line.strip(): continue
@@ -2284,6 +2284,15 @@ elif view == "Simulation":
                     status=str(p.get('dk_status','')).strip().upper()
                     if status in {'O','OUT','IR','INACTIVE','SUSPENDED','PUP','NFI'}:
                         dk_out.append({'team':norm_team(p['TeamAbbrev']),'player':str(p['Name'])})
+            # A manual name on a different team must be reviewed, never silently remapped.
+            roster_names={}
+            for _,p in pool.iterrows():
+                roster_names.setdefault(norm_name(p.get('Name')),set()).add(norm_team(p.get('TeamAbbrev')))
+            for manual in parsed_out:
+                current=roster_names.get(norm_name(manual['player']),set())
+                if current and manual['team'] not in current:
+                    st.error(f"MANUAL TEAM MISMATCH: {manual['player']} entered as {manual['team']}, but current DK slate has {', '.join(sorted(current))}. Correct the manual entry before simulating.")
+                    st.stop()
             # De-duplicate by canonical identity; preserve manual selections as explicit scenarios.
             by_key={}
             for origin,items in [('NFL',auto_out),('DK',dk_out),('MANUAL',parsed_out)]:
@@ -2294,7 +2303,7 @@ elif view == "Simulation":
             st.session_state['v314_staged_out_players']=[{'team':p['team'],'player':p['player']} for p in staged]
             out_players=list(st.session_state['v314_staged_out_players'])
             if injury_mode:
-                st.success(f"{len(out_players)} total OUT scenario players staged: {len(auto_out)} NFL, {len(dk_out)} DK, {len(parsed_out)} manual (deduplicated)")
+                st.success(f"{len(out_players)} unique OUT players staged: {len(auto_out)} NFL matches, {len(dk_out)} DK statuses, {len(parsed_out)} manual entries (sources may overlap)")
                 if staged:
                     st.dataframe(pd.DataFrame(staged),hide_index=True,use_container_width=True)
                 if auto_injury and not feed_ok:
