@@ -827,7 +827,7 @@ def build_portfolio(pool, n_lineups, max_exposure, min_unique, min_salary, max_s
 
 def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
                             own_weight, leverage_weight, locks, excludes,
-                            projection_floor_pct=0.88, attempts=None):
+                            projection_floor_pct=0.88, attempts=None, scenario_upside=True):
     """V3.1.6a: fast deduplicated candidate-bank generation.
 
     The common no-lock/no-exclusion path constructs rosters with NumPy/index
@@ -884,7 +884,11 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
     else: raw=np.clip(0.30*proj+0.70*ceil+0.15*lev,0.1,None)
     # 5.0 environment is neutral; 10.0 earns only a 15% opportunity boost.
     env_mult=np.clip(0.85+0.03*env,0.85,1.15)
+    # Mix standard projection-led candidates with plausible breakout candidates.
+    # The latter use pre-lock ceilings, not actual results; never invent ownership.
     weights=np.square(raw*env_mult*conf*elite)
+    breakout_raw=np.clip(0.20*proj+0.30*ceil+0.40*p["p95_use"].to_numpy(dtype=float)+0.10*p["p99_use"].to_numpy(dtype=float),0.1,None)
+    breakout_weights=np.square(breakout_raw*env_mult*conf)
 
     by_pos={k:np.where(pos==k)[0] for k in ["QB","RB","WR","TE","DST"]}
     flex_idx=np.where(np.isin(pos,["RB","WR","TE"]))[0]
@@ -893,29 +897,35 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
         mates[q]=np.where((teams==teams[q]) & np.isin(pos,["WR","TE"]))[0]
 
     rng=np.random.default_rng()
+    active_weights=weights
     def pick(candidates, selected):
         if len(candidates)==0: return None
         if selected:
             candidates=candidates[~np.isin(candidates,np.fromiter(selected,dtype=int))]
         if len(candidates)==0: return None
-        w=weights[candidates]; total=w.sum()
+        w=active_weights[candidates]; total=w.sum()
         if not np.isfinite(total) or total<=0: return int(rng.choice(candidates))
         return int(rng.choice(candidates,p=w/total))
 
     def fast_roster():
+        nonlocal active_weights
+        # Balanced mix of game stacks, single stacks, and independent breakout paths.
+        # Unstacked QBs are legal; no scenario is guaranteed to occur.
+        script=int(rng.choice(3,p=[0.40,0.35,0.25])) if scenario_upside else 0
+        active_weights=breakout_weights if scenario_upside and script in (1,2) else weights
         sel=set()
         q=pick(by_pos["QB"],sel)
         if q is None: return None
         sel.add(q)
         # V2: correlation is rewarded by simulations, not forced as a universal rule.
         # Most candidates still seed a pass-catcher, while a minority explore legal no-stack scripts.
-        if rng.random() < 0.78:
+        if rng.random() < (0.78 if not scenario_upside else [0.88,0.48,0.12][script]):
             m=pick(mates.get(q,np.array([],dtype=int)),sel)
             if m is not None: sel.add(m)
         # V3.1.7 game-stack seeding: in strong environments, some candidates get
         # an opponent bring-back before generic slots are filled. This creates more
         # correlated shootout candidates without requiring them in every lineup.
-        if env[q] >= 7.0 and rng.random() < 0.40:
+        if env[q] >= 7.0 and rng.random() < (0.40 if not scenario_upside else [0.60,0.25,0.08][script]):
             opp=opponent_from_game(games[q],teams[q])
             bring=np.where((teams==opp) & np.isin(pos,["RB","WR","TE"]))[0] if opp else np.array([],dtype=int)
             b=pick(bring,sel)
@@ -952,7 +962,15 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
     for _ in range(max_attempts):
         if len(bank)>=bank_size: break
         idx=fast_roster()
-        if idx is None or float(proj[idx].sum())<floor: continue
+        if idx is None: continue
+        mean_total=float(proj[idx].sum())
+        # Permit a small number of credible high-ceiling candidates to cross the
+        # standard mean floor, while retaining a hard 75% reference guardrail.
+        ceiling_total=float(p["p95_use"].to_numpy(dtype=float)[idx].sum())
+        tail_exception=(scenario_upside and mean_total>=0.75*ref and
+                        ceiling_total>=1.35*ref and
+                        np.all(proj[idx]>=2.0))
+        if mean_total<floor and not tail_exception: continue
         key=tuple(sorted(names[idx].tolist()))
         if key in bank: continue
         cand=p.iloc[idx].copy()
@@ -1409,6 +1427,7 @@ CLASSIC_DEFAULTS = {
     "classic_own_weight": 0.15, "classic_leverage_weight": 0.35,
     "classic_projection_floor": 0.88, "classic_portfolio_mode": "DFS Engine V2 Scenario Portfolio",
     "classic_bank_size": 1200, "classic_solver_seconds": 20,
+    "classic_scenario_upside": True,
     "classic_locks": [], "classic_excludes": [],
     "classic_team_rb_share": 0.55, "classic_double_rb_limit": 0,
 }
@@ -2461,6 +2480,7 @@ elif view == "Lineup Builder":
     strategy=e.selectbox("Strategy",["GPP Ceiling","Balanced","Median"],key="classic_strategy")
     own_weight=f.slider("Ownership fade weight",0.0,2.0,key="classic_own_weight",step=0.05, help="Lower values are more willing to roster strong chalk. Ownership still matters, but good high-owned plays are not heavily penalized.")
     leverage_weight=g.slider("Leverage weight",0.0,2.0,key="classic_leverage_weight",step=0.05)
+    scenario_upside=st.checkbox("Scenario upside discovery (experimental)",key="classic_scenario_upside",help="Samples conventional QB stacks and independent breakout scripts, and allows credible tail-upside candidates below the normal mean floor. Pre-lock projections only; does not alter player eligibility or portfolio QC.")
     projection_floor_pct=st.slider("Projection quality floor (% of strong reference lineup)",0.75,1.00,key="classic_projection_floor",step=0.01, help="Requires every generated lineup to retain this percentage of a strong reference projection from the current slate. 88% is a balanced GPP default.")
     rb1,rb2=st.columns(2)
     team_rb_share=rb1.slider("Max combined RB selections from one team",0.25,1.00,key="classic_team_rb_share",step=0.05,help="Portfolio-level cap across all RBs on the same team. At 55% in 20 lineups, one backfield can occupy at most 11 RB roster spots combined.")
@@ -2491,7 +2511,7 @@ elif view == "Lineup Builder":
             candidate_items, reference_proj, min_proj_required = generate_candidate_bank(
                 pool,int(bank_size),int(min_salary),50000,strategy,float(own_weight),
                 float(leverage_weight),locks,excludes,float(projection_floor_pct),
-                attempts=max(60000,int(bank_size)*120)
+                attempts=max(60000,int(bank_size)*120),scenario_upside=bool(scenario_upside)
             )
             if portfolio_mode == "DFS Engine V2 Scenario Portfolio":
                 season=int(st.session_state.get('props_season',2026)); week=int(st.session_state.get('props_week',5)); window=int(st.session_state.get('props_window',8))
@@ -2541,6 +2561,7 @@ elif view == "Lineup Builder":
             st.error("No valid portfolio found. Relax locks/exclusions, uniqueness, exposure, or salary floor.")
         else:
             st.session_state["nfl_lineups"]=lineups
+            st.session_state["classic_scenario_upside_used"]=bool(scenario_upside)
             st.session_state["nfl_rank_settings"]={"strategy":strategy,"own_weight":float(own_weight),"leverage_weight":float(leverage_weight)}
             qc=validate_portfolio(lineups,int(n_lineups),float(max_exp),int(min_unique),int(min_salary),50000)
             if qc["pass"]:
@@ -2762,6 +2783,7 @@ elif view == "Portfolio Analysis":
 
 elif view == "Winning Lineup Replay":
     from winner_replay import replay
+    from scenario_audit import audit_simulation, lineup_exposure
     st.subheader("Winning Lineup Intelligence — pregame replay")
     st.caption("Compare a real winning lineup with a preserved PRE-LOCK slate. This diagnoses eligibility, salary, projection quality, and candidate-bank misses. It does not infer pregame ownership from final scores.")
     winner_file=st.file_uploader("Winning lineup CSV (Slot,Name; nine rows)",type="csv",key="replay_winner")
@@ -2772,6 +2794,24 @@ elif view == "Winning Lineup Replay":
     ref=st.number_input("Saved strong-reference projected points",min_value=0.0,value=150.0,step=1.0,key="replay_ref") if use_ref else None
     floor=st.slider("Pregame projection floor",0.75,1.0,0.88,0.01,key="replay_floor") if use_ref else .88
     st.download_button("Download winning-lineup input template",pd.DataFrame({"Slot":["QB","RB","RB","WR","WR","WR","TE","FLEX","DST"],"Name":[""]*9}).to_csv(index=False),"winner_template.csv","text/csv")
+    st.markdown("#### Historical simulation and lineup audit")
+    st.caption("Use the saved same-slate simulation and generated lineup exports. This is a retrospective diagnostic, not a pre-lock forecast validation unless the files were saved before lock.")
+    simulation_file=st.file_uploader("Saved simulation CSV (Name, Mean, P95, optional Actual)",type="csv",key="replay_simulation")
+    lineup_export_file=st.file_uploader("Saved optimizer lineup export (Players column)",type="csv",key="replay_lineups")
+    if winner_file is not None and simulation_file is not None:
+        try:
+            sim_audit=audit_simulation(winner_file,pd.read_csv(simulation_file))
+            st.dataframe(sim_audit,use_container_width=True,hide_index=True)
+            if 'Above model P95' in sim_audit:
+                st.metric("Winning players above model P95",int(sim_audit['Above model P95'].sum()))
+            st.download_button("Download scenario diagnostic",sim_audit.to_csv(index=False),"scenario_diagnostic.csv","text/csv")
+        except Exception as exc: st.error(f"Simulation audit error: {exc}")
+    if winner_file is not None and lineup_export_file is not None:
+        try:
+            exp_audit=lineup_exposure(winner_file,pd.read_csv(lineup_export_file))
+            st.dataframe(exp_audit,use_container_width=True,hide_index=True)
+            st.download_button("Download winning-player exposure",exp_audit.to_csv(index=False),"winner_exposure_audit.csv","text/csv")
+        except Exception as exc: st.error(f"Lineup exposure audit error: {exc}")
     if winner_file is not None:
         if pregame_file is None:
             st.warning("Upload the archived pre-lock player pool for a valid historical replay. Current or bundled Week 4 data must NOT be treated as last week's pregame projections.")
