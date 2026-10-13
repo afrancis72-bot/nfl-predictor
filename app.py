@@ -1879,7 +1879,7 @@ st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.12")
 st.caption("DraftKings NFL DFS • correlated game scripts • variance + uncertainty • scenario portfolios • calibration")
 st.warning("V2.0.12 RB portfolio controls + V2.0.11 injury safety: OUT and DOUBTFUL (plus IR/inactive/suspended/PUP/NFI) are hard-blocked before simulation/optimization; QUESTIONABLE remains eligible but flagged. Slate re-activation invalidates prior portfolios. Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; current-week projection integrity is required for optimizer eligibility; DK PPG alone never qualifies as a weekly projection. Re-check final injury news and ownership before contest entry.")
 
-view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis","Player Props Lab"])
+view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis","Winning Lineup Replay","Player Props Lab"])
 
 if view == "Player Props Lab":
     st.subheader("Player Props Lab — matchup-adjusted statistical predictions")
@@ -2758,3 +2758,36 @@ elif view == "Portfolio Analysis":
         summary=gx.groupby("Game",as_index=False).agg(Lineups=("Lineup","nunique"),Max_players_in_one_lineup=("Players","max"))
         summary["Lineup exposure %"]=100*summary["Lineups"]/len(lineups)
         st.dataframe(summary.sort_values("Lineup exposure %",ascending=False),use_container_width=True,hide_index=True)
+
+
+elif view == "Winning Lineup Replay":
+    from winner_replay import replay
+    st.subheader("Winning Lineup Intelligence — pregame replay")
+    st.caption("Compare a real winning lineup with a preserved PRE-LOCK slate. This diagnoses eligibility, salary, projection quality, and candidate-bank misses. It does not infer pregame ownership from final scores.")
+    winner_file=st.file_uploader("Winning lineup CSV (Slot,Name; nine rows)",type="csv",key="replay_winner")
+    pregame_file=st.file_uploader("Archived PRE-LOCK player projections / pool CSV (recommended)",type="csv",key="replay_pool")
+    actual_file=st.file_uploader("Optional actual DK points CSV (Name,Actual)",type="csv",key="replay_actual")
+    bank_file=st.file_uploader("Optional saved candidate bank CSV",type="csv",key="replay_bank")
+    use_ref=st.checkbox("Check projection quality floor against a saved pregame reference",value=False,key="replay_use_ref")
+    ref=st.number_input("Saved strong-reference projected points",min_value=0.0,value=150.0,step=1.0,key="replay_ref") if use_ref else None
+    floor=st.slider("Pregame projection floor",0.75,1.0,0.88,0.01,key="replay_floor") if use_ref else .88
+    st.download_button("Download winning-lineup input template",pd.DataFrame({"Slot":["QB","RB","RB","WR","WR","WR","TE","FLEX","DST"],"Name":[""]*9}).to_csv(index=False),"winner_template.csv","text/csv")
+    if winner_file is not None:
+        if pregame_file is None:
+            st.warning("Upload the archived pre-lock player pool for a valid historical replay. Current or bundled Week 4 data must NOT be treated as last week's pregame projections.")
+        else:
+            try:
+                detail,report=replay(winner_file,pd.read_csv(pregame_file),actual_file,ref,floor,bank_file)
+                a,b,c,d=st.columns(4)
+                a.metric("Matched players",f"{report['matched_players']}/9")
+                b.metric("Salary",f"${report['salary']:,.0f}" if pd.notna(report['salary']) else "Unknown")
+                c.metric("Pregame projection",f"{report['projected_points']:.1f}" if pd.notna(report['projected_points']) else "Unknown")
+                d.metric("Candidate bank",report['candidate_bank'])
+                if report['rejection_reasons']:
+                    for reason in report['rejection_reasons']: st.error(reason)
+                else: st.success("No confirmed pregame rejection identified from supplied evidence. This does not prove the optimizer generated the lineup.")
+                st.dataframe(detail,use_container_width=True,hide_index=True)
+                st.info(report['ownership_warning'])
+                st.download_button("Download replay player audit",detail.to_csv(index=False),"winner_replay_audit.csv","text/csv")
+                st.download_button("Download replay findings",json.dumps(report,indent=2,default=str),"winner_replay_findings.json","application/json")
+            except Exception as exc: st.error(f"Replay input error: {exc}")
