@@ -234,7 +234,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__MODEL_VERSION__']='Stat-driven V3.9: bounded team pace and opportunity-linked TD distributions'
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.10: explicit non-rostered QB passing accounting'
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
@@ -530,8 +530,22 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             if not np.array_equal(rush_td,np.sum(rush_td_alloc,axis=1)+qb_rush_td+oth_rush_td):
                 raise ValueError(f'V3.4 rushing-TD conservation failed for {team}')
 
-            # QB DK score.
+            # Record team passing even if DraftKings has no eligible QB for this
+            # team. This is accounting only, never a selectable DFS player.
+            # Receiver TDs and opposing DST scores depend on these team events.
             qidx=name_index.get((qname,team,'QB')) if qbrow is not None else None
+            if qidx is None:
+                stat_draws[f'__OTHER_QB_PASSING__|{team}']={
+                    'pass_attempts':attempts,
+                    'completions':team_comp,
+                    'passing_yards':team_rec_yd,
+                    'passing_tds':pass_td,
+                    'interceptions':ints,
+                    'sacks_taken':sacks,
+                    'carries':carr[:,-2],
+                    'rushing_tds':qb_rush_td,
+                }
+            # QB DK score.
             if qidx is not None:
                 qb_carries=carr[:,-2]; qb_ypc=_safe(qr.get('rushing_yards_pg') if qr is not None else np.nan,15)/max(qb_carry,.5)
                 qb_rushyd=np.where(qb_carries>0,rng.normal(qb_carries*qb_ypc,np.sqrt(np.maximum(qb_carries,1))*2.2,ns),0.)
