@@ -41,6 +41,25 @@ def _safe(v, default):
 def _multinomial_rows(rng, totals, probs):
     return np.asarray([rng.multinomial(int(max(0,n)), probs) for n in totals],dtype=np.int16)
 
+def _team_scoring_budget(implied_points, historical_pass_tds, historical_rush_tds, expected_field_goals=1.65):
+    """Estimate team offensive TDs without treating every implied point as a TD.
+
+    Assumptions: 7 points per TD (PAT included), 3 per FG. Historical
+    touchdown production is a prior, not an extra source of touchdowns.
+    This is a conservative scoring-budget heuristic pending walk-forward
+    calibration, not a fitted predictive model.
+    """
+    implied = float(np.clip(_safe(implied_points, 22.0), 7.0, 42.0))
+    historical = float(np.clip(_safe(historical_pass_tds, 1.45)
+                               + _safe(historical_rush_tds, 0.85), 0.3, 5.0))
+    field_goals = float(np.clip(expected_field_goals, 0.5, 3.0))
+    market_tds = max(0.2, (implied - 3.0 * field_goals) / 7.0)
+    # Market environment receives more weight than potentially stale player rates.
+    expected_tds = float(np.clip(0.70 * market_tds + 0.30 * historical, 0.35, 4.8))
+    # Match the expected implied score as closely as possible without negative FGs.
+    field_goals = float(np.clip((implied - 7.0 * expected_tds) / 3.0, 0.0, 3.5))
+    return expected_tds, field_goals
+
 def _td_allocation_with_capacity(rng, n_tds, weights, capacities):
     """Allocate TDs among players with actual eligible scoring events.
 
@@ -215,7 +234,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__MODEL_VERSION__']='Stat-driven V3.6: event-capacity TD accounting and QB TD shrinkage'
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.7: team scoring budget and event-capacity accounting'
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
@@ -352,9 +371,22 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             rec_counts=np.column_stack([player_rec[j][1] for j in player_rec] + [oth_c])
             # Shared TD/turnover scoring. Implied points anchor scoring environment.
             implied=_safe(pd.to_numeric(tx.get('team_implied_points'),errors='coerce').dropna().median() if 'team_implied_points' in tx else np.nan,22.0)
-            expected_td=np.clip((.55*(pass_td_pg+max(.3,team_rush*.035))+.45*(implied/7.0)),1.0,5.0)
+            # A team's implied total includes field goals; do not convert every
+            # seven implied points into a touchdown. Keep one shared team TD/FG
+            # budget for offense and opposing DST, independent of roster size.
+            rush_td_prior=max(.3,team_rush*.035)
+            expected_td,fg_mean=_team_scoring_budget(implied,pass_td_pg,rush_td_prior)
             total_td=np.minimum(rng.poisson(expected_td,size=ns), np.maximum(0,attempts+rushes))
-            pass_share=np.clip(pass_td_pg/max(pass_td_pg+max(.3,team_rush*.035),.1),.35,.78)
+            fgs=rng.poisson(fg_mean,size=ns)
+            stat_draws[f'__TEAM_SCORING__|{team}']={
+                'implied_points':float(implied),
+                'expected_offensive_tds':float(expected_td),
+                'expected_field_goals':float(fg_mean),
+                'simulated_offensive_tds':total_td,
+                'simulated_field_goals':fgs,
+                'simulated_offensive_points':7*total_td+3*fgs,
+            }
+            pass_share=np.clip(pass_td_pg/max(pass_td_pg+rush_td_prior,.1),.35,.78)
             pass_td=rng.binomial(total_td,pass_share)
             # A passing touchdown must be a completed pass. Preserve the team
             # touchdown budget by moving any excess to rushing opportunities.
@@ -473,9 +505,6 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 takeaways=ints+fum
                 def_td=rng.binomial(np.minimum(takeaways,1),.075)
                 saf=rng.binomial(1,.012,size=ns)
-                # Field goals fill some of the gap between TD expectation and implied scoring.
-                fg_mean=max(0.25,(implied-7*expected_td)/3.0)
-                fgs=rng.poisson(fg_mean,size=ns)
                 pts_allowed=7*total_td+3*fgs+2*saf
                 dst_dk=sacks+2*ints+2*fum+6*def_td+2*saf+_pa_points(pts_allowed)
                 out[:,didx]=dst_dk.astype(np.float32)
