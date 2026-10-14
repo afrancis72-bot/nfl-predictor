@@ -234,7 +234,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__MODEL_VERSION__']='Stat-driven V3.7: team scoring budget and event-capacity accounting'
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.8: conserved team play volume and scoring budget'
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
@@ -290,15 +290,34 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 key=(str(p['_name']),team); rr.append(rm.loc[key] if key in rm.index else None)
             target_rates=np.array([_safe(z.get('targets_pg') if z is not None else np.nan,0) for z in rr],float)
             carry_rates=np.array([_safe(z.get('carries_pg') if z is not None else np.nan,0) for z in rr],float)
-            team_rush=max(12.0, carry_rates.sum()+_safe(qr.get('carries_pg') if qr is not None else np.nan,3.0))
-            if out_keys:
-                all_team=r[(r['team']==team)&(r['position'].astype(str).str.upper().isin(['RB','WR','TE']))]
-                all_carries=pd.to_numeric(all_team['carries_pg'],errors='coerce').fillna(0).clip(lower=0).sum()
-                team_rush=max(team_rush,all_carries+_safe(qr.get('carries_pg') if qr is not None else np.nan,3.0))
+            # Historical player rates may span different depth charts and cannot
+            # safely be summed into an unconstrained team rushing workload.
+            # Derive a team-level play budget first, then allocate those plays.
+            qb_carry_base=max(0.,_safe(qr.get('carries_pg') if qr is not None else np.nan,3.0))
+            active_rush=float(np.maximum(carry_rates,0.).sum())+qb_carry_base
+            # Include OUT players only to estimate the original team workload;
+            # their carries will be redistributed once, not added as new plays.
+            out_team=r[(r['team']==team)&(r['position'].astype(str).str.upper().isin(['RB','WR','TE']))].copy()
+            out_team=out_team[[ (str(z['_name']),team) in redistributable_out for _,z in out_team.iterrows() ]] if redistributable_out else out_team.iloc[0:0]
+            missing_rush=float(pd.to_numeric(out_team.get('carries_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
+            observed_rush=active_rush+missing_rush
+            # A conservative team-play prior (65 plays) is used because the
+            # input has no verified team-level plays/game feed. The 42-rush cap
+            # prevents overlapping player samples from inventing 50+ rushes.
+            inferred_rush=max(12.,65.-max(8.,pass_pg+sack_pg))
+            team_rush=float(np.clip(.35*observed_rush+.65*inferred_rush,12.,42.))
+            expected_dropbacks=float(np.clip(pass_pg+sack_pg,12.,55.))
+            expected_plays=float(np.clip(expected_dropbacks+team_rush,48.,78.))
 
             # Script: positive means this team trails -> more passing, less rushing.
+            # Sample one team play budget. Passing and rushing draw from the same
+            # budget rather than independent Poissons that inflate total plays.
             team_script=script if ti==0 else -script
-            dropbacks=np.maximum(8,rng.poisson(np.maximum(8,(pass_pg+sack_pg)*pace*np.exp(.09*team_script))))
+            team_plays=np.maximum(12,rng.poisson(expected_plays*pace))
+            pass_fraction=np.clip(expected_dropbacks/max(expected_dropbacks+team_rush,1.),.28,.84)
+            pass_fraction_scenario=np.clip(pass_fraction*np.exp(.12*team_script),.25,.88)
+            dropbacks=rng.binomial(team_plays,pass_fraction_scenario)
+            dropbacks=np.maximum(0,dropbacks)
             # DST pass-rush strength is conservatively inferred from its DFS baseline until
             # a dedicated team sack-rate table is available; QB sack tendency supplies offense side.
             dstrow=x[(x.TeamAbbrev==opp)&(x.Position.astype(str)=='DST')]
@@ -307,7 +326,18 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             sack_rate=np.clip((sack_pg/max(pass_pg+sack_pg,1))*dst_sack_mult,.025,.14)
             sacks=rng.binomial(dropbacks,sack_rate)
             attempts=np.maximum(0,dropbacks-sacks)
-            rushes=np.maximum(5,rng.poisson(np.maximum(5,team_rush*pace*np.exp(-.10*team_script))))
+            rushes=team_plays-dropbacks
+            stat_draws[f'__TEAM_PLAYS__|{team}']={
+                'expected_plays':expected_plays,
+                'observed_rush_rate_sum':observed_rush,
+                'inferred_rush_prior':inferred_rush,
+                'expected_rushes':team_rush,
+                'simulated_plays':team_plays,
+                'simulated_dropbacks':dropbacks,
+                'simulated_rushes':rushes,
+            }
+            if not np.array_equal(team_plays,dropbacks+rushes):
+                raise ValueError(f'V3.8 team-play conservation failed for {team}')
 
             # Target allocation from one team pass-attempt budget.
             # Separate confirmed-OUT historical usage from the genuine OTHER bucket.
