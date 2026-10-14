@@ -234,7 +234,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__MODEL_VERSION__']='Stat-driven V3.8: conserved team play volume and scoring budget'
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.9: bounded team pace and opportunity-linked TD distributions'
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
@@ -313,7 +313,10 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # Sample one team play budget. Passing and rushing draw from the same
             # budget rather than independent Poissons that inflate total plays.
             team_script=script if ti==0 else -script
-            team_plays=np.maximum(12,rng.poisson(expected_plays*pace))
+            # Conservative predictive bounds while a fitted team-pace feed is unavailable.
+            # A Poisson/lognormal mixture previously produced 100+ offensive plays.
+            # Truncation is a guardrail, NOT a historically fitted distribution.
+            team_plays=np.clip(rng.poisson(expected_plays*pace),40,90)
             pass_fraction=np.clip(expected_dropbacks/max(expected_dropbacks+team_rush,1.),.28,.84)
             pass_fraction_scenario=np.clip(pass_fraction*np.exp(.12*team_script),.25,.88)
             dropbacks=rng.binomial(team_plays,pass_fraction_scenario)
@@ -333,6 +336,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'inferred_rush_prior':inferred_rush,
                 'expected_rushes':team_rush,
                 'simulated_plays':team_plays,
+                'team_plays_guardrail_min':40,
+                'team_plays_guardrail_max':90,
                 'simulated_dropbacks':dropbacks,
                 'simulated_rushes':rushes,
             }
@@ -406,11 +411,17 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # budget for offense and opposing DST, independent of roster size.
             rush_td_prior=max(.3,team_rush*.035)
             expected_td,fg_mean=_team_scoring_budget(implied,pass_td_pg,rush_td_prior)
-            total_td=np.minimum(rng.poisson(expected_td,size=ns), np.maximum(0,attempts+rushes))
+            # Tie touchdown opportunities to the *same simulated offensive plays*.
+            # A binomial draw avoids the independent Poisson tail that previously
+            # produced 10-11 offensive TDs while keeping a plausible high-scoring tail.
+            # Eight is a conservative guardrail, not a claim of a fitted NFL maximum.
+            td_probability=float(np.clip(expected_td/max(expected_plays,1.),.002,.095))
+            total_td=np.minimum(rng.binomial(team_plays,td_probability),8)
             fgs=rng.poisson(fg_mean,size=ns)
             stat_draws[f'__TEAM_SCORING__|{team}']={
                 'implied_points':float(implied),
                 'expected_offensive_tds':float(expected_td),
+                'td_probability_per_team_play':td_probability,
                 'expected_field_goals':float(fg_mean),
                 'simulated_offensive_tds':total_td,
                 'simulated_field_goals':fgs,
