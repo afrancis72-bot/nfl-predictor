@@ -41,6 +41,102 @@ def _safe(v, default):
 def _multinomial_rows(rng, totals, probs):
     return np.asarray([rng.multinomial(int(max(0,n)), probs) for n in totals],dtype=np.int16)
 
+# Name variants are only used after exact current-team matching fails.
+_FIRST_NAMES = {"matt": "matthew", "mike": "michael", "josh": "joshua", "will": "william", "rob": "robert"}
+
+def _identity_name(name):
+    parts = _clean_name(name).split()
+    if parts:
+        parts[0] = _FIRST_NAMES.get(parts[0], parts[0])
+    return " ".join(parts)
+
+def _volume(row, pos):
+    fields = ('pass_attempts_pg', 'carries_pg') if pos == 'QB' else ('targets_pg', 'carries_pg')
+    return sum(max(0., _safe(row.get(f), 0.)) for f in fields)
+
+def _role_proxy(player):
+    """Conservative explicit prior for no-history depth players, not a measured rate.
+
+    The ceiling is deliberately small: without independent role evidence we must
+    not turn a high DK projection into a large invented historical workload.
+    """
+    pos = str(player['Position']).upper()
+    proj = max(0., _safe(player.get('proj'), 0.))
+    base = dict(player=str(player['Name']), team=_team(player['TeamAbbrev']),
+                position=pos, games_played=0, game='', source='ROLE_PROXY_NO_HISTORY',
+                latest_observed_season=np.nan, latest_observed_week=np.nan)
+    for col in ('pass_attempts_pg','completions_pg','pass_yards_pg','passing_tds_pg',
+                'interceptions_pg','sacks_suffered_pg','carries_pg','rushing_yards_pg',
+                'rushing_tds_pg','targets_pg','receptions_pg','receiving_yards_pg',
+                'receiving_tds_pg','fumbles_lost_pg'):
+        base[col] = 0.
+    if pos == 'QB':
+        base.update(pass_attempts_pg=18., completions_pg=11., pass_yards_pg=130.,
+                    passing_tds_pg=.65, interceptions_pg=.6, sacks_suffered_pg=2.,
+                    carries_pg=1.5, rushing_yards_pg=6.)
+    elif pos == 'RB':
+        base.update(carries_pg=min(3., max(.35, proj / 2.8)),
+                    rushing_yards_pg=min(12., max(1., proj * 1.5)),
+                    targets_pg=min(1.5, max(.2, proj / 4.5)),
+                    receptions_pg=min(1., max(.1, proj / 6.)),
+                    receiving_yards_pg=min(8., max(1., proj)))
+    elif pos in ('WR', 'TE'):
+        base.update(targets_pg=min(2., max(.3, proj / 3.5)),
+                    receptions_pg=min(1.3, max(.2, proj / 5.)),
+                    receiving_yards_pg=min(15., max(2., proj * 1.5)))
+    return base
+
+def _resolve_baselines(pool, rates):
+    """Match exact-team first; uniquely identified transfers second; proxy last.
+
+    Reject ambiguous names rather than linking the wrong athlete. Returns a
+    per-player provenance report, exposed in stat_draws metadata.
+    """
+    r = rates.copy()
+    r['team'] = r['team'].map(_team)
+    r['_name'] = r['player'].map(_clean_name)
+    r['_identity'] = r['player'].map(_identity_name)
+    report = []
+    additions = []
+    transferred = set()
+    replaced = set()
+    eligible = pool[pool['Position'].astype(str).isin(['QB','RB','WR','TE'])]
+    for _, player in eligible.iterrows():
+        name = _clean_name(player['Name']); team = _team(player['TeamAbbrev'])
+        pos = str(player['Position']).upper()
+        current = r[(r['_name'] == name) & (r['team'] == team) & (r['position'].astype(str).str.upper() == pos)]
+        if not current.empty and _volume(current.iloc[-1], pos) >= .05:
+            continue
+        if not current.empty:
+            replaced.add((name, team))
+        # Prefer uniquely identified historical player of the same position.
+        key = _identity_name(player['Name'])
+        candidates = r[(r['_identity'] == key) & (r['position'].astype(str).str.upper() == pos)]
+        identities = candidates['_name'].dropna().unique()
+        if len(identities) > 1:
+            raise ValueError(f'Ambiguous historical identity for {player["Name"]} ({team}); manual player ID needed.')
+        candidates = candidates[candidates.apply(lambda z: _volume(z, pos) >= .05, axis=1)]
+        if not candidates.empty:
+            src = candidates.sort_values('games_played', ascending=False).iloc[0].copy()
+            new = src.to_dict(); old_team = str(src['team'])
+            new.update(player=str(player['Name']), team=team, position=pos,
+                       _name=name, _identity=key, source='HISTORICAL_TRANSFER_OR_ALIAS')
+            additions.append(new)
+            if old_team != team:
+                transferred.add((str(src['_name']), old_team))
+            report.append(dict(player=str(player['Name']), team=team, method='historical_transfer_or_alias', previous_team=old_team))
+        else:
+            new = _role_proxy(player)
+            new.update(_name=name, _identity=key)
+            additions.append(new)
+            report.append(dict(player=str(player['Name']), team=team, method='conservative_role_proxy', previous_team=''))
+    if transferred or replaced:
+        removed = transferred | replaced
+        r = r[~r.apply(lambda z: (str(z['_name']), str(z['team'])) in removed, axis=1)].copy()
+    if additions:
+        r = pd.concat([r, pd.DataFrame(additions)], ignore_index=True)
+    return r, report
+
 def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None):
     """Return (sim_players, dk_points, stat_draws).
 
@@ -55,8 +151,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     if out_keys:
         x=x[[(_clean_name(row['Name']),_team(row['TeamAbbrev'])) not in out_keys
              for _,row in x.iterrows()]].copy().reset_index(drop=True)
-    r=rates.copy()
-    r['team']=r['team'].map(_team); r['_name']=r['player'].map(_clean_name)
+    r, baseline_report = _resolve_baselines(x, rates)
     x['TeamAbbrev']=x['TeamAbbrev'].map(_team); x['_name']=x['Name'].map(_clean_name)
     statcols=[c for c in r.columns if c not in {'player','team','position','game','source','latest_observed_season','latest_observed_week'}]
     # Never generate zero-volume player stats and assign arbitrary TDs.
@@ -98,7 +193,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__MODEL_VERSION__']='Stat-driven V3.2: scenario-opportunity TD allocation + QB rushing TDs'
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.3: verified transfer identity + conservative role proxies'
+    stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
         'out_count':len(out_keys),
