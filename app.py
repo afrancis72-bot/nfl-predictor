@@ -45,7 +45,7 @@ def build_stat_sim_audit_csv(sim_players, dk_points, stat_draws, max_sims=1000):
     if not frames:
         return None
     audit=pd.concat(frames,ignore_index=True,sort=False)
-    audit['engine_version']=str(stat_draws.get('__MODEL_VERSION__','Stat-driven unknown'))
+    audit['engine_version']='V3.1'
     return audit.to_csv(index=False)
 
 import io
@@ -685,10 +685,33 @@ def opponent_from_game(game, team):
     except Exception:
         return ""
 
+def qb_opposing_dst_conflict(df):
+    """Hard Classic DFS rule: QB and opposing DST cannot coexist.
+
+    Resolve opponents from the slate matchup, not from an unreliable DST label.
+    Missing/malformed matchups fail closed so unsafe lineups cannot be exported.
+    """
+    qb=df[df["Position"].astype(str).eq("QB")]
+    dst=df[df["Position"].astype(str).eq("DST")]
+    if len(qb)!=1 or len(dst)!=1:
+        return True
+    q=qb.iloc[0]; d=dst.iloc[0]
+    qt=str(q.get("TeamAbbrev","")).strip().upper()
+    dt=str(d.get("TeamAbbrev","")).strip().upper()
+    if not qt or not dt or qt=="NAN" or dt=="NAN":
+        return True
+    opp=str(q.get("opponent","")).strip().upper()
+    if not opp or opp in {"NAN","NONE"}:
+        opp=str(opponent_from_game(q.get("game",""),qt)).strip().upper()
+    if not opp or opp in {"NAN","NONE"}:
+        return True
+    return dt==opp
+
 def lineup_valid(df, min_salary, max_salary, stack_required=True):
     if len(df) != 9: return False
     counts = df["Position"].value_counts().to_dict()
     if counts.get("QB",0)!=1 or counts.get("DST",0)!=1: return False
+    if qb_opposing_dst_conflict(df): return False
     if counts.get("RB",0) < 2 or counts.get("WR",0) < 3 or counts.get("TE",0) < 1: return False
     flex_count = counts.get("RB",0)+counts.get("WR",0)+counts.get("TE",0)
     if flex_count != 7: return False
@@ -945,6 +968,10 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
         if sal<min_salary or sal>max_salary: return None
         d=idx[pos[idx]=="DST"]
         if len(d)!=1: return None
+        # Reject QB versus opposing DST before entering the candidate bank.
+        qb_opp=opponent_from_game(games[q],teams[q])
+        if not qb_opp or teams[d[0]]==qb_opp:
+            return None
         return idx
 
     # Fast calibration: enough samples for a stable 99th-percentile reference,
@@ -1035,6 +1062,8 @@ def validate_portfolio(lineups, n_lineups, max_exposure, min_unique, min_salary,
     for i,l in enumerate(lineups,1):
         if not lineup_valid(l,min_salary,max_salary,True):
             issues.append(f"Lineup {i} fails lineup validity rules.")
+        if qb_opposing_dst_conflict(l):
+            issues.append(f"Lineup {i}: QB faces selected DST (or QB opponent cannot be verified).")
         names=set(l["Name"].astype(str)); keys.append(tuple(sorted(names)))
         for name in names: counts[name]=counts.get(name,0)+1
     over={k:v for k,v in counts.items() if v>max_count}
@@ -2432,7 +2461,7 @@ elif view == "Simulation":
                 summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
                 meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source','simulation_engine'] if c in sp.columns]].copy()
                 summary=meta.merge(summary,on='Name',how='left')
-                summary['engine_version']=(str((st.session_state.get('classic_stat_draws') or {}).get('__MODEL_VERSION__','Stat-driven unknown')) if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
+                summary['engine_version']=('V3.2' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
                 summary['injury_out_count']=engine_out_count if engine_out_count>=0 else 0
                 summary['injury_out_players']='; '.join(engine_out_players)
                 if engine_out_count>=0:
