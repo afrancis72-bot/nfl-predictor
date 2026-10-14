@@ -1497,11 +1497,26 @@ def parse_showdown_csv(uploaded):
     flex=flex.merge(cpt,on=["Name","TeamAbbrev"],how="left")
     flex=flex.rename(columns={"Salary":"FLEX Salary","ID":"FLEX ID"})
     flex=flex[~flex["Status"].isin(["OUT","IR"])].copy()
-    # Remove zero-production backup QBs when that team has an active QB with a scoring baseline.
+    # Slate-local QB depth-chart safety gate. DK PPG is a historical signal, NOT
+    # a live starter feed. Only automatically remove a reserve when the evidence
+    # is strong; ambiguous QB rooms are explicitly flagged in the UI below.
+    qb_warnings=[]
     for tm in flex["TeamAbbrev"].dropna().unique():
-        active_qb=(flex["TeamAbbrev"].eq(tm) & flex["Position"].eq("QB") & (flex["AvgPointsPerGame"].fillna(0)>0))
-        if active_qb.any():
-            flex=flex[~(flex["TeamAbbrev"].eq(tm) & flex["Position"].eq("QB") & (flex["AvgPointsPerGame"].fillna(0)<=0))].copy()
+        qbs=flex[(flex["TeamAbbrev"]==tm) & (flex["Position"]=="QB")].copy()
+        if len(qbs)<2: continue
+        qbs=qbs.sort_values("AvgPointsPerGame",ascending=False)
+        leader=qbs.iloc[0]; leader_ppg=float(leader["AvgPointsPerGame"]) if pd.notna(leader["AvgPointsPerGame"]) else 0.
+        if leader_ppg>=10:
+            # Remove clearly non-playing reserves, even when they scored points
+            # in an earlier game. Ambiguous situations require manual review.
+            low=qbs[(qbs["AvgPointsPerGame"].fillna(0)<=leader_ppg*.30) & (qbs["Name"]!=leader["Name"])]
+            flex=flex[~((flex["TeamAbbrev"]==tm)&(flex["Position"]=="QB")&(flex["Name"].isin(low["Name"])))].copy()
+            remaining=qbs[~qbs["Name"].isin(low["Name"])]
+            if len(remaining)>1:
+                qb_warnings.append(f"{tm}: multiple QBs have material historical production; verify starter and exclude backups before building.")
+        else:
+            qb_warnings.append(f"{tm}: QB starter cannot be inferred from DraftKings historical points; verify starter before building.")
+    flex.attrs["qb_warnings"]=qb_warnings
     flex=flex.dropna(subset=["CPT Salary","CPT ID","FLEX Salary","FLEX ID"])
     flex["key"]=flex["Name"].map(_clean_name)+"|"+flex["TeamAbbrev"]
     return flex.reset_index(drop=True),game,teams
@@ -1533,6 +1548,9 @@ def apply_showdown_current_role_layer(x):
         "Alvin Kamara":("RB1",1.00,True),
         "Kendre Miller":("RB2 / expanded role",0.76,True),
     }
+    # The legacy role map is specific to ATL/NO; never apply it to a different game.
+    slate_teams=set(y["TeamAbbrev"].dropna().astype(str))
+    if slate_teams!={"ATL","NO"}: role_map={}
     y["Current Role"]="Unverified / model role"
     y["Opportunity Multiplier"]=1.0
     y["Role CPT Eligible"]=True
@@ -2669,6 +2687,8 @@ elif view == "Single Game Showdown":
     else:
         try:
             flex,game_label,sd_teams=parse_showdown_csv(uploaded)
+            qb_warnings=flex.attrs.get("qb_warnings",[])
+            for warning in qb_warnings: st.warning("QB starter verification required: "+warning)
             players=showdown_projection_table(flex,comp,mc,dst)
             st.success(f"Detected {game_label} • {' vs '.join(sd_teams)} • {len(players)} active FLEX-eligible players")
             model_matches=int((players["Projection Source"]=="NFL weekly model").sum())
