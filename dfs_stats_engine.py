@@ -41,6 +41,28 @@ def _safe(v, default):
 def _multinomial_rows(rng, totals, probs):
     return np.asarray([rng.multinomial(int(max(0,n)), probs) for n in totals],dtype=np.int16)
 
+def _td_allocation_with_capacity(rng, n_tds, weights, capacities):
+    """Allocate TDs among players with actual eligible scoring events.
+
+    One catch/carry cannot generate multiple touchdowns.  `weights` may
+    incorporate role/goal-line evidence but never overrides event capacity.
+    """
+    remaining=np.asarray(capacities,dtype=np.int64).copy()
+    weights=np.asarray(weights,dtype=float)
+    result=np.zeros(len(remaining),dtype=np.int16)
+    if n_tds>int(remaining.sum()):
+        raise ValueError('More touchdowns than eligible receptions/carries')
+    for _ in range(int(n_tds)):
+        eligible=remaining>0
+        probs=np.where(eligible,np.maximum(weights,0.),0.)
+        if probs.sum()<=0:
+            probs=eligible.astype(float)
+        probs=probs/probs.sum()
+        idx=int(rng.choice(len(probs),p=probs))
+        result[idx]+=1
+        remaining[idx]-=1
+    return result
+
 # Name variants are only used after exact current-team matching fails.
 _FIRST_NAMES = {"matt": "matthew", "mike": "michael", "josh": "joshua", "will": "william", "rob": "robert"}
 
@@ -193,7 +215,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__MODEL_VERSION__']='Stat-driven V3.5: QB TD shrinkage and role-aware opportunity'
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.6: event-capacity TD accounting and QB TD shrinkage'
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
@@ -326,12 +348,18 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             oth_y*=scale
             for j in player_rec: player_rec[j]=(player_rec[j][0],player_rec[j][1],player_rec[j][2]*scale)
 
+            # Cache each scenario's completed passes; TD catches must be actual catches.
+            rec_counts=np.column_stack([player_rec[j][1] for j in player_rec] + [oth_c])
             # Shared TD/turnover scoring. Implied points anchor scoring environment.
             implied=_safe(pd.to_numeric(tx.get('team_implied_points'),errors='coerce').dropna().median() if 'team_implied_points' in tx else np.nan,22.0)
             expected_td=np.clip((.55*(pass_td_pg+max(.3,team_rush*.035))+.45*(implied/7.0)),1.0,5.0)
             total_td=np.minimum(rng.poisson(expected_td,size=ns), np.maximum(0,attempts+rushes))
             pass_share=np.clip(pass_td_pg/max(pass_td_pg+max(.3,team_rush*.035),.1),.35,.78)
-            pass_td=rng.binomial(total_td,pass_share); rush_td=total_td-pass_td
+            pass_td=rng.binomial(total_td,pass_share)
+            # A passing touchdown must be a completed pass. Preserve the team
+            # touchdown budget by moving any excess to rushing opportunities.
+            pass_td=np.minimum(pass_td,team_comp.astype(np.int64))
+            rush_td=total_td-pass_td
             int_rate=np.clip(int_pg/max(pass_pg,1),.005,.065); ints=rng.binomial(attempts,int_rate)
 
             # Allocate scores using *scenario-specific* opportunity rather than
@@ -345,9 +373,13 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             qb_carries=carr[:,-2]
             for si in range(ns):
                 if pass_td[si]:
-                    weights=np.asarray(targ[si],dtype=float)+.05
-                    weights/=weights.sum()
-                    rec_td_full[si]=rng.multinomial(int(pass_td[si]),weights)
+                    # Target share alone can assign a receiving TD to a player
+                    # with zero catches or multiple TDs on one reception.
+                    # Use actual catches as capacity and scoring opportunity.
+                    catches=rec_counts[si]
+                    weights=np.asarray(catches,dtype=float)+.05*(catches>0)
+                    rec_td_full[si]=_td_allocation_with_capacity(
+                        rng,int(pass_td[si]),weights,catches)
                 if rush_td[si]:
                     # TD share is driven by both scenario carries and observed
                     # goal-line effectiveness; a QB's scramble share is not
@@ -370,7 +402,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                     rush_weights=np.where(np.asarray(carr[si])>0,rush_weights,0.)
                     if rush_weights.sum()<=0: rush_weights=np.asarray(carr[si],dtype=float)
                     rush_weights/=rush_weights.sum()
-                    rush_td_full[si]=rng.multinomial(int(rush_td[si]),rush_weights)
+                    rush_td_full[si]=_td_allocation_with_capacity(
+                        rng,int(rush_td[si]),rush_weights,carr[si])
             rec_td_alloc=rec_td_full[:,:len(skill)]
             rush_td_alloc=rush_td_full[:,:len(skill)]
             qb_rush_td=rush_td_full[:,-2]
@@ -404,6 +437,12 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             skill_carries=np.sum(carr[:,:len(skill)],axis=1) if len(skill) else np.zeros(ns,dtype=int)
             if not np.array_equal(rushes,skill_carries+carr[:,-2]+oth_carries):
                 raise ValueError(f'V3.4 rush-attempt conservation failed for {team}')
+            if not np.all(rec_td_full<=rec_counts):
+                raise ValueError(f'V3.6 receiving TDs exceed catches for {team}')
+            if not np.all(rush_td_full<=carr):
+                raise ValueError(f'V3.6 rushing TDs exceed carries for {team}')
+            if not np.array_equal(pass_td,np.sum(rec_td_full,axis=1)):
+                raise ValueError(f'V3.6 passing TD conservation failed for {team}')
             if not np.array_equal(rush_td,np.sum(rush_td_alloc,axis=1)+qb_rush_td+oth_rush_td):
                 raise ValueError(f'V3.4 rushing-TD conservation failed for {team}')
 
