@@ -234,7 +234,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__MODEL_VERSION__']='Stat-driven V3.10: explicit non-rostered QB passing accounting'
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.11: roster-independent team passing baseline'
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
@@ -276,7 +276,45 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                     qr=team_qbs.sort_values(['_pa','games_played'],ascending=False).iloc[0]
                     if not qname:
                         qname=str(qr['_name'])
-            pass_pg=_safe(qr.get('pass_attempts_pg') if qr is not None else np.nan, 32.0)
+            # A salary file is not a complete team roster. Build team passing
+            # volume from historical QB data for the TEAM, not only from the
+            # highest-projected eligible DraftKings quarterback. When multiple
+            # QBs have appeared, their per-game rates are weighted by starts/
+            # games (not added together). This does not create a rostered QB.
+            historical_qbs=r[(r['team'].astype(str)==team) &
+                             (r['position'].astype(str).str.upper()=='QB')].copy()
+            historical_qbs['_attempts']=pd.to_numeric(historical_qbs.get('pass_attempts_pg'),errors='coerce')
+            historical_qbs['_games']=pd.to_numeric(historical_qbs.get('games_played'),errors='coerce').fillna(0).clip(lower=0)
+            historical_qbs=historical_qbs[historical_qbs['_attempts'].notna() & (historical_qbs['_attempts']>0)]
+            qb_eligible=not qbrows.empty
+            raw_pass_pg=_safe(qr.get('pass_attempts_pg') if qr is not None else np.nan,32.0)
+            if not historical_qbs.empty:
+                # Game-weighting avoids treating a one-game replacement as the
+                # team's full-season identity. Shrink low-sample baselines
+                # toward a transparent league prior instead of hardcoding an
+                # offense from one player or from the DK salary pool.
+                w=historical_qbs['_games'].to_numpy(float)
+                a=historical_qbs['_attempts'].to_numpy(float)
+                if w.sum()>0:
+                    team_pass_observed=float(np.average(a,weights=w))
+                    sample_games=float(w.sum())
+                else:
+                    team_pass_observed=float(np.mean(a)); sample_games=0.
+                reliability=sample_games/(sample_games+8.)
+                team_pass_baseline=float(np.clip(reliability*team_pass_observed+(1-reliability)*32.,18.,48.))
+            else:
+                team_pass_observed=float('nan'); sample_games=0.
+                team_pass_baseline=32.
+            pass_pg=team_pass_baseline
+            stat_draws[f'__TEAM_PASS_BASELINE__|{team}']={
+                'rostered_qb_available':qb_eligible,
+                'historical_qb_count':int(len(historical_qbs)),
+                'historical_qb_games':sample_games,
+                'historical_qb_attempts_per_game':team_pass_observed,
+                'selected_qb_attempts_per_game':raw_pass_pg,
+                'team_pass_attempts_prior':32.,
+                'team_pass_attempts_baseline':team_pass_baseline,
+            }
             comp_pg=_safe(qr.get('completions_pg') if qr is not None else np.nan, pass_pg*.65)
             pass_yd_pg=_safe(qr.get('pass_yards_pg') if qr is not None else np.nan, 220.0)
             int_pg=_safe(qr.get('interceptions_pg') if qr is not None else np.nan, .65)
