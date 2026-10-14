@@ -2689,6 +2689,29 @@ elif view == "Single Game Showdown":
             flex,game_label,sd_teams=parse_showdown_csv(uploaded)
             qb_warnings=flex.attrs.get("qb_warnings",[])
             for warning in qb_warnings: st.warning("QB starter verification required: "+warning)
+            # HARD QB STARTER GATE: DraftKings historical PPG cannot establish a live
+            # depth chart. Require explicit starter confirmation for every team with
+            # multiple eligible QBs, and remove all alternatives BEFORE projections,
+            # simulations, candidate generation, and Captain selection.
+            qb_choices={}
+            qb_teams=flex.loc[flex["Position"].eq("QB"),"TeamAbbrev"].dropna().unique().tolist()
+            if qb_teams:
+                st.markdown("#### Confirm starting quarterbacks (required)")
+                st.caption("DK salary files do not reliably identify starters. Select the expected starter for each team; all other QBs on that team are excluded from FLEX and Captain. Reconfirm after injury/news changes.")
+            for qb_team in sorted(qb_teams):
+                qb_names=sorted(flex.loc[(flex["TeamAbbrev"]==qb_team)&(flex["Position"]=="QB"),"Name"].astype(str).unique().tolist())
+                if len(qb_names)>1:
+                    selection=st.selectbox(f"{qb_team} starting QB",["— Select starter —"]+qb_names,key=f"sd_confirm_qb_{qb_team}")
+                    if selection!="— Select starter —": qb_choices[qb_team]=selection
+                elif len(qb_names)==1:
+                    qb_choices[qb_team]=qb_names[0]
+                    st.caption(f"{qb_team}: {qb_names[0]} (only QB in salary file; verify before entry)")
+            missing_qb=[tm for tm in qb_teams if tm not in qb_choices]
+            if missing_qb:
+                st.error("Showdown generation blocked until you confirm the starting QB for: "+", ".join(sorted(missing_qb)))
+            else:
+                flex=flex.loc[~(flex["Position"].eq("QB") & flex.apply(lambda r: r["Name"]!=qb_choices.get(r["TeamAbbrev"]),axis=1))].copy()
+                st.success("QB safety gate: all unselected backup quarterbacks excluded from simulations and Captain pool.")
             players=showdown_projection_table(flex,comp,mc,dst)
             st.success(f"Detected {game_label} • {' vs '.join(sd_teams)} • {len(players)} active FLEX-eligible players")
             model_matches=int((players["Projection Source"]=="NFL weekly model").sum())
@@ -2723,7 +2746,7 @@ elif view == "Single Game Showdown":
             eff_p,eff_c=_showdown_exposure_counts(int(n_lineups),float(max_player),float(max_cpt))
             st.caption(f"Effective small-portfolio limits: any player ≤ {eff_p}/{int(n_lineups)} lineups ({100*eff_p/int(n_lineups):.0f}%) • any Captain ≤ {eff_c}/{int(n_lineups)} ({100*eff_c/int(n_lineups):.0f}%). Percentages are rounded up to the nearest attainable lineup count.")
             st.info("V2 defaults: 20 lineups • 75% safety player ceiling • 50% Captain ceiling • 2 minimum uniques • $38,000 salary floor • 20,000 correlated game simulations • 6,000 candidates • viability screen Off. Rare legal constructions are probability-weighted rather than prohibited. V1.7 keeps opportunity-first candidate generation and adds a bounded role sanity calibration for weekly-model skill players. DK PPG is used only as a 20% role anchor when available; it never replaces the weekly projection. V2 no longer bans unusual legal constructions (including DST Captain, double-DST, no-QB, or unusual salary usage) merely because they are rare; simulated outcomes and portfolio value determine representation.")
-            if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate"):
+            if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate",disabled=bool(missing_qb)):
                 with st.spinner("Simulating correlated game outcomes and optimizing Showdown lineups..."):
                     sim=simulate_showdown_players(players,sd_teams,int(n_sims))
                     cands,viability=generate_showdown_candidates(players,sim,sd_teams,int(bank),int(min_salary),50000,min_standard=min_standard,allow_deep_punt=bool(allow_deep_punt))
