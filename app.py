@@ -2432,7 +2432,7 @@ elif view == "Simulation":
                 summary=simulation_summary(sp['Name'].astype(str).tolist(),ss)
                 meta=sp[[c for c in ['Name','Position','TeamAbbrev','game','Salary','team_implied_points','weekly_projection_source','simulation_engine'] if c in sp.columns]].copy()
                 summary=meta.merge(summary,on='Name',how='left')
-                summary['engine_version']=('V3.2' if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
+                summary['engine_version']=(str((st.session_state.get('classic_stat_draws') or {}).get('__MODEL_VERSION__','Stat-driven unknown')) if st.session_state.get('classic_v2_sim_engine')=='Stat-driven football simulation' else 'Legacy')
                 summary['injury_out_count']=engine_out_count if engine_out_count>=0 else 0
                 summary['injury_out_players']='; '.join(engine_out_players)
                 if engine_out_count>=0:

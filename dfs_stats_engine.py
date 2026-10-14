@@ -193,7 +193,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__MODEL_VERSION__']='Stat-driven V3.4: role-aware opportunity and touchdown allocation'
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.5: QB TD shrinkage and role-aware opportunity'
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
@@ -357,7 +357,14 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                     skill_hist=np.maximum(carry_rates,.25)
                     skill_factors=np.clip((skill_tds+.10)/(skill_hist*.065+.10),.55,2.0)
                     qb_td_pg=max(0.,_safe(qr.get('rushing_tds_pg') if qr is not None else 0,0))
-                    qb_factor=float(np.clip((qb_td_pg+.06)/(max(qb_carry,.25)*.065+.06),.25,2.0))
+                    # Empirical-Bayes shrinkage: limited rushing-TD observations must not
+                    # turn ordinary QB carries into near-automatic goal-line TDs.
+                    # Use a 4.5% rushing-TD-per-carry prior over 30 carries.
+                    qb_games=max(1.,_safe(qr.get('games_played') if qr is not None else 0,1))
+                    qb_hist_carries=max(0.,qb_carry)*qb_games
+                    qb_hist_tds=qb_td_pg*qb_games
+                    qb_smoothed_rate=(qb_hist_tds+30.*.045)/(qb_hist_carries+30.)
+                    qb_factor=float(np.clip(qb_smoothed_rate/.065,.35,1.6))
                     rush_weights*=np.append(skill_factors,[qb_factor, .75])
                     # Only runners with carries in this simulation may score.
                     rush_weights=np.where(np.asarray(carr[si])>0,rush_weights,0.)
