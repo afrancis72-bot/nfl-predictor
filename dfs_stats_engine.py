@@ -193,7 +193,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__MODEL_VERSION__']='Stat-driven V3.3: verified transfer identity + conservative role proxies'
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.4: role-aware opportunity and touchdown allocation'
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
@@ -278,8 +278,18 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             leftover=max(pass_pg*.10, pass_pg-target_rates.sum()-missing_t, .5)
             carry_other=max(team_rush*.06,.5)
             if missing_t>0 or missing_c>0:
-                target_rates,leftover=redistribute(target_rates,leftover,missing_volume=missing_t)
-                carry_rates,carry_other=redistribute(carry_rates,carry_other,missing_volume=missing_c)
+                # Positional suitability matters: an unavailable RB's carries
+                # predominantly move to available RBs, not to WRs/TEs.
+                positions=skill['Position'].astype(str).str.upper().to_numpy()
+                carry_role=np.where(positions=='RB',1.0,np.where(positions=='WR',.15,.05))
+                target_role=np.where(positions=='WR',1.0,np.where(positions=='TE',.85,.75))
+                target_rates,leftover=redistribute(target_rates,leftover,missing_volume=missing_t,role_weights=target_role)
+                carry_rates,carry_other=redistribute(carry_rates,carry_other,missing_volume=missing_c,role_weights=carry_role)
+            stat_draws[f'__OPPORTUNITY__|{team}']={
+                'removed_targets_pg':missing_t,'removed_carries_pg':missing_c,
+                'active_target_rates_pg':dict(zip(skill['Name'].astype(str),target_rates.tolist())),
+                'active_carry_rates_pg':dict(zip(skill['Name'].astype(str),carry_rates.tolist()))}
+
             tprob=np.append(np.maximum(target_rates,0),leftover); tprob=tprob/tprob.sum()
             targ=_multinomial_rows(rng,attempts,tprob)
             # Carry allocation includes QB and an unmodeled bucket.
@@ -319,7 +329,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # Shared TD/turnover scoring. Implied points anchor scoring environment.
             implied=_safe(pd.to_numeric(tx.get('team_implied_points'),errors='coerce').dropna().median() if 'team_implied_points' in tx else np.nan,22.0)
             expected_td=np.clip((.55*(pass_td_pg+max(.3,team_rush*.035))+.45*(implied/7.0)),1.0,5.0)
-            total_td=rng.poisson(expected_td,size=ns)
+            total_td=np.minimum(rng.poisson(expected_td,size=ns), np.maximum(0,attempts+rushes))
             pass_share=np.clip(pass_td_pg/max(pass_td_pg+max(.3,team_rush*.035),.1),.35,.78)
             pass_td=rng.binomial(total_td,pass_share); rush_td=total_td-pass_td
             int_rate=np.clip(int_pg/max(pass_pg,1),.005,.065); ints=rng.binomial(attempts,int_rate)
@@ -339,9 +349,21 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                     weights/=weights.sum()
                     rec_td_full[si]=rng.multinomial(int(pass_td[si]),weights)
                 if rush_td[si]:
-                    weights=np.asarray(carr[si],dtype=float)+.05
-                    weights/=weights.sum()
-                    rush_td_full[si]=rng.multinomial(int(rush_td[si]),weights)
+                    # TD share is driven by both scenario carries and observed
+                    # goal-line effectiveness; a QB's scramble share is not
+                    # automatically his share of goal-line carries.
+                    rush_weights=np.asarray(carr[si],dtype=float)
+                    skill_tds=np.array([max(0.,_safe(z.get('rushing_tds_pg') if z is not None else 0,0)) for z in rr])
+                    skill_hist=np.maximum(carry_rates,.25)
+                    skill_factors=np.clip((skill_tds+.10)/(skill_hist*.065+.10),.55,2.0)
+                    qb_td_pg=max(0.,_safe(qr.get('rushing_tds_pg') if qr is not None else 0,0))
+                    qb_factor=float(np.clip((qb_td_pg+.06)/(max(qb_carry,.25)*.065+.06),.25,2.0))
+                    rush_weights*=np.append(skill_factors,[qb_factor, .75])
+                    # Only runners with carries in this simulation may score.
+                    rush_weights=np.where(np.asarray(carr[si])>0,rush_weights,0.)
+                    if rush_weights.sum()<=0: rush_weights=np.asarray(carr[si],dtype=float)
+                    rush_weights/=rush_weights.sum()
+                    rush_td_full[si]=rng.multinomial(int(rush_td[si]),rush_weights)
             rec_td_alloc=rec_td_full[:,:len(skill)]
             rush_td_alloc=rush_td_full[:,:len(skill)]
             qb_rush_td=rush_td_full[:,-2]
@@ -367,16 +389,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             modeled_rec=np.sum([player_rec[j][1] for j in player_rec],axis=0) if player_rec else np.zeros(ns)
             modeled_rec_y=np.sum([player_rec[j][2] for j in player_rec],axis=0) if player_rec else np.zeros(ns)
             if not np.array_equal(team_comp,modeled_rec+oth_c):
-                raise ValueError(f'V3.1 completion conservation failed for {team}')
+                raise ValueError(f'V3.4 completion conservation failed for {team}')
             if not np.allclose(team_rec_yd,modeled_rec_y+oth_y,atol=.001):
-                raise ValueError(f'V3.1 passing-yard conservation failed for {team}')
+                raise ValueError(f'V3.4 passing-yard conservation failed for {team}')
             if not np.array_equal(pass_td,np.sum(rec_td_alloc,axis=1)+oth_rec_td):
-                raise ValueError(f'V3.1 passing-TD conservation failed for {team}')
+                raise ValueError(f'V3.4 passing-TD conservation failed for {team}')
             skill_carries=np.sum(carr[:,:len(skill)],axis=1) if len(skill) else np.zeros(ns,dtype=int)
             if not np.array_equal(rushes,skill_carries+carr[:,-2]+oth_carries):
-                raise ValueError(f'V3.1 rush-attempt conservation failed for {team}')
+                raise ValueError(f'V3.4 rush-attempt conservation failed for {team}')
             if not np.array_equal(rush_td,np.sum(rush_td_alloc,axis=1)+qb_rush_td+oth_rush_td):
-                raise ValueError(f'V3.1 rushing-TD conservation failed for {team}')
+                raise ValueError(f'V3.4 rushing-TD conservation failed for {team}')
 
             # QB DK score.
             qidx=name_index.get((qname,team,'QB')) if qbrow is not None else None
@@ -385,7 +407,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 qb_rushyd=np.where(qb_carries>0,rng.normal(qb_carries*qb_ypc,np.sqrt(np.maximum(qb_carries,1))*2.2,ns),0.)
                 dk=.04*team_rec_yd+4*pass_td-ints+.1*qb_rushyd+6*qb_rush_td+3*(team_rec_yd>=300)+3*(qb_rushyd>=100)
                 out[:,qidx]=dk.astype(np.float32)
-                stat_draws[str(qbrow['Name'])]={'pass_attempts':attempts,'completions':team_comp,'passing_yards':team_rec_yd,'passing_tds':pass_td,'interceptions':ints,'sacks_taken':sacks,'rushing_yards':qb_rushyd,'rushing_tds':qb_rush_td}
+                stat_draws[str(qbrow['Name'])]={'pass_attempts':attempts,'completions':team_comp,'passing_yards':team_rec_yd,'passing_tds':pass_td,'interceptions':ints,'sacks_taken':sacks,'carries':qb_carries,'rushing_yards':qb_rushyd,'rushing_tds':qb_rush_td}
 
             for j,(_,p) in enumerate(skill.iterrows()):
                 idx=name_index.get((str(p['_name']),team,str(p['Position'])))
@@ -439,7 +461,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         elif float(np.mean(non_td))<0.15 and float(np.mean(td))>0.02:
             broken.append(f"{name}: TD-only output (non-TD mean={np.mean(non_td):.3f})")
     if broken:
-        raise ValueError('V3.1 skill allocation validation failed: '
+        raise ValueError('V3.4 skill allocation validation failed: '
                          +'; '.join(broken[:18])
                          + '. No lineup CSV will be generated. Inspect nflverse baselines and team allocation.')
 

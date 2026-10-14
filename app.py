@@ -45,7 +45,7 @@ def build_stat_sim_audit_csv(sim_players, dk_points, stat_draws, max_sims=1000):
     if not frames:
         return None
     audit=pd.concat(frames,ignore_index=True,sort=False)
-    audit['engine_version']='V3.1'
+    audit['engine_version']=str(stat_draws.get('__MODEL_VERSION__','Stat-driven unknown'))
     return audit.to_csv(index=False)
 
 import io
