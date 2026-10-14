@@ -420,8 +420,19 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             pass_td=rng.binomial(total_td,pass_share)
             # A passing touchdown must be a completed pass. Preserve the team
             # touchdown budget by moving any excess to rushing opportunities.
-            pass_td=np.minimum(pass_td,team_comp.astype(np.int64))
+            # A TD must be backed by an actual reception or carry. Under a
+            # very low-volume simulated game, a Poisson team scoring draw can
+            # exceed the number of eligible scoring events. Constrain the draw
+            # before allocating it instead of raising a capacity exception.
+            total_capacity=team_comp.astype(np.int64)+np.asarray(rushes,dtype=np.int64)
+            total_td=np.minimum(total_td,total_capacity)
+            min_pass=np.maximum(0,total_td-np.asarray(rushes,dtype=np.int64))
+            max_pass=np.minimum(total_td,team_comp.astype(np.int64))
+            pass_td=np.clip(pass_td,min_pass,max_pass)
             rush_td=total_td-pass_td
+            # All downstream team/DST audits must reflect the feasible TD draw.
+            stat_draws[f'__TEAM_SCORING__|{team}']['simulated_offensive_tds']=total_td
+            stat_draws[f'__TEAM_SCORING__|{team}']['simulated_offensive_points']=7*total_td+3*fgs
             int_rate=np.clip(int_pg/max(pass_pg,1),.005,.065); ints=rng.binomial(attempts,int_rate)
 
             # Allocate scores using *scenario-specific* opportunity rather than
