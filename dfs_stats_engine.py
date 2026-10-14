@@ -98,6 +98,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.2: scenario-opportunity TD allocation + QB rushing TDs'
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
         'out_count':len(out_keys),
@@ -227,16 +228,27 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             pass_td=rng.binomial(total_td,pass_share); rush_td=total_td-pass_td
             int_rate=np.clip(int_pg/max(pass_pg,1),.005,.065); ints=rng.binomial(attempts,int_rate)
 
-            # Allocate receiving and rushing TDs by opportunity shares.
-            rec_td_full=np.zeros((ns,len(skill)+1),dtype=np.int8)
-            rush_td_full=np.zeros((ns,len(skill)+1),dtype=np.int8)
-            tp=np.append(np.maximum(target_rates,0)+.15,max(leftover,.15)); tp=tp/tp.sum()
-            cp=np.append(np.maximum(carry_rates,0)+.10,max(carry_other,.10)); cp=cp/cp.sum()
-            for s in range(ns):
-                if pass_td[s]>0: rec_td_full[s]=rng.multinomial(int(pass_td[s]),tp)
-                if rush_td[s]>0: rush_td_full[s]=rng.multinomial(int(rush_td[s]),cp)
+            # Allocate scores using *scenario-specific* opportunity rather than
+            # fixed pregame target/carry shares. This preserves correlation:
+            # a player drawing extra targets/carries in a simulated game also
+            # earns more touchdown chances in that same game.
+            # The rushing allocation explicitly includes the QB, previously
+            # assigned zero rushing TDs regardless of his rushing workload.
+            rec_td_full=np.zeros((ns,len(skill)+1),dtype=np.int16)
+            rush_td_full=np.zeros((ns,len(skill)+2),dtype=np.int16)
+            qb_carries=carr[:,-2]
+            for si in range(ns):
+                if pass_td[si]:
+                    weights=np.asarray(targ[si],dtype=float)+.05
+                    weights/=weights.sum()
+                    rec_td_full[si]=rng.multinomial(int(pass_td[si]),weights)
+                if rush_td[si]:
+                    weights=np.asarray(carr[si],dtype=float)+.05
+                    weights/=weights.sum()
+                    rush_td_full[si]=rng.multinomial(int(rush_td[si]),weights)
             rec_td_alloc=rec_td_full[:,:len(skill)]
             rush_td_alloc=rush_td_full[:,:len(skill)]
+            qb_rush_td=rush_td_full[:,-2]
             oth_rec_td=rec_td_full[:,-1]
             oth_rush_td=rush_td_full[:,-1]
 
@@ -267,7 +279,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             skill_carries=np.sum(carr[:,:len(skill)],axis=1) if len(skill) else np.zeros(ns,dtype=int)
             if not np.array_equal(rushes,skill_carries+carr[:,-2]+oth_carries):
                 raise ValueError(f'V3.1 rush-attempt conservation failed for {team}')
-            if not np.array_equal(rush_td,np.sum(rush_td_alloc,axis=1)+oth_rush_td):
+            if not np.array_equal(rush_td,np.sum(rush_td_alloc,axis=1)+qb_rush_td+oth_rush_td):
                 raise ValueError(f'V3.1 rushing-TD conservation failed for {team}')
 
             # QB DK score.
@@ -275,10 +287,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             if qidx is not None:
                 qb_carries=carr[:,-2]; qb_ypc=_safe(qr.get('rushing_yards_pg') if qr is not None else np.nan,15)/max(qb_carry,.5)
                 qb_rushyd=np.where(qb_carries>0,rng.normal(qb_carries*qb_ypc,np.sqrt(np.maximum(qb_carries,1))*2.2,ns),0.)
-                qb_rush_td=np.zeros(ns,dtype=int)  # conservative; team rush TDs allocated to listed skill rushers
                 dk=.04*team_rec_yd+4*pass_td-ints+.1*qb_rushyd+6*qb_rush_td+3*(team_rec_yd>=300)+3*(qb_rushyd>=100)
                 out[:,qidx]=dk.astype(np.float32)
-                stat_draws[str(qbrow['Name'])]={'pass_attempts':attempts,'completions':team_comp,'passing_yards':team_rec_yd,'passing_tds':pass_td,'interceptions':ints,'sacks_taken':sacks,'rushing_yards':qb_rushyd}
+                stat_draws[str(qbrow['Name'])]={'pass_attempts':attempts,'completions':team_comp,'passing_yards':team_rec_yd,'passing_tds':pass_td,'interceptions':ints,'sacks_taken':sacks,'rushing_yards':qb_rushyd,'rushing_tds':qb_rush_td}
 
             for j,(_,p) in enumerate(skill.iterrows()):
                 idx=name_index.get((str(p['_name']),team,str(p['Position'])))
