@@ -8,7 +8,7 @@ from snap_level_research import simulate_snaps, summarize_player_props
 from snap_portfolio_research import build_research_portfolio
 
 st.title("Snap-by-snap Research Lab")
-st.caption("Research build: 2026-10-14 / portfolio-v2 / commit-marker-42a8a96")
+st.caption("Research build: 2026-10-14 / QB-history-v1 / portfolio-v2")
 st.warning("Experimental: uncalibrated simulation. Do not use for wagering or live entries.")
 st.caption("Historical data is restricted to weeks before the selected matchup. Upload a pre-lock salary pool with one row per player: Name, TeamAbbrev, Position, FLEX Salary. For DK showdown exports, prepare one FLEX row per player.")
 salary_file=st.file_uploader("Showdown FLEX player pool CSV",type=["csv"],key="snap_pool")
@@ -99,6 +99,20 @@ if "snap_weekly_audit" in st.session_state:
             st.error(f"Simulation failed: {exc}")
 if "snap_summary" in st.session_state:
     summary=st.session_state["snap_summary"]
+    st.subheader("QB passing validation")
+    qb_pool=st.session_state["snap_results"][0]
+    rows=[]
+    for _,qb in qb_pool[qb_pool["Position"]=="QB"].iterrows():
+        match=summary[(summary["Name"]==qb["Name"]) & (summary["Team"]==qb["TeamAbbrev"])]
+        if match.empty: continue
+        v=match.iloc[0]
+        rows.append({"QB":qb["Name"],"Team":qb["TeamAbbrev"],
+                     "Historical attempts/game":round(float(qb.get("attempts_per_game",0)),1),
+                     "Historical pass yards/game":round(float(qb.get("passing_yards_per_game",0)),1),
+                     "Simulated attempts/game":v["pass_att_mean"],
+                     "Simulated pass yards/game":v["pass_yd_mean"]})
+    if rows: st.dataframe(pd.DataFrame(rows),hide_index=True,use_container_width=True)
+    st.caption("Sportsbook lines are comparison benchmarks, not simulation inputs.")
     st.subheader("Simulated player statistics")
     st.dataframe(summary,use_container_width=True)
     st.download_button("Download player means, medians and P90",summary.to_csv(index=False),"snap_player_statistics.csv","text/csv")
