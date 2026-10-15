@@ -95,6 +95,12 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
             "run_yards_factor": float(np.clip(d.get("run_yards_factor", 1.), .65, 1.35)),
             "completion_delta": float(np.clip(d.get("completion_delta", 0.), -.15, .15)),
         }
+    # Optional, explicitly supplied pregame defensive pressure/discipline priors.
+    for t in teams:
+        d=defense_profiles.get(t,{})
+        defense[t]["pressure_rate"]=float(np.clip(d.get("pressure_rate",.25),.05,.55))
+        defense[t]["sack_given_pressure"]=float(np.clip(d.get("sack_given_pressure",.23),.05,.55))
+        defense[t]["penalty_rate"]=float(np.clip(d.get("penalty_rate",.055),0,.20))
     for g in range(int(n_games)):
         # One shared game-level environment induces correlated player outcomes.
         # Separate team-level form lets good defenses occasionally have bad games.
@@ -102,7 +108,13 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
         form = {t: float(np.clip(rng.normal(1., .10), .72, 1.30)) for t in teams}
         defense_form = {t: float(np.clip(rng.normal(1., .10), .72, 1.30)) for t in teams}
         score={t:0 for t in teams}
+        # Game-specific usage tendencies create correlated receiver outcomes.
+        target_form={}
+        for t in teams:
+            receiver_ids=team_ids[t][np.isin(pos[team_ids[t]],["WR","TE","RB"])]
+            target_form[t]={int(i):float(rng.lognormal(0,.22)) for i in receiver_ids}
         offense=teams[g%2]
+        next_field=25.
         elapsed=0
         # Ball possession alternates at drive boundaries. Drives end on punts,
         # turnovers, scores or fourth-down failures; do not grant 14 free plays.
@@ -118,7 +130,8 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
             if len(rushers)==0 or len(receivers)==0:
                 raise ValueError(f"{offense}: missing rushers or receivers")
             # Starting field position measured in yards from own goal.
-            field=float(np.clip(rng.normal(29,9), 8, 50))
+            field=float(next_field)
+            next_field=25.  # Standard kickoff after a score; otherwise set by possession result.
             down=1; to_go=10.
             for _ in range(24):
                 if elapsed>=3600: break
@@ -136,21 +149,55 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                         if rng.random()<.78:
                             stats[g,pick(kickers),f["fg_made"]]+=1
                             score[offense]+=3
+                        else:
+                            next_field=float(np.clip(100-field,1,99))
                         break
                     go=(to_go<=2 and field>=45) or (remaining<240 and margin<0)
                     if not go:
+                        # Punt: net punt distance varies with field position.
+                        punt=float(np.clip(rng.normal(43,9),20,65))
+                        next_field=float(np.clip(100-min(99,field+punt),1,40))
                         break
                 is_pass=rng.random()<pass_prob
+                # Dead-ball penalty: no player receives a play opportunity.
+                if rng.random()<defense[opponent]["penalty_rate"]:
+                    defensive=rng.random()<.50
+                    penalty_yards=min(10.,100-field) if defensive else -min(10.,field-1)
+                    field=float(np.clip(field+penalty_yards,1,99))
+                    if defensive:
+                        down=1
+                        to_go=min(10.,100-field)
+                    else:
+                        to_go+=abs(penalty_yards)
+                    elapsed+=5
+                    continue
                 clock_base=rng.integers(23,43) if not urgency else rng.integers(9,25)
                 elapsed+=max(5,int(clock_base/pace))
                 if is_pass:
                     stats[g,qb,f["pass_att"]]+=1
-                    target=pick(receivers,.9,"target_weight")
+                    if use_history:
+                        weights=p["target_weight"].to_numpy(dtype=float)[receivers]
+                        weights=weights*np.array([target_form[offense][int(i)] for i in receivers])
+                        if weights.sum()<=0: raise ValueError("No verified target opportunities")
+                        target=int(rng.choice(receivers,p=weights/weights.sum()))
+                    else:
+                        target=pick(receivers,.9,"target_weight")
+                    # Pressure can produce sacks before any target is recorded.
+                    pressured=rng.random()<defense[opponent]["pressure_rate"]
+                    if pressured and rng.random()<defense[opponent]["sack_given_pressure"]:
+                        loss=float(rng.integers(2,11))
+                        field=max(1.,field-loss)
+                        to_go+=loss
+                        down+=1
+                        stats[g,qb,f["sacks"]]+=1
+                        if down>4: next_field=float(np.clip(100-field,1,99)); break
+                        continue
                     stats[g,target,f["targets"]]+=1
                     receiver_rate=player_prior(target,"receiver_catch_rate",.66,.35,.90)
                     completion = np.clip(.55*qb_rates[offense]["completion"]+.45*receiver_rate
                                          + defense[opponent]["completion_delta"]
-                                         + .09*(form[offense]-defense_form[opponent]), .30, .90)
+                                         + .09*(form[offense]-defense_form[opponent])
+                                         - (.12 if pressured else 0.), .30, .90)
                     if rng.random()<completion:
                         avg=.55*qb_rates[offense]["yards_per_completion"]+.45*player_prior(target,"receiver_yards_per_catch",11.,4.,25.)
                         yards=max(-2.,float(rng.normal(avg*defense[opponent]["pass_yards_factor"]*form[offense]/defense_form[opponent],max(4.,avg*.65))))
@@ -162,6 +209,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                         stats[g,qb,f["interceptions"]]+=1
                         # Defensive turnover belongs to a team DST, not an arbitrary offensive player.
                         # DST scoring is intentionally not modeled in this research simulator.
+                        next_field=float(np.clip(100-field,1,99))
                         break
                     else: yards=0.
                 else:
@@ -189,6 +237,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                         stats[g,runner,f["rush_td"]]+=1
                     if len(kickers):
                         stats[g,pick(kickers),f["xp_made"]]+=1
+                    next_field=25.
                     break
                 to_go-=yards
                 if to_go<=0:
@@ -196,7 +245,11 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                 else:
                     down+=1
                 if down>4:
+                    next_field=float(np.clip(100-field,1,99))
                     break
+            else:
+                # Drive reached the play cap: terminate possession without free field reset.
+                next_field=float(np.clip(100-field,1,99))
             offense=opponent
     pts=np.zeros((int(n_games),n),dtype=np.float32)
     s={key:stats[:,:,i] for key,i in f.items()}
