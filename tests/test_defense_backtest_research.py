@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from defensive_priors_research import build_defense_profiles
 from backtest_research import evaluate_predictions
+from historical_replay_research import replay_game
 
 class DefensePriorTests(unittest.TestCase):
     def test_future_week_cannot_change_profile(self):
@@ -43,6 +44,31 @@ class BacktestTests(unittest.TestCase):
         self.assertAlmostEqual(joined.set_index("player").loc["A","median"],25)
         self.assertAlmostEqual(joined.set_index("player").loc["B","median"],130)
         self.assertEqual(metrics.loc[0,"observations"],2)
+
+class ReplayIntegrationTests(unittest.TestCase):
+    def test_end_to_end_replay_with_pregame_data(self):
+        players=[]
+        for team in ("SEA","DEN"):
+            for role,rush,target in (("QB",2,0),("RB",12,2),("WR",0,8),("TE",0,4)):
+                players.append(dict(Name=team+" "+role,TeamAbbrev=team,
+                    Position=role,usage_verified=True,
+                    rush_weight=rush,target_weight=target,
+                    **{"FLEX Salary":5000}))
+        pbp=[]
+        for week in (1,2,3):
+            for team,opp in (("SEA","DEN"),("DEN","SEA")):
+                for play in range(220):
+                    pbp.append(dict(season=2025,week=week,season_type="REG",
+                        defteam=team,posteam=opp,play_type="pass" if play%2 else "run",
+                        yards_gained=6 if play%2 else 4,complete_pass=1 if play%3 else 0))
+        actual=pd.DataFrame([
+            dict(player="SEA QB",stat="pass_yd",actual=210,baseline=200),
+            dict(player="DEN QB",stat="pass_yd",actual=190,baseline=200)])
+        result=replay_game("2025_04_SEA_DEN",2025,4,["SEA","DEN"],
+            pd.DataFrame(players),pd.DataFrame(pbp),actual,n_games=6,seed=17)
+        self.assertEqual(len(result["details"]),2)
+        self.assertIn("baseline_mae",result["metrics"].columns)
+        self.assertEqual(result["predictions"].simulation.nunique(),6)
 
 if __name__=="__main__":
     unittest.main()
