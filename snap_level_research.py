@@ -174,7 +174,6 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                 clock_base=rng.integers(23,43) if not urgency else rng.integers(9,25)
                 elapsed+=max(5,int(clock_base/pace))
                 if is_pass:
-                    stats[g,qb,f["pass_att"]]+=1
                     if use_history:
                         weights=p["target_weight"].to_numpy(dtype=float)[receivers]
                         weights=weights*np.array([target_form[offense][int(i)] for i in receivers])
@@ -192,6 +191,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                         stats[g,qb,f["sacks"]]+=1
                         if down>4: next_field=float(np.clip(100-field,1,99)); break
                         continue
+                    stats[g,qb,f["pass_att"]]+=1
                     stats[g,target,f["targets"]]+=1
                     receiver_rate=player_prior(target,"receiver_catch_rate",.66,.35,.90)
                     completion = np.clip(.55*qb_rates[offense]["completion"]+.45*receiver_rate
