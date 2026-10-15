@@ -28,7 +28,8 @@ def evaluate_predictions(simulations: pd.DataFrame, actuals: pd.DataFrame):
     grouped=simulations.groupby(keys,sort=False)["value"]
     summary=grouped.agg(mean="mean",median="median",n_simulations="count").reset_index()
     for q,label in ((.05,"p05"),(.10,"p10"),(.90,"p90"),(.95,"p95")):
-        summary[label]=grouped.quantile(q).to_numpy()
+        quantiles=grouped.quantile(q).rename(label).reset_index()
+        summary=summary.merge(quantiles,on=keys,how="left",validate="one_to_one")
     joined=summary.merge(actuals[keys+["actual"]],on=keys,how="inner",validate="one_to_one")
     if joined.empty: raise ValueError("No overlapping predictions and actuals")
     for col in ["mean","median","p05","p10","p90","p95","actual"]:
