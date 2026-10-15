@@ -30,6 +30,24 @@ class SnapEngineTests(unittest.TestCase):
             return frame.loc[frame.name=="SEA QB","pass_yd"].mean()
         self.assertLess(sea_pass_yards(tough),sea_pass_yards(baseline))
 
+    def test_sacks_do_not_count_as_pass_attempts(self):
+        _,base=simulate_snaps(self.players,["SEA","DEN"],n_games=50,seed=71,
+            defense_profiles={"DEN":{"pressure_rate":.05,"sack_given_pressure":.05}})
+        _,pressure=simulate_snaps(self.players,["SEA","DEN"],n_games=50,seed=71,
+            defense_profiles={"DEN":{"pressure_rate":.55,"sack_given_pressure":.55}})
+        qb=pressure[pressure.name=="SEA QB"]
+        self.assertGreater(qb.sacks.sum(),0)
+        self.assertTrue((qb.pass_cmp<=qb.pass_att).all())
+        self.assertTrue((qb.pass_att>=0).all())
+        self.assertGreater(qb.sacks.sum(),base[base.name=="SEA QB"].sacks.sum())
+
+    def test_receiving_yards_equal_completed_pass_yards(self):
+        _,stats=simulate_snaps(self.players,["SEA","DEN"],n_games=40,seed=23)
+        for game in stats.game.unique():
+            for team in ("SEA","DEN"):
+                rows=stats[(stats.game==game)&(stats.team==team)]
+                self.assertAlmostEqual(float(rows.pass_yd.sum()),float(rows.rec_yd.sum()),places=2)
+
     def test_player_points_are_finite(self):
         points,stats=simulate_snaps(self.players,["SEA","DEN"],n_games=10,seed=9)
         self.assertTrue(np.isfinite(points).all())
