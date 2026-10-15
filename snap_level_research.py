@@ -98,7 +98,11 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
         score={t:0 for t in teams}
         offense=teams[g%2]
         elapsed=0
-        while elapsed < 3600:
+        # Ball possession alternates at drive boundaries. Drives end on punts,
+        # turnovers, scores or fourth-down failures; do not grant 14 free plays.
+        possession_count=0
+        while elapsed < 3600 and possession_count < 45:
+            possession_count += 1
             opponent=teams[1] if offense==teams[0] else teams[0]
             ids=team_ids[offense]
             qb=qbs[offense]
@@ -108,13 +112,31 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
             if len(rushers)==0 or len(receivers)==0:
                 raise ValueError(f"{offense}: missing rushers or receivers")
             # Starting field position measured in yards from own goal.
-            field=25.; down=1; to_go=10.
-            for _ in range(14):
+            field=float(np.clip(rng.normal(29,9), 8, 50))
+            down=1; to_go=10.
+            for _ in range(24):
                 if elapsed>=3600: break
-                trailing=score[offense]<score[defense]
-                pass_prob=np.clip(qb_rates[offense]["base_pass_prob"]+(.07 if trailing else -.03)+(.06 if down>=3 else 0),.30,.86)
+                margin=score[offense]-score[opponent]
+                remaining=3600-elapsed
+                trailing=margin<0
+                # Playcalling changes with down, distance, margin and late clock.
+                urgency=(remaining<600 and margin<0)
+                pass_prob=np.clip(qb_rates[offense]["base_pass_prob"]
+                    +(.11 if down==3 else 0)+(.08 if to_go>=9 else -.07 if to_go<=2 else 0)
+                    +(.14 if urgency else .05 if trailing else -.06 if margin>=9 else 0),.22,.90)
+                # Fourth down is a decision, not an automatic offensive snap.
+                if down==4:
+                    if field>=64 and len(kickers) and remaining>80:
+                        if rng.random()<.78:
+                            stats[g,pick(kickers),f["fg_made"]]+=1
+                            score[offense]+=3
+                        break
+                    go=(to_go<=2 and field>=45) or (remaining<240 and margin<0)
+                    if not go:
+                        break
                 is_pass=rng.random()<pass_prob
-                elapsed+=max(8,int(rng.integers(19,42)/pace))
+                clock_base=rng.integers(23,43) if not urgency else rng.integers(9,25)
+                elapsed+=max(5,int(clock_base/pace))
                 if is_pass:
                     stats[g,qb,f["pass_att"]]+=1
                     target=pick(receivers,.9,"target_weight")
@@ -140,6 +162,15 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                     yards=float(np.clip(rng.normal(4.4*defense[opponent]["run_yards_factor"]*form[offense]/defense_form[opponent],5.0),-5,35))
                     stats[g,runner,f["rush_att"]]+=1
                     stats[g,runner,f["rush_yd"]]+=yards
+                # A completed play cannot gain more than the distance to goal.
+                if field+yards>=100:
+                    excess=field+yards-100
+                    if is_pass and yards>0:
+                        stats[g,qb,f["pass_yd"]]-=excess
+                        stats[g,target,f["rec_yd"]]-=excess
+                    elif not is_pass and yards>0:
+                        stats[g,runner,f["rush_yd"]]-=excess
+                    yards-=excess
                 field+=yards
                 if field>=100:
                     score[offense]+=7
@@ -157,11 +188,6 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                 else:
                     down+=1
                 if down>4:
-                    if field>=62 and len(kickers) and rng.random()<.72:
-                        kicker=pick(kickers)
-                        if rng.random()<.79:
-                            stats[g,kicker,f["fg_made"]]+=1
-                            score[offense]+=3
                     break
             offense=opponent
     pts=np.zeros((int(n_games),n),dtype=np.float32)
