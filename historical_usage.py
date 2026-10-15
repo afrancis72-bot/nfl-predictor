@@ -45,16 +45,20 @@ def build_usage_priors(weekly, as_of_week, season=2026, recent_games=5):
     # Prefer immutable player IDs where available to avoid name collisions.
     id_col="player_id" if "player_id" in d else "player_name"
     d=d.sort_values("week").groupby([id_col,"recent_team"],group_keys=False).tail(recent_games)
-    for c in ("carries","targets","rushing_yards","receiving_yards","receptions"):
+    for c in ("attempts","completions","passing_yards","carries","targets","rushing_yards","receiving_yards","receptions"):
+        if c not in d and c in ("attempts","completions","passing_yards"):
+            d[c]=0
         if c not in d: raise ValueError("Missing statistical column: "+c)
         d[c]=pd.to_numeric(d[c],errors="coerce").fillna(0).clip(lower=0)
     grouping=[id_col,"recent_team","player_name","position"]
     out=d.groupby(grouping,as_index=False).agg(
-        games=("week","nunique"),carries=("carries","sum"),targets=("targets","sum"),
+        games=("week","nunique"),attempts=("attempts","sum"),completions=("completions","sum"),passing_yards=("passing_yards","sum"),carries=("carries","sum"),targets=("targets","sum"),
         rushing_yards=("rushing_yards","sum"),receiving_yards=("receiving_yards","sum"),
         receptions=("receptions","sum"))
-    for c in ("carries","targets","rushing_yards","receiving_yards","receptions"):
+    for c in ("attempts","completions","passing_yards","carries","targets","rushing_yards","receiving_yards","receptions"):
         out[c+"_per_game"]=out[c]/out.games.clip(lower=1)
+    out["qb_yards_per_attempt"]=np.where(out["attempts"]>0,out["passing_yards"]/out["attempts"].clip(lower=1),0.)
+    out["qb_completion_rate"]=np.where(out["attempts"]>0,out["completions"]/out["attempts"].clip(lower=1),0.)
     return out
 
 def apply_usage_priors(players, priors, min_games=2):
@@ -73,5 +77,5 @@ def apply_usage_priors(players, priors, min_games=2):
 
 def usage_audit(merged):
     columns=["Name","TeamAbbrev","Position","games","usage_verified",
-             "carries_per_game","targets_per_game","rush_weight","target_weight"]
+             "carries_per_game","targets_per_game","attempts_per_game","passing_yards_per_game","qb_yards_per_attempt","qb_completion_rate","rush_weight","target_weight"]
     return merged[[c for c in columns if c in merged]].copy()
