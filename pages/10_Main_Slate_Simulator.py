@@ -65,30 +65,37 @@ if salary_file is not None:
                     salary,weekly,season=int(season),week=int(week),starting_qbs=starters,
                     excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()],
                     n_games=int(n_games),seed=run_seed,progress_callback=report_progress)
+            st.session_state["classic_last_run"]={
+                "projections":projections,"stats":stats,"omitted_players":omitted_players,
+                "seed":run_seed,"n_games":int(n_games),"season":int(season),"week":int(week),
+                "elapsed":time.perf_counter()-started}
             progress.progress(1.0,text="All matchups completed")
             stage.success(f"Finished in {time.perf_counter()-started:.1f} seconds")
-            st.success("Research simulation completed — incomplete player coverage; not entry-ready")
-            if not omitted_players.empty:
-                st.warning(f"{len(omitted_players)} players omitted due to insufficient matched history. This can include important players; do not treat results as calibrated.")
-                st.dataframe(omitted_players,use_container_width=True)
-                st.download_button("Download omitted-player audit",omitted_players.to_csv(index=False),file_name="teamai2_omitted_players.csv",mime="text/csv")
-            team_games=stats.groupby(["matchup","team","game"],as_index=False)[["pass_att","rush_att","targets"]].sum()
-            team_volume=team_games.groupby(["matchup","team"],as_index=False)[["pass_att","rush_att","targets"]].mean()
-            team_volume["offensive_plays"]=team_volume["pass_att"]+team_volume["rush_att"]
-            team_volume["pass_rate"]=team_volume["pass_att"]/team_volume["offensive_plays"].replace(0,float("nan"))
-            team_volume["volume_warning"]=(team_volume["offensive_plays"]<40)|(team_volume["offensive_plays"]>85)|(team_volume["pass_rate"]<.30)|(team_volume["pass_rate"]>.75)
-            st.subheader("Team opportunity sanity audit")
-            st.dataframe(team_volume,use_container_width=True)
-            st.download_button("Download team volume audit",team_volume.to_csv(index=False),file_name="teamai2_team_volume_audit.csv",mime="text/csv")
-            if team_volume["volume_warning"].any():
-                st.error("Unrealistic team opportunity volume detected. Projections are NOT entry-ready.")
-            st.dataframe(projections,use_container_width=True)
-            st.download_button("Download offensive projections CSV",projections.to_csv(index=False),
-                               file_name="teamai2_classic_snap_projections.csv",mime="text/csv")
-            st.download_button("Download snap-level outcomes CSV",stats.to_csv(index=False),
-                               file_name="teamai2_classic_snap_outcomes.csv",mime="text/csv")
     except Exception as exc:
         st.error(f"Validation stopped the run: {exc}")
+    if "classic_last_run" in st.session_state:
+        result=st.session_state["classic_last_run"]
+        projections=result["projections"]
+        stats=result["stats"]
+        omitted_players=result["omitted_players"]
+        st.success(f"Saved simulation: {result['n_games']} games/matchup, seed {result['seed']}, {result['elapsed']:.1f}s. Downloads will not rerun the simulation.")
+        if not omitted_players.empty:
+            st.warning(f"{len(omitted_players)} players omitted due to insufficient matched history. Research output is not entry-ready.")
+            st.dataframe(omitted_players,use_container_width=True)
+            st.download_button("Download omitted-player audit",omitted_players.to_csv(index=False),file_name="teamai2_omitted_players.csv",mime="text/csv",key="classic_download_omitted")
+        team_games=stats.groupby(["matchup","team","game"],as_index=False)[["pass_att","rush_att","targets"]].sum()
+        team_volume=team_games.groupby(["matchup","team"],as_index=False)[["pass_att","rush_att","targets"]].mean()
+        team_volume["offensive_plays"]=team_volume["pass_att"]+team_volume["rush_att"]
+        team_volume["pass_rate"]=team_volume["pass_att"]/team_volume["offensive_plays"].replace(0,float("nan"))
+        team_volume["volume_warning"]=(team_volume["offensive_plays"]<40)|(team_volume["offensive_plays"]>85)|(team_volume["pass_rate"]<.30)|(team_volume["pass_rate"]>.75)
+        st.subheader("Team opportunity sanity audit")
+        st.dataframe(team_volume,use_container_width=True)
+        st.download_button("Download team volume audit",team_volume.to_csv(index=False),file_name="teamai2_team_volume_audit.csv",mime="text/csv",key="classic_download_volume")
+        if team_volume["volume_warning"].any():
+            st.error("Unrealistic team opportunity volume detected. Projections are NOT entry-ready.")
+        st.dataframe(projections,use_container_width=True)
+        st.download_button("Download offensive projections CSV",projections.to_csv(index=False),file_name="teamai2_classic_snap_projections.csv",mime="text/csv",key="classic_download_projections")
+        st.download_button("Download snap-level outcomes CSV",stats.to_csv(index=False),file_name="teamai2_classic_snap_outcomes.csv",mime="text/csv",key="classic_download_outcomes")
     if "classic_usage_audit" in st.session_state:
         st.subheader("Historical usage matching diagnostic")
         diag=st.session_state["classic_usage_audit"]
