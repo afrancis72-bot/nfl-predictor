@@ -36,6 +36,12 @@ def evaluate_predictions(simulations: pd.DataFrame, actuals: pd.DataFrame):
         joined[col]=pd.to_numeric(joined[col],errors="coerce")
     if joined[["mean","actual"]].isna().any().any():
         raise ValueError("Non-numeric outcomes")
+    # Transparent baseline: the pregame forecast is not compared to a fitted
+    # sportsbook line. A baseline forecast must be supplied independently.
+    if "baseline" in actuals.columns:
+        baseline=actuals[keys+["baseline"]]
+        joined=joined.merge(baseline,on=keys,how="left",validate="one_to_one")
+        joined["baseline_abs_error"]=(joined["baseline"]-joined["actual"]).abs()
     joined["error"]=joined["mean"]-joined["actual"]
     joined["abs_error"]=joined["error"].abs()
     joined["covered_80"]=(joined.actual>=joined.p10)&(joined.actual<=joined.p90)
@@ -46,4 +52,8 @@ def evaluate_predictions(simulations: pd.DataFrame, actuals: pd.DataFrame):
         bias=("error","mean"),coverage_80=("covered_80","mean"),
         coverage_90=("covered_90","mean"),
         fraction_below_median=("actual_below_median","mean")).reset_index()
+    if "baseline_abs_error" in joined:
+        comparison=joined.groupby("stat")["baseline_abs_error"].mean().rename("baseline_mae").reset_index()
+        metrics=metrics.merge(comparison,on="stat",how="left",validate="one_to_one")
+        metrics["mae_improvement_vs_baseline"]=metrics["baseline_mae"]-metrics["mae"]
     return joined,metrics
