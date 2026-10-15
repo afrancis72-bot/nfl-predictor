@@ -45,22 +45,54 @@ if "snap_weekly_audit" in st.session_state:
     st.subheader("Historical usage audit")
     st.dataframe(audit,use_container_width=True)
     st.download_button("Download usage audit",audit.to_csv(index=False),"snap_usage_audit.csv","text/csv")
-    st.caption("Only offensive players need historical opportunity verification. K/DST require separate models and are excluded from this initial research pool.")
-    offensive=st.session_state["snap_prepared_players"].query("Position in ['QB','RB','WR','TE']").copy()
-    missing=offensive[~offensive["usage_verified"]]
+    st.caption("K/DST are not yet modeled. Historical usage does not establish active status or starting roles. Verify starters and inactive players independently.")
+    prepared=st.session_state["snap_prepared_players"].copy()
+    offensive=prepared[prepared["Position"].isin(["QB","RB","WR","TE"])].copy()
+    missing=offensive[~offensive["usage_verified"].fillna(False)]
     if len(missing):
-        st.error(f"{len(missing)} offensive players have fewer than two matched historical games. Resolve identity/team or remove them before running.")
+        st.warning(f"{len(missing)} offensive players lack two matched historical games. They are excluded by default, not treated as inactive.")
         st.dataframe(missing[["Name","TeamAbbrev","Position","games"]],hide_index=True)
-    else:
-        if st.button("Run snap simulation and generate 5 research lineups"):
-            try:
-                teams=sorted(offensive["TeamAbbrev"].unique())
-                pts,stats=simulate_snaps(offensive,teams,n_games=int(games),seed=316)
-                summary=summarize_player_props(stats)
-                st.session_state["snap_summary"]=summary
-                st.session_state["snap_results"]=(offensive.reset_index(drop=True),pts)
-            except Exception as exc:
-                st.error(f"Simulation failed: {exc}")
+    verified=offensive[offensive["usage_verified"].fillna(False)].copy()
+    teams=sorted(offensive["TeamAbbrev"].unique())
+    st.subheader("Confirm starters and eligible players")
+    st.warning("Choose quarterbacks from independently verified starting-lineup information. This page cannot confirm today's starters or injuries.")
+    selected_qbs={}
+    for team in teams:
+        qb_options=verified[(verified["TeamAbbrev"]==team)&(verified["Position"]=="QB")]["Name"].tolist()
+        if not qb_options:
+            st.error(f"No verified quarterback for {team}; simulation is blocked.")
+            continue
+        chosen_qb=st.selectbox(f"{team} confirmed starting quarterback",["Select a starter"]+qb_options,index=0,key=f"snap_qb_{team}")
+        if chosen_qb!="Select a starter":
+            selected_qbs[team]=chosen_qb
+    other=verified[verified["Position"]!="QB"].copy()
+    labels={f"{row.Name} | {row.TeamAbbrev} | {row.Position}":(row.Name,row.TeamAbbrev) for row in other.itertuples(index=False)}
+    excluded=st.multiselect("Exclude confirmed OUT, IR, inactive, or otherwise ineligible players",
+                            options=list(labels),default=[],key="snap_inactive_exclusions")
+    excluded_ids={labels[k] for k in excluded}
+    selected=verified[
+        ((verified["Position"]!="QB") & ~verified.apply(lambda x:(x["Name"],x["TeamAbbrev"]) in excluded_ids,axis=1))
+        | verified.apply(lambda x:x["Position"]=="QB" and selected_qbs.get(x["TeamAbbrev"])==x["Name"],axis=1)
+    ].copy()
+    st.caption(f"Simulation pool: {len(selected)} historically verified players after exclusions; {len(missing)} unverified offensive players excluded.")
+    if len(selected):
+        st.dataframe(selected[["Name","TeamAbbrev","Position","games","carries_per_game","targets_per_game"]],hide_index=True,use_container_width=True)
+        st.download_button("Download selected player pool",selected.to_csv(index=False),"snap_selected_player_pool.csv","text/csv")
+    can_run=len(selected_qbs)==2 and selected["TeamAbbrev"].nunique()==2
+    if not can_run:
+        st.info("Select one confirmed starting quarterback for each team to enable simulation.")
+    if st.button("Run snap simulation and generate 5 research lineups",disabled=not can_run):
+        try:
+            for team in teams:
+                t=selected[selected["TeamAbbrev"]==team]
+                if not (t["rush_weight"]>0).any() or not (t["target_weight"]>0).any():
+                    raise ValueError(f"{team}: no verified rushing or receiving opportunity after exclusions")
+            pts,stats=simulate_snaps(selected,teams,n_games=int(games),seed=316)
+            st.session_state["snap_summary"]=summarize_player_props(stats)
+            st.session_state["snap_results"]=(selected.reset_index(drop=True),pts)
+            st.session_state["snap_results_metadata"]={"season":int(season),"week":int(week),"teams":teams}
+        except Exception as exc:
+            st.error(f"Simulation failed: {exc}")
 if "snap_summary" in st.session_state:
     summary=st.session_state["snap_summary"]
     st.subheader("Simulated player statistics")
