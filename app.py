@@ -1464,7 +1464,8 @@ SHOWDOWN_DEFAULTS = {
     "sd_n_lineups": 20, "sd_max_player_exp": 0.75, "sd_max_cpt_exp": 0.50,
     "sd_min_unique": 2, "sd_min_salary": 38000, "sd_sims": 20000,
     "sd_candidate_bank": 6000, "sd_strategy": "Tournament Ceiling",
-    "sd_min_standard": "Off", "sd_allow_deep_punt": True,
+    "sd_min_standard": "Balanced GPP", "sd_allow_deep_punt": False,
+    "sd_player_salary_floor": 2000,
     "sd_locks": [], "sd_excludes": [], "sd_cpt_excludes": [],
 }
 
@@ -1755,7 +1756,7 @@ def showdown_viability_flags(players, sims, standard="Balanced GPP"):
         rows.append({"Viable":bool(viable),"Deep Punt OK":bool(deep_ok),"Viability Tests":int(tests)})
     return pd.DataFrame(rows,index=players.index)
 
-def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salary=44000, max_salary=50000, seed=316, min_standard="Balanced GPP", allow_deep_punt=True):
+def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salary=44000, max_salary=50000, seed=316, min_standard="Balanced GPP", allow_deep_punt=True, min_player_salary=2000):
     """V1.7a performance fix: same V1.7 construction logic, precomputed arrays.
 
     The expensive player metrics and roster metadata are calculated once. Candidate
@@ -1781,6 +1782,10 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
     viable=flags["Viable"].to_numpy(dtype=bool)
     deep_ok=flags["Deep Punt OK"].to_numpy(dtype=bool)
 
+    # Hard per-player floor and nonzero modeled opportunity; never relax via deep-punt toggle.
+    # K/DST are judged on scoring opportunities, not offensive touches.
+    eligible=(flex_salary>=int(min_player_salary)) & (sim_p90>=3.0) & (prob5>=0.05) & (sim_mean>=1.0)
+    eligible &= np.array([bool(v) for v in players.get("Role CPT Eligible",pd.Series(True,index=players.index))],dtype=bool) | np.isin(pos,["K","DST","D"])
     core=np.zeros(n,dtype=bool); relief=np.zeros(n,dtype=bool); captain_ok=np.zeros(n,dtype=bool)
     for i in range(n):
         if pos[i] in ["QB","K","DST","D"]:
@@ -1789,13 +1794,14 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
             core[i]=(sim_mean[i]>=3.25 and sim_p75[i]>=4.0 and sim_p90[i]>=7.0 and prob5[i]>=0.20)
         relief[i]=(sim_p90[i]>=6.0 and prob5[i]>=0.15 and sim_mean[i]>=1.75)
         role_cpt_ok=bool(players.iloc[i].get("Role CPT Eligible",True))
-        captain_ok[i]=role_cpt_ok
+        captain_ok[i]=role_cpt_ok and eligible[i]
 
     mean_scale=np.maximum(sim_mean,0.10); p90_scale=np.maximum(sim_p90,0.10); ceiling_scale=np.maximum(sim_p95,0.10)
     weights=(0.40*mean_scale/mean_scale.max()+0.40*p90_scale/p90_scale.max()+0.20*ceiling_scale/ceiling_scale.max())
-    weights=np.maximum(weights,0.005)
+    weights=np.where(eligible,np.maximum(weights,0.005),0.0)
     weights=np.where(core,weights,weights*0.55)
     weights=np.where((~core)&(~relief),weights*0.35,weights)
+    if weights.sum()<=0: return [],flags
     weights=weights/weights.sum()
     cpt_weights=weights*captain_ok.astype(float)
     if cpt_weights.sum()>0: cpt_weights=cpt_weights/cpt_weights.sum()
@@ -1808,7 +1814,8 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
         if cpt_weights.sum()<=0: break
         c=int(rng.choice(n,p=cpt_weights))
         if not captain_ok[c]: continue
-        avail=all_idx[all_idx!=c]
+        avail=all_idx[(all_idx!=c)&eligible]
+        if len(avail)<5: break
         pw=weights[avail]; pw=pw/pw.sum()
         flex_idx=np.sort(rng.choice(avail,size=5,replace=False,p=pw)).astype(int)
         key=(c,tuple(flex_idx.tolist()))
@@ -2739,6 +2746,7 @@ elif view == "Single Game Showdown":
             q1,q2=st.columns(2)
             min_standard=q1.selectbox("Minimum player standard",["Off","Loose GPP","Balanced GPP","Strong Floor"],key="sd_min_standard",help="Screens players by their simulated scoring distribution, not salary. Captain must pass the selected standard.")
             allow_deep_punt=q2.checkbox("Allow one deep punt",key="sd_allow_deep_punt",help="Allows at most one player who misses the full standard, but only if the simulation still shows a legitimate scoring path.")
+            min_player_salary=st.selectbox("Minimum individual FLEX salary",options=[0,1000,1500,2000,2500,3000],index=3,key="sd_player_salary_floor",help="Hard per-player floor, including Captain. $2,000 default; every player must also pass a modeled scoring-opportunity gate.")
             names=players["Name"].tolist()
             locks=st.multiselect("Lock player(s)",names,key="sd_locks")
             excludes=st.multiselect("Exclude player(s)",names,key="sd_excludes")
@@ -2754,7 +2762,7 @@ elif view == "Single Game Showdown":
                         sim=simulate_game_scripts(players,sd_teams,int(n_sims))
                     else:
                         sim=simulate_showdown_players(players,sd_teams,int(n_sims))
-                    cands,viability=generate_showdown_candidates(players,sim,sd_teams,int(bank),int(min_salary),50000,min_standard=min_standard,allow_deep_punt=bool(allow_deep_punt))
+                    cands,viability=generate_showdown_candidates(players,sim,sd_teams,int(bank),int(min_salary),50000,min_standard=min_standard,allow_deep_punt=bool(allow_deep_punt),min_player_salary=int(min_player_salary))
                     ranked=rank_showdown_candidates(cands,strategy)
                     diagnostics=showdown_value_diagnostics(players,sim)
                     diagnostics=diagnostics.join(viability[["Viable","Deep Punt OK","Viability Tests"]])
