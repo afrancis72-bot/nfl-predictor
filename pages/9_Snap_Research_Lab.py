@@ -5,6 +5,7 @@ import numpy as np
 import streamlit as st
 from historical_usage import download_weekly_stats, build_usage_priors, apply_usage_priors, usage_audit
 from snap_level_research import simulate_snaps, summarize_player_props
+from snap_portfolio_research import build_research_portfolio
 
 st.title("Snap-by-snap Research Lab")
 st.warning("Experimental: uncalibrated simulation. Do not use for wagering or live entries.")
@@ -101,37 +102,17 @@ if "snap_summary" in st.session_state:
     st.dataframe(summary,use_container_width=True)
     st.download_button("Download player means, medians and P90",summary.to_csv(index=False),"snap_player_statistics.csv","text/csv")
     pool,pts=st.session_state["snap_results"]
-    salaries=pd.to_numeric(pool["FLEX Salary"],errors="coerce").to_numpy()
-    eligible=np.where(salaries>=2000)[0]
-    mean=pts.mean(axis=0)
-    p90=np.quantile(pts,.90,axis=0)
-    candidates=[]
-    # Enumerate captain seeds and diversify greedily. This is a research heuristic,
-    # not the production contest-ROI portfolio optimizer.
-    for cap in sorted(eligible,key=lambda i:-p90[i])[:min(20,len(eligible))]:
-        cap_cost=int(round(salaries[cap]*1.5))
-        if cap_cost>50000: continue
-        others=sorted([i for i in eligible if i!=cap],key=lambda i:-(.7*mean[i]+.3*p90[i]))
-        selected=[cap];spent=cap_cost
-        for idx in others:
-            if len(selected)==6:break
-            if spent+salaries[idx]<=50000:
-                selected.append(idx);spent+=salaries[idx]
-        if len(selected)!=6:continue
-        if len(set(pool.iloc[selected]["TeamAbbrev"]))!=2:continue
-        score=float(1.5*mean[cap]+sum(mean[i] for i in selected[1:]))
-        candidates.append((score,selected,int(spent)))
-    chosen=[];captains=set()
-    for score,ids,cost in sorted(candidates,reverse=True):
-        if ids[0] in captains:continue
-        chosen.append({"CPT":pool.iloc[ids[0]]["Name"],**{f"FLEX{i}":pool.iloc[j]["Name"] for i,j in enumerate(ids[1:],1)},"Salary":cost,"Simulated mean DK":round(score,2)})
-        captains.add(ids[0])
-        if len(chosen)==5:break
+    try:
+        lineups=build_research_portfolio(pool,pts,count=5,seed=316)
+        chosen=lineups.to_dict("records")
+    except Exception as exc:
+        st.error(f"Research portfolio construction failed: {exc}")
+        chosen=[]
     st.subheader("Five research lineups")
     if len(chosen)<5:
-        st.warning(f"Only {len(chosen)} feasible captain-diversified research lineups found. K/DST not modeled; no fabricated players added.")
+        st.warning(f"Only {len(chosen)} feasible diversified research lineups found. K/DST not modeled; no fabricated players added.")
     if chosen:
         lineups=pd.DataFrame(chosen)
         st.dataframe(lineups,use_container_width=True)
         st.download_button("Download research lineups",lineups.to_csv(index=False),"snap_five_research_lineups.csv","text/csv")
-    st.info("Research-only: missing real-time depth chart, injuries, defensive stats, and historical calibration. DK IDs are not included, so this is NOT a DK entry upload file.")
+    st.info("Research-only: candidate lineups are sampled, not globally optimized. Scenario scores are not contest ROI or winning probabilities. Real-time depth charts, injuries, defensive stats, and historical calibration remain missing. DK IDs are not included, so this is NOT a DK entry upload file.")
