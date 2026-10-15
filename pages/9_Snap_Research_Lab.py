@@ -8,6 +8,7 @@ from snap_level_research import simulate_snaps, summarize_player_props
 from snap_portfolio_research import build_research_portfolio
 
 st.title("Snap-by-snap Research Lab")
+st.caption("Research build: 2026-10-14 / portfolio-v2 / commit-marker-42a8a96")
 st.warning("Experimental: uncalibrated simulation. Do not use for wagering or live entries.")
 st.caption("Historical data is restricted to weeks before the selected matchup. Upload a pre-lock salary pool with one row per player: Name, TeamAbbrev, Position, FLEX Salary. For DK showdown exports, prepare one FLEX row per player.")
 salary_file=st.file_uploader("Showdown FLEX player pool CSV",type=["csv"],key="snap_pool")
@@ -109,6 +110,7 @@ if "snap_summary" in st.session_state:
         st.error(f"Research portfolio construction failed: {exc}")
         chosen=[]
     st.subheader("Five research lineups")
+    st.caption("Portfolio engine: scenario-sampled v2; export includes Portfolio research score.")
     if len(chosen)<5:
         st.warning(f"Only {len(chosen)} feasible diversified research lineups found. K/DST not modeled; no fabricated players added.")
     if chosen:
