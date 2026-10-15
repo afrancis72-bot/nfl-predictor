@@ -9,7 +9,7 @@ import pandas as pd
 
 POSITIONS = {"QB", "RB", "WR", "TE", "K", "DST", "D"}
 
-def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
+def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense_profiles=None):
     """Return (DK points [games, players], individual per-game stats).
 
     Stats are long-form: game, player_index, team, name, position, pass_att,
@@ -78,12 +78,28 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
         else:
             w=np.maximum(salary[ids],100.)**power
         return int(rng.choice(ids,p=w/w.sum()))
+    # Explicit, optional opponent profiles. Neutral defaults are disclosed, not
+    # inferred from sportsbook prices. Values should be measured from pregame data.
+    defense_profiles = defense_profiles or {}
+    defense = {}
+    for t in teams:
+        d = defense_profiles.get(t, {})
+        defense[t] = {
+            "pass_yards_factor": float(np.clip(d.get("pass_yards_factor", 1.), .65, 1.35)),
+            "run_yards_factor": float(np.clip(d.get("run_yards_factor", 1.), .65, 1.35)),
+            "completion_delta": float(np.clip(d.get("completion_delta", 0.), -.15, .15)),
+        }
     for g in range(int(n_games)):
+        # One shared game-level environment induces correlated player outcomes.
+        # Separate team-level form lets good defenses occasionally have bad games.
+        pace = float(np.clip(rng.lognormal(0, .09), .78, 1.28))
+        form = {t: float(np.clip(rng.normal(1., .10), .72, 1.30)) for t in teams}
+        defense_form = {t: float(np.clip(rng.normal(1., .10), .72, 1.30)) for t in teams}
         score={t:0 for t in teams}
         offense=teams[g%2]
         elapsed=0
         while elapsed < 3600:
-            defense=teams[1] if offense==teams[0] else teams[0]
+            opponent=teams[1] if offense==teams[0] else teams[0]
             ids=team_ids[offense]
             qb=qbs[offense]
             rushers=ids[np.isin(pos[ids],["RB","QB","WR"])]
@@ -98,14 +114,17 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
                 trailing=score[offense]<score[defense]
                 pass_prob=np.clip(qb_rates[offense]["base_pass_prob"]+(.07 if trailing else -.03)+(.06 if down>=3 else 0),.30,.86)
                 is_pass=rng.random()<pass_prob
-                elapsed+=int(rng.integers(19,42))
+                elapsed+=max(8,int(rng.integers(19,42)/pace))
                 if is_pass:
                     stats[g,qb,f["pass_att"]]+=1
                     target=pick(receivers,.9,"target_weight")
                     stats[g,target,f["targets"]]+=1
-                    if rng.random()<qb_rates[offense]["completion"]:
+                    completion = np.clip(qb_rates[offense]["completion"]
+                                         + defense[opponent]["completion_delta"]
+                                         + .09*(form[offense]-defense_form[opponent]), .30, .90)
+                    if rng.random()<completion:
                         avg=qb_rates[offense]["yards_per_completion"]
-                        yards=max(-2.,float(rng.normal(avg,max(4.,avg*.65))))
+                        yards=max(-2.,float(rng.normal(avg*defense[opponent]["pass_yards_factor"]*form[offense]/defense_form[opponent],max(4.,avg*.65))))
                         stats[g,qb,f["pass_cmp"]]+=1
                         stats[g,qb,f["pass_yd"]]+=yards
                         stats[g,target,f["receptions"]]+=1
@@ -118,7 +137,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
                     else: yards=0.
                 else:
                     runner=pick(rushers,.65,"rush_weight")
-                    yards=float(np.clip(rng.normal(4.4,5.0),-5,35))
+                    yards=float(np.clip(rng.normal(4.4*defense[opponent]["run_yards_factor"]*form[offense]/defense_form[opponent],5.0),-5,35))
                     stats[g,runner,f["rush_att"]]+=1
                     stats[g,runner,f["rush_yd"]]+=yards
                 field+=yards
@@ -144,7 +163,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
                             stats[g,kicker,f["fg_made"]]+=1
                             score[offense]+=3
                     break
-            offense=defense
+            offense=opponent
     pts=np.zeros((int(n_games),n),dtype=np.float32)
     s={key:stats[:,:,i] for key,i in f.items()}
     pts+=.04*s["pass_yd"]+4*s["pass_td"]-s["interceptions"]
