@@ -72,4 +72,5 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
         all_stats.append(stats)
     if not all_proj: raise ValueError("No matchups found")
     return (pd.concat(all_proj,ignore_index=True),
-            pd.concat(all_stats,ignore_index=True),audit,excluded,\n            pd.concat(all_omitted,ignore_index=True) if all_omitted else pd.DataFrame())
+            pd.concat(all_stats,ignore_index=True),audit,excluded,
+            pd.concat(all_omitted,ignore_index=True) if all_omitted else pd.DataFrame())
