@@ -2746,9 +2746,14 @@ elif view == "Single Game Showdown":
             eff_p,eff_c=_showdown_exposure_counts(int(n_lineups),float(max_player),float(max_cpt))
             st.caption(f"Effective small-portfolio limits: any player ≤ {eff_p}/{int(n_lineups)} lineups ({100*eff_p/int(n_lineups):.0f}%) • any Captain ≤ {eff_c}/{int(n_lineups)} ({100*eff_c/int(n_lineups):.0f}%). Percentages are rounded up to the nearest attainable lineup count.")
             st.info("V2 defaults: 20 lineups • 75% safety player ceiling • 50% Captain ceiling • 2 minimum uniques • $38,000 salary floor • 20,000 correlated game simulations • 6,000 candidates • viability screen Off. Rare legal constructions are probability-weighted rather than prohibited. V1.7 keeps opportunity-first candidate generation and adds a bounded role sanity calibration for weekly-model skill players. DK PPG is used only as a 20% role anchor when available; it never replaces the weekly projection. V2 no longer bans unusual legal constructions (including DST Captain, double-DST, no-QB, or unusual salary usage) merely because they are rare; simulated outcomes and portfolio value determine representation.")
+            experimental_script=st.checkbox("EXPERIMENTAL: possession-driven game-script simulation (research only)",value=False,key="sd_exp_game_script",help="Prototype; not snap-by-snap or historically calibrated. Existing engine remains default.")
             if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate",disabled=bool(missing_qb)):
                 with st.spinner("Simulating correlated game outcomes and optimizing Showdown lineups..."):
-                    sim=simulate_showdown_players(players,sd_teams,int(n_sims))
+                    if experimental_script:
+                        from showdown_game_script_engine import simulate_game_scripts
+                        sim=simulate_game_scripts(players,sd_teams,int(n_sims))
+                    else:
+                        sim=simulate_showdown_players(players,sd_teams,int(n_sims))
                     cands,viability=generate_showdown_candidates(players,sim,sd_teams,int(bank),int(min_salary),50000,min_standard=min_standard,allow_deep_punt=bool(allow_deep_punt))
                     ranked=rank_showdown_candidates(cands,strategy)
                     diagnostics=showdown_value_diagnostics(players,sim)
