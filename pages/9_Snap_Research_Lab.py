@@ -35,7 +35,7 @@ if st.button("Load historical usage and audit",type="primary"):
                 weekly=download_weekly_stats(int(season),f"/tmp/nflverse_stats_player_week_{int(season)}.csv")
             priors=build_usage_priors(weekly,int(week),int(season))
             merged=apply_usage_priors(pool,priors)
-            st.session_state["snap_pool"]=merged
+            st.session_state["snap_prepared_players"]=merged
             st.session_state["snap_weekly_audit"]=usage_audit(merged)
             st.session_state["snap_meta"]=(int(season),int(week))
         except Exception as exc:
@@ -46,7 +46,7 @@ if "snap_weekly_audit" in st.session_state:
     st.dataframe(audit,use_container_width=True)
     st.download_button("Download usage audit",audit.to_csv(index=False),"snap_usage_audit.csv","text/csv")
     st.caption("Only offensive players need historical opportunity verification. K/DST require separate models and are excluded from this initial research pool.")
-    offensive=st.session_state["snap_pool"].query("Position in ['QB','RB','WR','TE']").copy()
+    offensive=st.session_state["snap_prepared_players"].query("Position in ['QB','RB','WR','TE']").copy()
     missing=offensive[~offensive["usage_verified"]]
     if len(missing):
         st.error(f"{len(missing)} offensive players have fewer than two matched historical games. Resolve identity/team or remove them before running.")
