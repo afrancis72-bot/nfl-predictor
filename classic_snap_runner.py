@@ -14,7 +14,7 @@ from snap_level_research import simulate_snaps, summarize_player_props
 def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
                            *, season: int, week: int, starting_qbs: dict,
                            excluded_names=(), n_games: int=200, seed: int=316,
-                           min_history_games: int=2):
+                           min_history_games: int=2, progress_callback=None):
     """Return projections, per-game simulated outcomes, audit and excluded players.
 
     Raises rather than silently simulating with incomplete personnel.
@@ -29,7 +29,10 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
     priors=build_usage_priors(weekly_stats, as_of_week=week, season=season)
     if priors.empty: raise ValueError("No matching pregame usage priors; inspect season/week and data source")
     all_proj=[]; all_stats=[]; all_omitted=[]
-    for game_index, (game, raw) in enumerate(offense.groupby("matchup",sort=True)):
+    groups=list(offense.groupby("matchup",sort=True))
+    for game_index, (game, raw) in enumerate(groups):
+        if progress_callback is not None:
+            progress_callback(game_index,len(groups),game,"running")
         teams=game.split("@")
         missing=[t for t in teams if t not in starting_qbs]
         if missing: raise ValueError(f"{game}: missing confirmed starting QB for {missing}")
@@ -70,6 +73,8 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
         stats["scenario"]=stats["game"]
         stats["dk_id"]=g.iloc[stats["player_index"].to_numpy()]["ID"].to_numpy()
         all_stats.append(stats)
+        if progress_callback is not None:
+            progress_callback(game_index+1,len(groups),game,"completed")
     if not all_proj: raise ValueError("No matchups found")
     return (pd.concat(all_proj,ignore_index=True),
             pd.concat(all_stats,ignore_index=True),audit,excluded,
