@@ -6,9 +6,10 @@ import streamlit as st
 from historical_usage import download_weekly_stats, build_usage_priors, apply_usage_priors, usage_audit
 from snap_level_research import simulate_snaps, summarize_player_props
 from snap_portfolio_research import build_research_portfolio
+from defensive_priors_research import build_defense_profiles
 
 st.title("Snap-by-snap Research Lab")
-st.caption("Research build: 2026-10-14 / football-mechanics-v2 / commit-01eb48d")
+st.caption("Research build: 2026-10-14 / defense-priors-v1 / backtest-framework-v1")
 st.warning("Experimental: uncalibrated simulation. Do not use for wagering or live entries.")
 st.caption("Historical data is restricted to weeks before the selected matchup. Upload a pre-lock salary pool with one row per player: Name, TeamAbbrev, Position, FLEX Salary. For DK showdown exports, prepare one FLEX row per player.")
 salary_file=st.file_uploader("Showdown FLEX player pool CSV",type=["csv"],key="snap_pool")
@@ -44,6 +45,19 @@ if st.button("Load historical usage and audit",type="primary"):
             st.session_state["snap_meta"]=(int(season),int(week))
         except Exception as exc:
             st.error(f"Data ingestion failed: {exc}")
+st.subheader("Optional historical defense data")
+st.caption("Upload nflverse play-by-play with season, week, defteam, posteam, play_type, yards_gained. Only earlier weeks are used. No sportsbook data enters the simulator.")
+defense_file=st.file_uploader("Pregame play-by-play CSV for defensive priors",type=["csv"],key="snap_defense_pbp")
+if defense_file is not None:
+    try:
+        profiles,def_audit=build_defense_profiles(pd.read_csv(defense_file),int(season),int(week))
+        st.session_state["snap_defense_profiles"]=profiles
+        st.session_state["snap_defense_meta"]=(int(season),int(week))
+        st.dataframe(def_audit,hide_index=True,use_container_width=True)
+        st.download_button("Download defense audit",def_audit.to_csv(index=False),"snap_defense_audit.csv","text/csv")
+    except Exception as exc:
+        st.session_state.pop("snap_defense_profiles",None)
+        st.error(f"Defensive priors unavailable: {exc}")
 if "snap_weekly_audit" in st.session_state:
     audit=st.session_state["snap_weekly_audit"]
     st.subheader("Historical usage audit")
@@ -91,7 +105,13 @@ if "snap_weekly_audit" in st.session_state:
                 t=selected[selected["TeamAbbrev"]==team]
                 if not (t["rush_weight"]>0).any() or not (t["target_weight"]>0).any():
                     raise ValueError(f"{team}: no verified rushing or receiving opportunity after exclusions")
-            pts,stats=simulate_snaps(selected,teams,n_games=int(games),seed=316)
+            profiles=st.session_state.get("snap_defense_profiles",{})
+            if st.session_state.get("snap_defense_meta")!=(int(season),int(week)):
+                profiles={}
+            missing_def=[t for t in teams if t not in profiles]
+            if missing_def:
+                st.warning("Neutral defensive priors for: "+", ".join(missing_def)+". Upload historical play-by-play for measured matchup effects.")
+            pts,stats=simulate_snaps(selected,teams,n_games=int(games),seed=316,defense_profiles=profiles)
             st.session_state["snap_summary"]=summarize_player_props(stats)
             st.session_state["snap_results"]=(selected.reset_index(drop=True),pts)
             st.session_state["snap_results_metadata"]={"season":int(season),"week":int(week),"teams":teams}
