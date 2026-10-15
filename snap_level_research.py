@@ -98,7 +98,8 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
                         stats[g,target,f["rec_yd"]]+=yards
                     elif rng.random()<.055:
                         stats[g,qb,f["interceptions"]]+=1
-                        stats[g,team_ids[defense][0],f["turnovers"]]+=1
+                        # Defensive turnover belongs to a team DST, not an arbitrary offensive player.
+                        # DST scoring is intentionally not modeled in this research simulator.
                         break
                     else: yards=0.
                 else:
@@ -136,7 +137,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
     pts+=.1*(s["rush_yd"]+s["rec_yd"])+6*(s["rush_td"]+s["rec_td"])
     pts+=s["receptions"]+3*s["fg_made"]+s["xp_made"]
     pts+=3*(s["pass_yd"]>=300)+3*(s["rush_yd"]>=100)+3*(s["rec_yd"]>=100)
-    pts+=2*s["turnovers"]+s["sacks"]
+    # No defensive points awarded to offensive players; DST scoring is out of scope.
     long=pd.DataFrame(stats.reshape(-1,len(fields)),columns=fields)
     long.insert(0,"game",np.repeat(np.arange(int(n_games)),n))
     long.insert(1,"player_index",np.tile(np.arange(n),int(n_games)))
