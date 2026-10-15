@@ -35,6 +35,8 @@ if st.button("Load historical usage and audit",type="primary"):
                 weekly=download_weekly_stats(int(season),f"/tmp/nflverse_stats_player_week_{int(season)}.csv")
             priors=build_usage_priors(weekly,int(week),int(season))
             merged=apply_usage_priors(pool,priors)
+            st.session_state.pop("snap_summary",None)
+            st.session_state.pop("snap_results",None)
             st.session_state["snap_prepared_players"]=merged
             st.session_state["snap_weekly_audit"]=usage_audit(merged)
             st.session_state["snap_meta"]=(int(season),int(week))
