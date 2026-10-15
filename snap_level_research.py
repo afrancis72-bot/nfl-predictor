@@ -70,28 +70,40 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
         # Approximately 60 offensive plays per team; game state still modifies mix.
         qb_rates[t]={"base_pass_prob":float(np.clip(attempts/60.,.36,.76)),
                      "completion":float(completion),"yards_per_completion":float(ypa/completion)}
+    # Convert all player inputs to NumPy once, outside the snap loop.
+    numeric_cache={}
+    for column in ("rush_weight","target_weight","snap_share",
+                   "receiver_catch_rate","receiver_yards_per_catch",
+                   "rusher_yards_per_carry"):
+        if column in p:
+            numeric_cache[column]=pd.to_numeric(p[column],errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)
+    personnel_cache={}
+    for t,ids in team_ids.items():
+        for positions in (("WR",),("TE",),("RB",)):
+            personnel_cache[(t,positions)]=ids[np.isin(pos[ids],positions)]
     def player_prior(index, column, fallback, lo, hi):
-        if column not in p: return fallback
-        v=pd.to_numeric(pd.Series([p.iloc[index][column]]),errors="coerce").iloc[0]
+        values=numeric_cache.get(column)
+        if values is None: return fallback
+        v=values[index]
         if not np.isfinite(v) or v<=0: return fallback
-        # Shrink sparse player efficiency toward population-level priors.
-        return float(np.clip(.65*float(v)+.35*fallback,lo,hi))
+        return float(np.clip(.65*v+.35*fallback,lo,hi))
     def personnel_subset(ids, position_set, usage_col, limit, game_modifiers=None):
-        """Sample eligible on-field personnel without allowing every receiver on every snap."""
-        eligible=ids[np.isin(pos[ids],position_set)]
+        """Sample on-field personnel using precomputed NumPy arrays."""
+        eligible=personnel_cache.get((str(team[ids[0]]),tuple(position_set))) if len(ids) else None
+        if eligible is None:
+            eligible=ids[np.isin(pos[ids],position_set)]
         if not len(eligible): return eligible
-        if usage_col in p:
-            weights=pd.to_numeric(p[usage_col],errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)[eligible]
-        else:
-            weights=np.maximum(salary[eligible],100.)
+        values=numeric_cache.get(usage_col)
+        weights=values[eligible].copy() if values is not None else np.maximum(salary[eligible],100.).astype(float)
         if game_modifiers:
-            weights=weights*np.array([game_modifiers.get(int(i),1.) for i in eligible])
-        if weights.sum()<=0: return eligible[:0]
+            weights*=np.array([game_modifiers.get(int(i),1.) for i in eligible])
+        total=weights.sum()
+        if total<=0: return eligible[:0]
         count=min(int(limit),len(eligible))
-        return rng.choice(eligible,size=count,replace=False,p=weights/weights.sum())
+        return rng.choice(eligible,size=count,replace=False,p=weights/total)
     def pick(ids, power=1.0, usage_col=None):
         if use_history and usage_col:
-            w=p[usage_col].to_numpy(dtype=float)[ids]
+            w=numeric_cache[usage_col][ids]
             if w.sum()<=0:
                 raise ValueError("No verified "+usage_col+" opportunities")
         else:
@@ -201,7 +213,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                 elapsed+=max(5,int(clock_base/pace))
                 if is_pass:
                     if use_history:
-                        weights=p["target_weight"].to_numpy(dtype=float)[active_receivers]
+                        weights=numeric_cache["target_weight"][active_receivers]
                         weights=weights*np.array([target_form[offense][int(i)] for i in active_receivers])
                         if weights.sum()<=0: raise ValueError("No verified target opportunities")
                         target=int(rng.choice(active_receivers,p=weights/weights.sum()))
