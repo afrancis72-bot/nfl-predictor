@@ -7,9 +7,10 @@ from historical_usage import download_weekly_stats, build_usage_priors, apply_us
 from snap_level_research import simulate_snaps, summarize_player_props
 from snap_portfolio_research import build_research_portfolio
 from defensive_priors_research import build_defense_profiles
+from historical_replay_research import replay_game
 
 st.title("Snap-by-snap Research Lab")
-st.caption("Research build: 2026-10-14 / defense-priors-v1 / backtest-framework-v1")
+st.caption("Research build: 2026-10-14 / personnel-v1 / historical-replay-v1")
 st.warning("Experimental: uncalibrated simulation. Do not use for wagering or live entries.")
 st.caption("Historical data is restricted to weeks before the selected matchup. Upload a pre-lock salary pool with one row per player: Name, TeamAbbrev, Position, FLEX Salary. For DK showdown exports, prepare one FLEX row per player.")
 salary_file=st.file_uploader("Showdown FLEX player pool CSV",type=["csv"],key="snap_pool")
@@ -152,3 +153,35 @@ if "snap_summary" in st.session_state:
         st.dataframe(lineups,use_container_width=True)
         st.download_button("Download research lineups",lineups.to_csv(index=False),"snap_five_research_lineups.csv","text/csv")
     st.info("Research-only: candidate lineups are sampled, not globally optimized. Scenario scores are not contest ROI or winning probabilities. Real-time depth charts, injuries, measured opponent defense profiles, and historical calibration remain missing. DK IDs are not included, so this is NOT a DK entry upload file.")
+
+st.divider()
+st.subheader("Historical game replay — held-out evaluation")
+st.caption("Use a previously played matchup. Load its verified pregame roster above, and upload play-by-play plus observed player statistics. Observations are not passed into the simulator.")
+actual_file=st.file_uploader("Held-out actual player stats (player, stat, actual)",type=["csv"],key="snap_replay_actual")
+matchup_id=st.text_input("Historical matchup ID",value="",placeholder="2025_06_SEA_DEN")
+if st.button("Run historical replay",disabled=actual_file is None or "snap_prepared_players" not in st.session_state):
+    try:
+        if defense_file is None:
+            raise ValueError("Historical play-by-play CSV required for replay")
+        if st.session_state.get("snap_meta")!=(int(season),int(week)):
+            raise ValueError("Reload pregame player usage for the selected season/week")
+        if len(selected_qbs)!=2:
+            raise ValueError("Confirm both historical starting quarterbacks")
+        if not matchup_id.strip():
+            raise ValueError("Provide a unique historical matchup ID")
+        if len(selected)==0 or not selected["usage_verified"].fillna(False).all():
+            raise ValueError("Pregame player pool must be verified")
+        report=replay_game(matchup_id.strip(),int(season),int(week),teams,selected,
+                           pd.read_csv(defense_file),pd.read_csv(actual_file),
+                           n_games=int(games),seed=316)
+        st.session_state["snap_replay_report"]=report
+    except Exception as exc:
+        st.error(f"Historical replay failed: {exc}")
+if "snap_replay_report" in st.session_state:
+    report=st.session_state["snap_replay_report"]
+    st.dataframe(report["metrics"],hide_index=True,use_container_width=True)
+    st.download_button("Download replay calibration report",
+        report["metrics"].to_csv(index=False),"snap_replay_calibration.csv","text/csv")
+    st.download_button("Download replay player errors",
+        report["details"].to_csv(index=False),"snap_replay_player_errors.csv","text/csv")
+    st.caption("A single matchup is diagnostic, not a sufficient calibration sample. Use multiple held-out games before drawing predictive conclusions.")
