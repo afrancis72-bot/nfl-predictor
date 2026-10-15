@@ -3,6 +3,7 @@
 The page deliberately fails closed on unverified usage and unknown starters.
 """
 import io
+import time
 import pandas as pd
 import streamlit as st
 from classic_slate_research import prepare_classic_slate
@@ -39,14 +40,19 @@ if salary_file is not None:
         ready=len(starters)==2*len(audit)
         if not ready: st.warning("Select one confirmed starting QB for every team before running.")
         if st.button("Run main slate snap simulations",disabled=not ready):
+            started=time.perf_counter()
+            stage=st.empty()
             progress=st.progress(0,text="Preparing historical data...")
+            stage.info("Stage 1: loading historical data")
             def report_progress(done,total,matchup,status):
                 progress.progress(done/total,text=f"{done}/{total} matchups finished — {matchup} {status}")
+                stage.info(f"Stage 3: {matchup} {status}; elapsed {time.perf_counter()-started:.1f}s")
             with st.spinner("Running snap-level simulations..."):
                 if weekly_file is not None:
                     weekly=pd.read_csv(weekly_file)
                 else:
                     weekly=download_weekly_stats(int(season),"/tmp/teamai2_classic_weekly.csv")
+                stage.info(f"Stage 2: validating historical usage; elapsed {time.perf_counter()-started:.1f}s")
                 priors=build_usage_priors(weekly,as_of_week=int(week),season=int(season))
                 diagnostic=usage_audit(apply_usage_priors(offense,priors))
                 st.session_state["classic_usage_audit"]=diagnostic
@@ -55,6 +61,7 @@ if salary_file is not None:
                     excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()],
                     n_games=int(n_games),progress_callback=report_progress)
             progress.progress(1.0,text="All matchups completed")
+            stage.success(f"Finished in {time.perf_counter()-started:.1f} seconds")
             st.success("Research simulation completed — incomplete player coverage; not entry-ready")
             if not omitted_players.empty:
                 st.warning(f"{len(omitted_players)} players omitted due to insufficient matched history. This can include important players; do not treat results as calibrated.")
