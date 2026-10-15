@@ -57,6 +57,9 @@ def build_usage_priors(weekly, as_of_week, season=2026, recent_games=5):
         receptions=("receptions","sum"))
     for c in ("attempts","completions","passing_yards","carries","targets","rushing_yards","receiving_yards","receptions"):
         out[c+"_per_game"]=out[c]/out.games.clip(lower=1)
+    out["receiver_catch_rate"]=np.where(out["targets"]>0,out["receptions"]/out["targets"].clip(lower=1),0.)
+    out["receiver_yards_per_catch"]=np.where(out["receptions"]>0,out["receiving_yards"]/out["receptions"].clip(lower=1),0.)
+    out["rusher_yards_per_carry"]=np.where(out["carries"]>0,out["rushing_yards"]/out["carries"].clip(lower=1),0.)
     out["qb_yards_per_attempt"]=np.where(out["attempts"]>0,out["passing_yards"]/out["attempts"].clip(lower=1),0.)
     out["qb_completion_rate"]=np.where(out["attempts"]>0,out["completions"]/out["attempts"].clip(lower=1),0.)
     return out
@@ -77,5 +80,5 @@ def apply_usage_priors(players, priors, min_games=2):
 
 def usage_audit(merged):
     columns=["Name","TeamAbbrev","Position","games","usage_verified",
-             "carries_per_game","targets_per_game","attempts_per_game","passing_yards_per_game","qb_yards_per_attempt","qb_completion_rate","rush_weight","target_weight"]
+             "carries_per_game","targets_per_game","attempts_per_game","passing_yards_per_game","qb_yards_per_attempt","qb_completion_rate","receiver_catch_rate","receiver_yards_per_catch","rusher_yards_per_carry","rush_weight","target_weight"]
     return merged[[c for c in columns if c in merged]].copy()
