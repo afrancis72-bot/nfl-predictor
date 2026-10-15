@@ -70,6 +70,12 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
         # Approximately 60 offensive plays per team; game state still modifies mix.
         qb_rates[t]={"base_pass_prob":float(np.clip(attempts/60.,.36,.76)),
                      "completion":float(completion),"yards_per_completion":float(ypa/completion)}
+    def player_prior(index, column, fallback, lo, hi):
+        if column not in p: return fallback
+        v=pd.to_numeric(pd.Series([p.iloc[index][column]]),errors="coerce").iloc[0]
+        if not np.isfinite(v) or v<=0: return fallback
+        # Shrink sparse player efficiency toward population-level priors.
+        return float(np.clip(.65*float(v)+.35*fallback,lo,hi))
     def pick(ids, power=1.0, usage_col=None):
         if use_history and usage_col:
             w=p[usage_col].to_numpy(dtype=float)[ids]
@@ -141,11 +147,12 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                     stats[g,qb,f["pass_att"]]+=1
                     target=pick(receivers,.9,"target_weight")
                     stats[g,target,f["targets"]]+=1
-                    completion = np.clip(qb_rates[offense]["completion"]
+                    receiver_rate=player_prior(target,"receiver_catch_rate",.66,.35,.90)
+                    completion = np.clip(.55*qb_rates[offense]["completion"]+.45*receiver_rate
                                          + defense[opponent]["completion_delta"]
                                          + .09*(form[offense]-defense_form[opponent]), .30, .90)
                     if rng.random()<completion:
-                        avg=qb_rates[offense]["yards_per_completion"]
+                        avg=.55*qb_rates[offense]["yards_per_completion"]+.45*player_prior(target,"receiver_yards_per_catch",11.,4.,25.)
                         yards=max(-2.,float(rng.normal(avg*defense[opponent]["pass_yards_factor"]*form[offense]/defense_form[opponent],max(4.,avg*.65))))
                         stats[g,qb,f["pass_cmp"]]+=1
                         stats[g,qb,f["pass_yd"]]+=yards
@@ -159,7 +166,8 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                     else: yards=0.
                 else:
                     runner=pick(rushers,.65,"rush_weight")
-                    yards=float(np.clip(rng.normal(4.4*defense[opponent]["run_yards_factor"]*form[offense]/defense_form[opponent],5.0),-5,35))
+                    base_run=player_prior(runner,"rusher_yards_per_carry",4.4,2.,8.)
+                    yards=float(np.clip(rng.normal(base_run*defense[opponent]["run_yards_factor"]*form[offense]/defense_form[opponent],5.0),-5,35))
                     stats[g,runner,f["rush_att"]]+=1
                     stats[g,runner,f["rush_yd"]]+=yards
                 # A completed play cannot gain more than the distance to goal.
