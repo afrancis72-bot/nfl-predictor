@@ -80,8 +80,8 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
         """Sample eligible on-field personnel without allowing every receiver on every snap."""
         eligible=ids[np.isin(pos[ids],position_set)]
         if not len(eligible): return eligible
-        if use_history and usage_col:
-            weights=p[usage_col].to_numpy(dtype=float)[eligible]
+        if usage_col in p:
+            weights=pd.to_numeric(p[usage_col],errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)[eligible]
         else:
             weights=np.maximum(salary[eligible],100.)
         if game_modifiers:
@@ -178,9 +178,9 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                 heavy=(to_go<=2 and down<=2 and rng.random()<.65)
                 wr_count=2 if heavy else 3
                 te_count=2 if heavy else 1
-                active_wr=personnel_subset(ids,["WR"],"target_weight",wr_count,target_form[offense])
-                active_te=personnel_subset(ids,["TE"],"target_weight",te_count,target_form[offense])
-                active_rb=personnel_subset(ids,["RB"],"rush_weight",1)
+                active_wr=personnel_subset(ids,["WR"],"snap_share" if "snap_share" in p else "target_weight",wr_count,target_form[offense])
+                active_te=personnel_subset(ids,["TE"],"snap_share" if "snap_share" in p else "target_weight",te_count,target_form[offense])
+                active_rb=personnel_subset(ids,["RB"],"snap_share" if "snap_share" in p else "rush_weight",1)
                 active_receivers=np.concatenate([active_wr,active_te,active_rb])
                 active_rushers=np.concatenate([active_rb,ids[pos[ids]=="QB"],active_wr])
                 if len(active_receivers)==0 or len(active_rushers)==0:
