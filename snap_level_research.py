@@ -215,6 +215,11 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                         to_go+=loss
                         down+=1
                         stats[g,qb,f["sacks"]]+=1
+                        # Strip-sack turnovers are credited to the ball carrier.
+                        if rng.random()<.035:
+                            stats[g,qb,f["turnovers"]]+=1
+                            next_field=float(np.clip(100-field,1,99))
+                            break
                         if down>4: next_field=float(np.clip(100-field,1,99)); break
                         continue
                     stats[g,qb,f["pass_att"]]+=1
@@ -244,6 +249,11 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                     yards=float(np.clip(rng.normal(base_run*defense[opponent]["run_yards_factor"]*form[offense]/defense_form[opponent],5.0),-5,35))
                     stats[g,runner,f["rush_att"]]+=1
                     stats[g,runner,f["rush_yd"]]+=yards
+                    # Ball security is separate from rushing efficiency.
+                    if rng.random()<.008:
+                        stats[g,runner,f["turnovers"]]+=1
+                        next_field=float(np.clip(100-(field+yards),1,99))
+                        break
                 # A completed play cannot gain more than the distance to goal.
                 if field+yards>=100:
                     excess=field+yards-100
@@ -279,7 +289,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
             offense=opponent
     pts=np.zeros((int(n_games),n),dtype=np.float32)
     s={key:stats[:,:,i] for key,i in f.items()}
-    pts+=.04*s["pass_yd"]+4*s["pass_td"]-s["interceptions"]
+    pts+=.04*s["pass_yd"]+4*s["pass_td"]-s["interceptions"]-s["turnovers"]
     pts+=.1*(s["rush_yd"]+s["rec_yd"])+6*(s["rush_td"]+s["rec_td"])
     pts+=s["receptions"]+3*s["fg_made"]+s["xp_made"]
     pts+=3*(s["pass_yd"]>=300)+3*(s["rush_yd"]>=100)+3*(s["rec_yd"]>=100)
