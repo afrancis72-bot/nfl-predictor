@@ -57,6 +57,19 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
         if len(qs)!=1:
             raise ValueError(f"{t}: require exactly one confirmed starting QB")
         qbs[t]=int(qs[0])
+    # Pregame QB history drives distinct team passing volume and efficiency.
+    qb_rates={}
+    for t,qb in qbs.items():
+        def rate(column, fallback):
+            if column not in p: return fallback
+            v=pd.to_numeric(pd.Series([p.iloc[qb][column]]),errors="coerce").iloc[0]
+            return float(v) if np.isfinite(v) and v>0 else fallback
+        attempts=rate("attempts_per_game",35.)
+        completion=np.clip(rate("qb_completion_rate",.62),.40,.82)
+        ypa=np.clip(rate("qb_yards_per_attempt",7.),4.,11.)
+        # Approximately 60 offensive plays per team; game state still modifies mix.
+        qb_rates[t]={"base_pass_prob":float(np.clip(attempts/60.,.36,.76)),
+                     "completion":float(completion),"yards_per_completion":float(ypa/completion)}
     def pick(ids, power=1.0, usage_col=None):
         if use_history and usage_col:
             w=p[usage_col].to_numpy(dtype=float)[ids]
@@ -83,15 +96,16 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
             for _ in range(14):
                 if elapsed>=3600: break
                 trailing=score[offense]<score[defense]
-                pass_prob=np.clip(.56+(.10 if trailing else -.04)+(.08 if down>=3 else 0),.35,.83)
+                pass_prob=np.clip(qb_rates[offense]["base_pass_prob"]+(.07 if trailing else -.03)+(.06 if down>=3 else 0),.30,.86)
                 is_pass=rng.random()<pass_prob
                 elapsed+=int(rng.integers(19,42))
                 if is_pass:
                     stats[g,qb,f["pass_att"]]+=1
                     target=pick(receivers,.9,"target_weight")
                     stats[g,target,f["targets"]]+=1
-                    if rng.random()<.61:
-                        yards=max(-2.,float(rng.normal(11,9)))
+                    if rng.random()<qb_rates[offense]["completion"]:
+                        avg=qb_rates[offense]["yards_per_completion"]
+                        yards=max(-2.,float(rng.normal(avg,max(4.,avg*.65))))
                         stats[g,qb,f["pass_cmp"]]+=1
                         stats[g,qb,f["pass_yd"]]+=yards
                         stats[g,target,f["receptions"]]+=1
