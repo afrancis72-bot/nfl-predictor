@@ -13,7 +13,7 @@ st.title("Main Slate Simulator — Research")
 st.caption("Experimental snap-by-snap research. No calibrated DST projection or entry-ready optimizer.")
 season=st.number_input("Season",min_value=1999,max_value=2100,value=2026,step=1)
 week=st.number_input("NFL week",min_value=1,max_value=22,value=6,step=1)
-n_games=st.number_input("Simulated games per matchup",min_value=1,max_value=100000,value=200,step=100)
+n_games=st.number_input("Simulated games per matchup",min_value=1,max_value=100000,value=10,step=10)
 salary_file=st.file_uploader("DraftKings main slate salary CSV",type="csv",key="classic_salaries")
 weekly_file=st.file_uploader("Historical weekly player stats CSV (optional)",type="csv",key="classic_history")
 exclusions=st.text_area("Excluded players (one full name per line)",value="Jalen Hurts\nTanner McKee\nCole Payton")
@@ -39,7 +39,10 @@ if salary_file is not None:
         ready=len(starters)==2*len(audit)
         if not ready: st.warning("Select one confirmed starting QB for every team before running.")
         if st.button("Run main slate snap simulations",disabled=not ready):
-            with st.spinner("Loading pregame history and running snap-level simulations..."):
+            progress=st.progress(0,text="Preparing historical data...")
+            def report_progress(done,total,matchup,status):
+                progress.progress(done/total,text=f"{done}/{total} matchups finished — {matchup} {status}")
+            with st.spinner("Running snap-level simulations..."):
                 if weekly_file is not None:
                     weekly=pd.read_csv(weekly_file)
                 else:
@@ -50,7 +53,8 @@ if salary_file is not None:
                 projections,stats,game_audit,excluded_players,omitted_players=run_classic_snap_slate(
                     salary,weekly,season=int(season),week=int(week),starting_qbs=starters,
                     excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()],
-                    n_games=int(n_games))
+                    n_games=int(n_games),progress_callback=report_progress)
+            progress.progress(1.0,text="All matchups completed")
             st.success("Research simulation completed — incomplete player coverage; not entry-ready")
             if not omitted_players.empty:
                 st.warning(f"{len(omitted_players)} players omitted due to insufficient matched history. This can include important players; do not treat results as calibrated.")
