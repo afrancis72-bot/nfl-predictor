@@ -8,7 +8,7 @@ import re
 import pandas as pd
 
 REQUIRED = {"Name", "ID", "Position", "Roster Position", "Salary", "Game Info", "TeamAbbrev"}
-MATCHUP = re.compile(r"^([A-Z]{2,3})@([A-Z]{2,3})\\s")
+MATCHUP = re.compile(r"^([A-Z]{2,3})@([A-Z]{2,3})\s")
 
 def prepare_classic_slate(salaries: pd.DataFrame, excluded_names=()):
     """Validate DraftKings classic export and return eligible pool plus matchup audit.
