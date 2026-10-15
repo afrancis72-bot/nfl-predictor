@@ -7,6 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 import io
 import urllib.request
+import re
+import unicodedata
 import numpy as np
 import pandas as pd
 
@@ -64,15 +66,31 @@ def build_usage_priors(weekly, as_of_week, season=2026, recent_games=5):
     out["qb_completion_rate"]=np.where(out["attempts"]>0,out["completions"]/out["attempts"].clip(lower=1),0.)
     return out
 
+def _canonical_team(team):
+    value=str(team).upper().strip()
+    return {"LA":"LAR","JAC":"JAX","WSH":"WAS"}.get(value,value)
+
+def _canonical_name(name):
+    value=unicodedata.normalize("NFKD",str(name)).encode("ascii","ignore").decode("ascii")
+    value=re.sub(r"[^a-zA-Z0-9 ]"," ",value).lower()
+    value=re.sub(r"\b(jr|sr|ii|iii|iv|v)\b","",value)
+    return " ".join(value.split())
+
 def apply_usage_priors(players, priors, min_games=2):
     """Strict identity and team matching; unknowns are NOT guessed."""
     p=players.copy()
     if not {"Name","TeamAbbrev"}.issubset(p):
         raise ValueError("Salary file needs Name and TeamAbbrev")
-    if priors.duplicated(["player_name","recent_team"]).any():
-        raise ValueError("Ambiguous player-name match; resolve player IDs")
-    merged=p.merge(priors,left_on=["Name","TeamAbbrev"],
-                   right_on=["player_name","recent_team"],how="left",validate="many_to_one")
+    left=p.copy()
+    right=priors.copy()
+    left["_team_key"]=left["TeamAbbrev"].map(_canonical_team)
+    left["_name_key"]=left["Name"].map(_canonical_name)
+    right["_team_key"]=right["recent_team"].map(_canonical_team)
+    right["_name_key"]=right["player_name"].map(_canonical_name)
+    if right.duplicated(["_name_key","_team_key"]).any():
+        raise ValueError("Ambiguous normalized player-name/team matches; resolve identities")
+    merged=left.merge(right,on=["_name_key","_team_key"],how="left",validate="many_to_one")
+    merged=merged.drop(columns=["_name_key","_team_key"])
     merged["usage_verified"]=merged["games"].fillna(0)>=min_games
     merged["rush_weight"]=np.where(merged.usage_verified,merged["carries_per_game"].fillna(0),0.)
     merged["target_weight"]=np.where(merged.usage_verified,merged["targets_per_game"].fillna(0),0.)
