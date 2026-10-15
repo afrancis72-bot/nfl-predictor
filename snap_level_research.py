@@ -67,8 +67,18 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
         attempts=rate("attempts_per_game",35.)
         completion=np.clip(rate("qb_completion_rate",.62),.40,.82)
         ypa=np.clip(rate("qb_yards_per_attempt",7.),4.,11.)
-        # Approximately 60 offensive plays per team; game state still modifies mix.
-        qb_rates[t]={"base_pass_prob":float(np.clip(attempts/60.,.36,.76)),
+        # Anchor play selection to pregame player-level opportunities. Using QB
+        # attempts / 60 and then adding down-distance bonuses inflated pass rates.
+        # Sum carries across verified offensive players (including QB scrambles).
+        # This is a proxy until true team play-by-play/xPass priors are integrated.
+        carries=0.0
+        if "carries_per_game" in p:
+            carry_values=pd.to_numeric(p.loc[team_ids[t],"carries_per_game"],errors="coerce").fillna(0)
+            carries=float(carry_values.clip(lower=0).sum())
+        if carries<=0:
+            raise ValueError(f"{t}: no verified pregame rushing volume; cannot calibrate play calling")
+        baseline=float(np.clip(attempts/(attempts+carries),.32,.72))
+        qb_rates[t]={"base_pass_prob":baseline,
                      "completion":float(completion),"yards_per_completion":float(ypa/completion)}
     # Convert all player inputs to NumPy once, outside the snap loop.
     numeric_cache={}
@@ -166,9 +176,13 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                 trailing=margin<0
                 # Playcalling changes with down, distance, margin and late clock.
                 urgency=(remaining<600 and margin<0)
-                pass_prob=np.clip(qb_rates[offense]["base_pass_prob"]
-                    +(.11 if down==3 else 0)+(.08 if to_go>=9 else -.07 if to_go<=2 else 0)
-                    +(.14 if urgency else .05 if trailing else -.06 if margin>=9 else 0),.22,.90)
+                # Small, centered contextual shifts around the team's pregame
+                # pass tendency. Avoid adding a pass bonus on ordinary 1st-and-10.
+                distance_shift=(.05 if to_go>=11 else -.07 if to_go<=2 else 0.)
+                down_shift=(.07 if down==3 else -.035 if down==1 else 0.)
+                script_shift=(.12 if urgency else .055 if trailing else -.065 if margin>=9 else 0.)
+                pass_prob=float(np.clip(qb_rates[offense]["base_pass_prob"]
+                                        +distance_shift+down_shift+script_shift,.22,.82))
                 # Fourth down is a decision, not an automatic offensive snap.
                 if down==4:
                     if field>=64 and len(kickers) and remaining>80:
