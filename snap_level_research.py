@@ -138,6 +138,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
         for t in teams:
             receiver_ids=team_ids[t][np.isin(pos[team_ids[t]],["WR","TE","RB"])]
             target_form[t]={int(i):float(rng.lognormal(0,.22)) for i in receiver_ids}
+        # Pregame volume weights apply across eligible players, not salary.
         offense=teams[g%2]
         next_field=25.
         elapsed=0
@@ -183,6 +184,8 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                         punt=float(np.clip(rng.normal(43,9),20,65))
                         next_field=float(np.clip(100-min(99,field+punt),1,40))
                         break
+                # Keep team pass rates anchored to observed QB volume; down,
+                # distance and score remain modest adjustments.
                 is_pass=rng.random()<pass_prob
                 # Personnel is sampled per snap: no universal receiver availability.
                 # Heavy personnel favors RB/TE; spread favors WR. Counts are explicit
@@ -194,7 +197,10 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                 active_te=personnel_subset(ids,["TE"],"snap_share" if "snap_share" in p else "target_weight",te_count,target_form[offense])
                 active_rb=personnel_subset(ids,["RB"],"snap_share" if "snap_share" in p else "rush_weight",1)
                 active_receivers=np.concatenate([active_wr,active_te,active_rb])
-                active_rushers=np.concatenate([active_rb,ids[pos[ids]=="QB"],active_wr])
+                # Rush opportunity allocation is team-wide: the single sampled
+                # RB must not surrender the entire backfield to QB/WR every snap.
+                # Eligible verified RBs share carries according to pregame usage.
+                active_rushers=np.concatenate([ids[pos[ids]=="RB"],ids[pos[ids]=="QB"],active_wr])
                 if len(active_receivers)==0 or len(active_rushers)==0:
                     raise ValueError(f"{offense}: insufficient active personnel")
                 # Dead-ball penalty: no player receives a play opportunity.
