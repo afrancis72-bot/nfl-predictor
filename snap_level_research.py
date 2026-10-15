@@ -34,6 +34,12 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
     salary = pd.to_numeric(p["FLEX Salary"], errors="coerce").fillna(0).to_numpy()
     if (salary < 0).any():
         raise ValueError("Invalid salary")
+    use_history = {"rush_weight", "target_weight", "usage_verified"}.issubset(p.columns)
+    if use_history:
+        if not p["usage_verified"].fillna(False).all():
+            raise ValueError("Unverified player usage: resolve identities first")
+        for col in ("rush_weight", "target_weight"):
+            p[col] = pd.to_numeric(p[col], errors="coerce").fillna(0).clip(lower=0)
     pos = p["Position"].to_numpy()
     team = p["TeamAbbrev"].to_numpy()
     names = p["Name"].astype(str).to_numpy()
@@ -51,8 +57,13 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
         if len(qs)!=1:
             raise ValueError(f"{t}: require exactly one confirmed starting QB")
         qbs[t]=int(qs[0])
-    def pick(ids, power=1.0):
-        w=np.maximum(salary[ids],100.)**power
+    def pick(ids, power=1.0, usage_col=None):
+        if use_history and usage_col:
+            w=p[usage_col].to_numpy(dtype=float)[ids]
+            if w.sum()<=0:
+                raise ValueError("No verified "+usage_col+" opportunities")
+        else:
+            w=np.maximum(salary[ids],100.)**power
         return int(rng.choice(ids,p=w/w.sum()))
     for g in range(int(n_games)):
         score={t:0 for t in teams}
@@ -77,7 +88,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
                 elapsed+=int(rng.integers(19,42))
                 if is_pass:
                     stats[g,qb,f["pass_att"]]+=1
-                    target=pick(receivers,.9)
+                    target=pick(receivers,.9,"target_weight")
                     stats[g,target,f["targets"]]+=1
                     if rng.random()<.61:
                         yards=max(-2.,float(rng.normal(11,9)))
@@ -91,7 +102,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316):
                         break
                     else: yards=0.
                 else:
-                    runner=pick(rushers,.65)
+                    runner=pick(rushers,.65,"rush_weight")
                     yards=float(np.clip(rng.normal(4.4,5.0),-5,35))
                     stats[g,runner,f["rush_att"]]+=1
                     stats[g,runner,f["rush_yd"]]+=yards
