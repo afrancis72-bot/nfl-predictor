@@ -20,9 +20,7 @@ exclusions=st.text_area("Excluded players (one full name per line)",value="Jalen
 if salary_file is not None:
     try:
         salary=pd.read_csv(salary_file)
-        eligible,offense,audit,excluded=prepare_classic_slate(
-            salary,[s.strip() for s in exclusions.splitlines() if s.strip()])
-        salary_pool, _, _, _ = prepare_classic_slate(salary, ())
+        salary_pool,offense,audit,excluded=prepare_classic_slate(salary, ())
         st.subheader("Matchup and roster audit")
         st.dataframe(audit,use_container_width=True)
         st.caption("Select the actual starter even when excluded from DFS. Exclusions affect lineup eligibility, not simulation.")
@@ -34,7 +32,7 @@ if salary_file is not None:
             for col,team in zip(cols,teams):
                 options=["— Select confirmed starter —"]+sorted(
                     salary_pool.loc[(salary_pool.matchup==matchup)&(salary_pool.TeamAbbrev==team)&
-                                (offense.Position=="QB"),"Name"].unique().tolist())
+                                (salary_pool.Position=="QB"),"Name"].unique().tolist())
                 with col:
                     chosen=st.selectbox(f"{team} starting QB",options,key=f"starter_{matchup}_{team}")
                     if chosen!=options[0]: starters[team]=chosen
