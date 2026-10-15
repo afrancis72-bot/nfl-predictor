@@ -28,7 +28,7 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
     excluded = eligible.loc[eligible["Name"].isin(set(excluded_names))].copy()
     priors=build_usage_priors(weekly_stats, as_of_week=week, season=season)
     if priors.empty: raise ValueError("No matching pregame usage priors; inspect season/week and data source")
-    all_proj=[]; all_stats=[]
+    all_proj=[]; all_stats=[]; all_omitted=[]
     for game_index, (game, raw) in enumerate(offense.groupby("matchup",sort=True)):
         teams=game.split("@")
         missing=[t for t in teams if t not in starting_qbs]
@@ -41,11 +41,24 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
             q=g[(g.TeamAbbrev==t)&(g.Position=="QB")]
             if len(q)!=1: raise ValueError(f"{game}: starter {starters[t]!r} missing or excluded")
         g=apply_usage_priors(g,priors,min_games=min_history_games)
-        # Fail closed on missing historical opportunity, including new starters.
-        missing_usage=g.loc[~g.usage_verified,["Name","TeamAbbrev","games"]]
-        if len(missing_usage):
-            names=", ".join(f"{r.Name} ({r.TeamAbbrev}; games={r.games if pd.notna(r.games) else 0})" for r in missing_usage.head(12).itertuples())
-            raise ValueError(f"{game}: unverified usage ({names}); resolve before simulation")
+        # Players without two prior games are NOT assigned invented touches.
+        # Omit them from the active simulation and retain an explicit audit.
+        # A confirmed QB must have verified history; no fictional starter rates.
+        unknown=g.loc[~g.usage_verified].copy()
+        if len(unknown):
+            unknown["matchup"]=game
+            unknown["reason"]="Fewer than 2 matching pregame games; not simulated"
+            all_omitted.append(unknown[["matchup","Name","TeamAbbrev","Position","Salary","games","reason"]])
+        unknown_starters=unknown.loc[unknown.Position=="QB","Name"].tolist()
+        if unknown_starters:
+            raise ValueError(f"{game}: confirmed starter lacks verified usage: {unknown_starters}. Provide pregame QB priors.")
+        g=g.loc[g.usage_verified].copy().reset_index(drop=True)
+        for team in teams:
+            team_pool=g.loc[g.TeamAbbrev==team]
+            if not (team_pool.Position=="RB").any() or not team_pool.Position.isin(["WR","TE","RB"]).any():
+                raise ValueError(f"{game}: verified {team} personnel insufficient; resolve player usage")
+        # Verified but zero-volume reserves remain eligible for the snap engine;
+        # they have zero rush/target weights and cannot gain fictitious volume.
         points,stats=simulate_snaps(g,teams,n_games=n_games,seed=seed+game_index)
         summary=summarize_player_props(stats)
         summary=summary.merge(g[["Name","TeamAbbrev","ID","Salary","Position"]],
@@ -59,4 +72,4 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
         all_stats.append(stats)
     if not all_proj: raise ValueError("No matchups found")
     return (pd.concat(all_proj,ignore_index=True),
-            pd.concat(all_stats,ignore_index=True),audit,excluded)
+            pd.concat(all_stats,ignore_index=True),audit,excluded,\n            pd.concat(all_omitted,ignore_index=True) if all_omitted else pd.DataFrame())
