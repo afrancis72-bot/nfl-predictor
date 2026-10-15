@@ -76,6 +76,19 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
         if not np.isfinite(v) or v<=0: return fallback
         # Shrink sparse player efficiency toward population-level priors.
         return float(np.clip(.65*float(v)+.35*fallback,lo,hi))
+    def personnel_subset(ids, position_set, usage_col, limit, game_modifiers=None):
+        """Sample eligible on-field personnel without allowing every receiver on every snap."""
+        eligible=ids[np.isin(pos[ids],position_set)]
+        if not len(eligible): return eligible
+        if use_history and usage_col:
+            weights=p[usage_col].to_numpy(dtype=float)[eligible]
+        else:
+            weights=np.maximum(salary[eligible],100.)
+        if game_modifiers:
+            weights=weights*np.array([game_modifiers.get(int(i),1.) for i in eligible])
+        if weights.sum()<=0: return eligible[:0]
+        count=min(int(limit),len(eligible))
+        return rng.choice(eligible,size=count,replace=False,p=weights/weights.sum())
     def pick(ids, power=1.0, usage_col=None):
         if use_history and usage_col:
             w=p[usage_col].to_numpy(dtype=float)[ids]
@@ -159,6 +172,19 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                         next_field=float(np.clip(100-min(99,field+punt),1,40))
                         break
                 is_pass=rng.random()<pass_prob
+                # Personnel is sampled per snap: no universal receiver availability.
+                # Heavy personnel favors RB/TE; spread favors WR. Counts are explicit
+                # research assumptions pending historical snap-count calibration.
+                heavy=(to_go<=2 and down<=2 and rng.random()<.65)
+                wr_count=2 if heavy else 3
+                te_count=2 if heavy else 1
+                active_wr=personnel_subset(ids,["WR"],"target_weight",wr_count,target_form[offense])
+                active_te=personnel_subset(ids,["TE"],"target_weight",te_count,target_form[offense])
+                active_rb=personnel_subset(ids,["RB"],"rush_weight",1)
+                active_receivers=np.concatenate([active_wr,active_te,active_rb])
+                active_rushers=np.concatenate([active_rb,ids[pos[ids]=="QB"],active_wr])
+                if len(active_receivers)==0 or len(active_rushers)==0:
+                    raise ValueError(f"{offense}: insufficient active personnel")
                 # Dead-ball penalty: no player receives a play opportunity.
                 if rng.random()<defense[opponent]["penalty_rate"]:
                     defensive=rng.random()<.50
@@ -175,12 +201,12 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                 elapsed+=max(5,int(clock_base/pace))
                 if is_pass:
                     if use_history:
-                        weights=p["target_weight"].to_numpy(dtype=float)[receivers]
-                        weights=weights*np.array([target_form[offense][int(i)] for i in receivers])
+                        weights=p["target_weight"].to_numpy(dtype=float)[active_receivers]
+                        weights=weights*np.array([target_form[offense][int(i)] for i in active_receivers])
                         if weights.sum()<=0: raise ValueError("No verified target opportunities")
-                        target=int(rng.choice(receivers,p=weights/weights.sum()))
+                        target=int(rng.choice(active_receivers,p=weights/weights.sum()))
                     else:
-                        target=pick(receivers,.9,"target_weight")
+                        target=pick(active_receivers,.9,"target_weight")
                     # Pressure can produce sacks before any target is recorded.
                     pressured=rng.random()<defense[opponent]["pressure_rate"]
                     if pressured and rng.random()<defense[opponent]["sack_given_pressure"]:
@@ -213,7 +239,7 @@ def simulate_snaps(players: pd.DataFrame, teams, n_games=1000, seed=316, defense
                         break
                     else: yards=0.
                 else:
-                    runner=pick(rushers,.65,"rush_weight")
+                    runner=pick(active_rushers,.65,"rush_weight")
                     base_run=player_prior(runner,"rusher_yards_per_carry",4.4,2.,8.)
                     yards=float(np.clip(rng.normal(base_run*defense[opponent]["run_yards_factor"]*form[offense]/defense_form[opponent],5.0),-5,35))
                     stats[g,runner,f["rush_att"]]+=1
