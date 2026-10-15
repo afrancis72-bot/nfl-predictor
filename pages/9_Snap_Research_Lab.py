@@ -8,7 +8,7 @@ from snap_level_research import simulate_snaps, summarize_player_props
 from snap_portfolio_research import build_research_portfolio
 
 st.title("Snap-by-snap Research Lab")
-st.caption("Research build: 2026-10-14 / QB-history-v1 / portfolio-v2")
+st.caption("Research build: 2026-10-14 / football-mechanics-v2 / commit-01eb48d")
 st.warning("Experimental: uncalibrated simulation. Do not use for wagering or live entries.")
 st.caption("Historical data is restricted to weeks before the selected matchup. Upload a pre-lock salary pool with one row per player: Name, TeamAbbrev, Position, FLEX Salary. For DK showdown exports, prepare one FLEX row per player.")
 salary_file=st.file_uploader("Showdown FLEX player pool CSV",type=["csv"],key="snap_pool")
@@ -131,4 +131,4 @@ if "snap_summary" in st.session_state:
         lineups=pd.DataFrame(chosen)
         st.dataframe(lineups,use_container_width=True)
         st.download_button("Download research lineups",lineups.to_csv(index=False),"snap_five_research_lineups.csv","text/csv")
-    st.info("Research-only: candidate lineups are sampled, not globally optimized. Scenario scores are not contest ROI or winning probabilities. Real-time depth charts, injuries, defensive stats, and historical calibration remain missing. DK IDs are not included, so this is NOT a DK entry upload file.")
+    st.info("Research-only: candidate lineups are sampled, not globally optimized. Scenario scores are not contest ROI or winning probabilities. Real-time depth charts, injuries, measured opponent defense profiles, and historical calibration remain missing. DK IDs are not included, so this is NOT a DK entry upload file.")
