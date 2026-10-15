@@ -47,11 +47,15 @@ if salary_file is not None:
                 priors=build_usage_priors(weekly,as_of_week=int(week),season=int(season))
                 diagnostic=usage_audit(apply_usage_priors(offense,priors))
                 st.session_state["classic_usage_audit"]=diagnostic
-                projections,stats,game_audit,excluded_players=run_classic_snap_slate(
+                projections,stats,game_audit,excluded_players,omitted_players=run_classic_snap_slate(
                     salary,weekly,season=int(season),week=int(week),starting_qbs=starters,
                     excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()],
                     n_games=int(n_games))
-            st.success("Research simulation completed")
+            st.success("Research simulation completed — incomplete player coverage; not entry-ready")
+            if not omitted_players.empty:
+                st.warning(f"{len(omitted_players)} players omitted due to insufficient matched history. This can include important players; do not treat results as calibrated.")
+                st.dataframe(omitted_players,use_container_width=True)
+                st.download_button("Download omitted-player audit",omitted_players.to_csv(index=False),file_name="teamai2_omitted_players.csv",mime="text/csv")
             st.dataframe(projections,use_container_width=True)
             st.download_button("Download offensive projections CSV",projections.to_csv(index=False),
                                file_name="teamai2_classic_snap_projections.csv",mime="text/csv")
