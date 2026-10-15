@@ -23,8 +23,11 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
     """
     if not 1 <= int(n_games) <= 100000:
         raise ValueError("n_games outside supported range")
-    eligible, offense, audit, excluded = prepare_classic_slate(salaries, excluded_names)
+    eligible, offense, audit, excluded = prepare_classic_slate(salaries, ())
+    # DFS exclusions are not simulation exclusions: a real starter still affects teammates.
+    excluded = eligible.loc[eligible["Name"].isin(set(excluded_names))].copy()
     priors=build_usage_priors(weekly_stats, as_of_week=week, season=season)
+    if priors.empty: raise ValueError("No matching pregame usage priors; inspect season/week and data source")
     all_proj=[]; all_stats=[]
     for game_index, (game, raw) in enumerate(offense.groupby("matchup",sort=True)):
         teams=game.split("@")
@@ -39,9 +42,9 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
             if len(q)!=1: raise ValueError(f"{game}: starter {starters[t]!r} missing or excluded")
         g=apply_usage_priors(g,priors,min_games=min_history_games)
         # Fail closed on missing historical opportunity, including new starters.
-        missing_usage=g.loc[~g.usage_verified,["Name","TeamAbbrev"]]
+        missing_usage=g.loc[~g.usage_verified,["Name","TeamAbbrev","games"]]
         if len(missing_usage):
-            names=", ".join(missing_usage["Name"].tolist()[:12])
+            names=", ".join(f"{r.Name} ({r.TeamAbbrev}; games={r.games if pd.notna(r.games) else 0})" for r in missing_usage.head(12).itertuples())
             raise ValueError(f"{game}: unverified usage ({names}); resolve before simulation")
         points,stats=simulate_snaps(g,teams,n_games=n_games,seed=seed+game_index)
         summary=summarize_player_props(stats)
