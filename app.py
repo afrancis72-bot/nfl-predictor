@@ -1007,7 +1007,7 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
     return items,ref,floor
 
 
-def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, time_limit=20.0):
+def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, time_limit=20.0, locked_players=()):
     """Choose the entire portfolio simultaneously from a candidate bank."""
     if len(candidate_items) < n_lineups:
         return [], {"success":False,"message":"Candidate bank smaller than requested portfolio."}
@@ -1021,7 +1021,7 @@ def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, 
     rows=[]; lbs=[]; ubs=[]
     rows.append(np.ones(n)); lbs.append(float(n_lineups)); ubs.append(float(n_lineups))
 
-    players=sorted(set().union(*sets))
+    players=sorted(set().union(*sets)-set(locked_players))
     for player in players:
         row=np.fromiter((1.0 if player in s else 0.0 for s in sets),dtype=float,count=n)
         rows.append(row); lbs.append(-np.inf); ubs.append(float(max_count))
@@ -1052,7 +1052,7 @@ def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, 
     return selected, meta
 
 
-def validate_portfolio(lineups, n_lineups, max_exposure, min_unique, min_salary, max_salary):
+def validate_portfolio(lineups, n_lineups, max_exposure, min_unique, min_salary, max_salary, locked_players=()):
     issues=[]
     if len(lineups) != int(n_lineups):
         issues.append(f"Expected {int(n_lineups)} lineups; found {len(lineups)}.")
@@ -1066,7 +1066,7 @@ def validate_portfolio(lineups, n_lineups, max_exposure, min_unique, min_salary,
             issues.append(f"Lineup {i}: QB faces selected DST (or QB opponent cannot be verified).")
         names=set(l["Name"].astype(str)); keys.append(tuple(sorted(names)))
         for name in names: counts[name]=counts.get(name,0)+1
-    over={k:v for k,v in counts.items() if v>max_count}
+    over={k:v for k,v in counts.items() if v>max_count and k not in set(locked_players)}
     if over:
         issues.append("Exposure violations: "+", ".join(f"{k} {v}/{n_lineups}" for k,v in sorted(over.items())))
     # Second-line injury QC: even if an upstream eligibility filter regresses,
@@ -2607,7 +2607,7 @@ elif view == "Lineup Builder":
                 st.session_state['classic_v2_sim_players']=sim_players; st.session_state['classic_v2_sims']=classic_sims
                 st.session_state['classic_v2_records']=records
             else:
-                lineups, solver_meta = select_portfolio_milp(candidate_items,int(n_lineups),float(max_exp),int(min_unique),float(solver_seconds))
+                lineups, solver_meta = select_portfolio_milp(candidate_items,int(n_lineups),float(max_exp),int(min_unique),float(solver_seconds),locked_players=locks)
             expo={}; max_count=max(1,math.ceil(int(n_lineups)*float(max_exp)-1e-12))
             for l in lineups:
                 for nm in set(l.Name): expo[nm]=expo.get(nm,0)+1
@@ -2617,7 +2617,7 @@ elif view == "Lineup Builder":
             st.session_state["nfl_lineups"]=lineups
             st.session_state["classic_scenario_upside_used"]=bool(scenario_upside)
             st.session_state["nfl_rank_settings"]={"strategy":strategy,"own_weight":float(own_weight),"leverage_weight":float(leverage_weight)}
-            qc=validate_portfolio(lineups,int(n_lineups),float(max_exp),int(min_unique),int(min_salary),50000)
+            qc=validate_portfolio(lineups,int(n_lineups),float(max_exp),int(min_unique),int(min_salary),50000,locked_players=locks)
             if qc["pass"]:
                 st.success(f"Generated {len(lineups)} of {int(n_lineups)} requested lineups. FINAL QC: PASS")
                 st.success("Portfolio Injury QC: OUT/DOUBTFUL/IR/inactive players = 0")
