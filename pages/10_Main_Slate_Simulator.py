@@ -164,6 +164,9 @@ if salary_file is not None:
             exposure=st.slider("Maximum player exposure (%)",min_value=20,max_value=100,value=40,step=5,help="A locked DST is exempt. For five lineups, 40% means at most two appearances.")
             upside=st.slider("Tournament upside weight",min_value=0.0,max_value=1.0,value=0.15,step=0.05,help="Boosts 90th-percentile upside in every fourth lineup.")
             variance=st.slider("Balanced-lineup variability penalty",min_value=0.0,max_value=0.5,value=0.05,step=0.05,help="Penalizes the difference between mean and 90th-percentile points in other lineups.")
+            build_signature=(result["seed"],result["n_games"],bool(auto_dst),tuple(sorted(dst_scores.items())),int(lineup_count),int(floor),int(exposure),float(upside),float(variance),str(dst_lock))
+            if st.session_state.get("classic_lineups_signature") != build_signature:
+                st.session_state.pop("classic_lineups",None)
             if st.button("Build experimental nine-player lineups"):
                 st.session_state.pop("classic_lineups", None)
                 try:
@@ -174,10 +177,13 @@ if salary_file is not None:
                         locked_dst=None if dst_lock=="No DST lock" else dst_lock,
                         excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()])
                     st.session_state["classic_lineups"]=picks
+                    st.session_state["classic_lineups_signature"]=build_signature
+                    st.success("New portfolio built with "+("automatic" if auto_dst else "manual")+" DST estimates.")
                 except Exception as exc:
                     st.error(f"Lineup builder: {exc}")
             if "classic_lineups" in st.session_state:
                 picks=st.session_state["classic_lineups"]
+                st.caption("DST scoring mode: "+("automatic research estimates" if auto_dst else "manual assumptions"))
                 st.dataframe(picks,use_container_width=True)
                 exposures=picks.groupby(["ID","Name","team"],as_index=False).agg(lineups=("lineup","nunique"))
                 exposures["exposure_pct"]=100*exposures["lineups"]/picks["lineup"].nunique()
