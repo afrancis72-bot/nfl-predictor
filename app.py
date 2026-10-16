@@ -242,7 +242,12 @@ def rebuild_uploaded_weekly_projections(pool, env):
     # Current market scoring environment: position-sensitive and deliberately bounded.
     team_pts=pd.to_numeric(x["team_implied_points"],errors="coerce")
     expo=pos.map({"QB":0.72,"RB":0.62,"WR":0.68,"TE":0.55,"DST":-0.30}).fillna(0.6)
-    market=np.power((team_pts/22.5).clip(0.72,1.35),expo)
+    # DST scoring is driven by the OPPONENT's expected points, not its own offense.
+    # This corrects the direction of the existing DST market adjustment.
+    game_totals=x["game"].astype(str).str.upper().map({k:float(v["game_total"]) for k,v in em.items()})
+    opponent_pts=(game_totals-team_pts).clip(lower=0)
+    market_points=team_pts.where(pos!="DST",opponent_pts)
+    market=np.power((market_points/22.5).clip(0.72,1.35),expo)
     market=market.clip(0.82,1.22).fillna(1.0)
     # Bounded role proxy from current DK salary within team/position.  This is not an injury/depth-chart claim.
     role=np.ones(len(x),dtype=float)
