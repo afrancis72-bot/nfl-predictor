@@ -14,7 +14,8 @@ from snap_level_research import simulate_snaps, summarize_player_props
 def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
                            *, season: int, week: int, starting_qbs: dict,
                            excluded_names=(), n_games: int=200, seed: int=316,
-                           min_history_games: int=2, progress_callback=None):
+                           min_history_games: int=2, progress_callback=None,
+                           qb_fallback_stats: pd.DataFrame | None=None):
     """Return projections, per-game simulated outcomes, audit and excluded players.
 
     Raises rather than silently simulating with incomplete personnel.
@@ -28,6 +29,10 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
     excluded = eligible.loc[eligible["Name"].isin(set(excluded_names))].copy()
     priors=build_usage_priors(weekly_stats, as_of_week=week, season=season)
     if priors.empty: raise ValueError("No matching pregame usage priors; inspect season/week and data source")
+    fallback_priors = None
+    if qb_fallback_stats is not None:
+        fallback_priors = build_usage_priors(qb_fallback_stats, as_of_week=23,
+                                             season=season-1, recent_games=5)
     all_proj=[]; all_stats=[]; all_omitted=[]
     groups=list(offense.groupby("matchup",sort=True))
     for game_index, (game, raw) in enumerate(groups):
@@ -44,6 +49,21 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
             q=g[(g.TeamAbbrev==t)&(g.Position=="QB")]
             if len(q)!=1: raise ValueError(f"{game}: starter {starters[t]!r} missing or excluded")
         g=apply_usage_priors(g,priors,min_games=min_history_games)
+        g["usage_source"] = np.where(g["usage_verified"], "current_season", "unverified")
+        # Only a confirmed QB can fall back to verified previous-season usage.
+        if fallback_priors is not None:
+            unknown_qb_idx = g.index[(g.Position=="QB") & (~g.usage_verified)]
+            if len(unknown_qb_idx):
+                recovered = apply_usage_priors(g.loc[unknown_qb_idx, raw.columns.intersection(g.columns)],
+                                               fallback_priors, min_games=min_history_games)
+                for idx in unknown_qb_idx:
+                    record = recovered.loc[idx]
+                    if bool(record["usage_verified"]) and float(record.get("attempts_per_game", 0)) > 0:
+                        for col in recovered.columns:
+                            if col in g.columns and col not in raw.columns:
+                                g.at[idx, col] = record[col]
+                        g.at[idx, "usage_verified"] = True
+                        g.at[idx, "usage_source"] = f"verified_{season-1}_QB_fallback"
         # Players without two prior games are NOT assigned invented touches.
         # Omit them from the active simulation and retain an explicit audit.
         # A confirmed QB must have verified history; no fictional starter rates.
@@ -68,6 +88,7 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
                               left_on=["Name","Team"],right_on=["Name","TeamAbbrev"],
                               validate="one_to_one")
         summary["matchup"]=game
+        summary=summary.merge(g[["ID","usage_source"]],on="ID",validate="one_to_one")
         all_proj.append(summary)
         stats["matchup"]=game
         stats["scenario"]=stats["game"]
