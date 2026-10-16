@@ -6,7 +6,7 @@ from scipy.optimize import milp, Bounds, LinearConstraint
 
 def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_floor=47500,
                           locked_dst=None, excluded_names=(), max_overlap=7,
-                          max_exposure=1.0, upside_weight=0.15, variance_penalty=0.0):
+                          max_exposure=1.0, upside_weight=0.15, variance_penalty=0.0, ownership=None, leverage_weight=0.0):
     pool=salaries.copy()
     pool["Position"]=pool["Position"].astype(str).str.upper().str.strip().replace({"D":"DST"})
     pool["Salary"]=pd.to_numeric(pool["Salary"],errors="raise")
@@ -19,6 +19,16 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
     pool=pool[(pool["Position"]=="DST") | pool["dk_points_mean"].notna()].copy()
     pool["score"]=np.where(pool["Position"]=="DST",pool["TeamAbbrev"].map(dst_points),pool["dk_points_mean"])
     pool=pool[pool["score"].notna()].reset_index(drop=True)
+    if ownership is not None:
+        own=ownership.copy()
+        if not {"ID","ownership_pct"}.issubset(own.columns): raise ValueError("Ownership CSV needs ID and ownership_pct columns")
+        own["ID"]=own["ID"].astype(str).str.replace(r"\\.0$","",regex=True).str.strip()
+        own["ownership_pct"]=pd.to_numeric(own["ownership_pct"],errors="raise")
+        if own["ID"].duplicated().any() or own["ownership_pct"].isna().any() or (~own["ownership_pct"].between(0,100)).any():
+            raise ValueError("Ownership IDs must be unique and percentages between 0 and 100")
+        pool=pool.merge(own[["ID","ownership_pct"]],on="ID",how="left",validate="one_to_one")
+    else:
+        pool["ownership_pct"]=np.nan
     if locked_dst and not ((pool.Position=="DST")&(pool.TeamAbbrev==locked_dst)).any():
         raise ValueError(f"Locked DST {locked_dst} not found in DK salary file")
     if len(pool)<9: raise ValueError("Insufficient eligible players to build lineups")
@@ -60,6 +70,10 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
             scores+=upside_weight*spread
         else:
             scores-=variance_penalty*spread
+        if ownership is not None and k%5==4:
+            # One leverage-oriented lineup per five; never fabricate missing ownership.
+            known=pool.ownership_pct.notna().to_numpy()
+            scores+=np.where(known, leverage_weight*(20-pool.ownership_pct.fillna(20).to_numpy(dtype=float))/20,0)
         for prior in results:
             ids=set(prior.ID.astype(str))
             scores-=0.65*pool.ID.isin(ids).to_numpy(dtype=float)
@@ -88,7 +102,7 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
             needed={"QB":1,"RB":2,"WR":3,"TE":1,"DST":1}[p]
             for _,r in subset.iloc[:needed].iterrows():
                 output.append({"lineup":i,"slot":p,"Name":r.Name if False else r["Name"],"ID":r["ID"],
-                               "team":r.TeamAbbrev,"salary":int(r.Salary),"projected_points":float(r.score)})
+                               "team":r.TeamAbbrev,"salary":int(r.Salary),"projected_points":float(r.score),"ownership_pct":float(r.ownership_pct) if pd.notna(r.ownership_pct) else float("nan")})
         used=output[-8:]
         used_ids={x["ID"] for x in used}
         flex=chosen[~chosen.ID.isin(used_ids)]
