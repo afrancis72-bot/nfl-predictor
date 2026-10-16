@@ -110,7 +110,7 @@ if salary_file is not None:
         ownership_file=st.file_uploader("Projected ownership CSV (optional)",type="csv",key="classic_ownership")
         ownership_data=pd.read_csv(ownership_file) if ownership_file is not None else None
         leverage_weight=st.slider("Ownership leverage strength (every fifth lineup)",0.0,10.0,4.0,0.5,disabled=ownership_data is None)
-        st.caption("Nine-player DraftKings lineups with DST. DST projections below are YOUR assumptions, not snap-simulated predictions. Check injuries, eligibility and projections before entry.")
+        st.caption("Nine-player DraftKings lineups with DST. DST points are estimated automatically from historical performance and opponent QB projections; they are not calibrated snap-simulated predictions. Check injuries, eligibility and projections before entry.")
         dst_pool=salary_pool[salary_pool.Position.isin(["DST","D"])].copy()
         if dst_pool.empty:
             st.warning("No DST entries found in the uploaded DraftKings salary file.")
@@ -145,26 +145,9 @@ if salary_file is not None:
                 dst_audit.append({"DST":team,"Opponent":opp or "Unknown","Historical DK PPG":round(history,2),
                                   "Opposing QB projected DK":round(float(qb),2) if qb is not None and np.isfinite(qb) else np.nan,
                                   "DST estimate":estimate})
-            st.caption("Research DST estimates blend historical DK points and a modest opposing-QB matchup adjustment. Not calibrated sack/turnover/TD predictions.")
-            st.dataframe(pd.DataFrame(dst_audit).sort_values("DST estimate",ascending=False),hide_index=True,use_container_width=True)
-            auto_dst=st.checkbox("Use automatic DST research estimates",value=True,key="classic_auto_dst")
-            dst_scores={}
-            if auto_dst:
-                st.subheader("Active DST projections — used by lineup builder")
-                st.dataframe(pd.DataFrame([
-                    {"Defense":team,"Projected DK points":score,"Source":"Automatic research estimate"}
-                    for team,score in sorted(dst_defaults.items())
-                ]),hide_index=True,use_container_width=True)
-                dst_scores=dst_defaults.copy()
-                st.caption("The automatic values above are passed directly to the optimizer. Disable automatic estimates to enter manual values.")
-            else:
-                with st.expander("Manual DST point assumptions (editable)",expanded=True):
-                    for _,d in dst_pool.sort_values("TeamAbbrev").iterrows():
-                        team=str(d["TeamAbbrev"])
-                        dst_scores[team]=st.number_input(
-                            f'{team} DST — ${int(d["Salary"]):,}',
-                            min_value=-10.0,max_value=40.0,value=5.0,step=0.5,
-                            key=f'classic_dst_{team}')
+            # DST is computed automatically from pregame data and passed to
+            # the lineup builder without any manual input or display table.
+            dst_scores=dst_defaults.copy()
             dst_options=["No DST lock"]+sorted(dst_scores)
             dst_lock=st.selectbox("Lock a defense (optional)",dst_options,
                                   index=0)
@@ -173,7 +156,7 @@ if salary_file is not None:
             exposure=st.slider("Maximum player exposure (%)",min_value=20,max_value=100,value=40,step=5,help="A locked DST is exempt. For five lineups, 40% means at most two appearances.")
             upside=st.slider("Tournament upside weight",min_value=0.0,max_value=1.0,value=0.15,step=0.05,help="Boosts 90th-percentile upside in every fourth lineup.")
             variance=st.slider("Balanced-lineup variability penalty",min_value=0.0,max_value=0.5,value=0.05,step=0.05,help="Penalizes the difference between mean and 90th-percentile points in other lineups.")
-            build_signature=(result["seed"],result["n_games"],bool(auto_dst),tuple(sorted(dst_scores.items())),int(lineup_count),int(floor),int(exposure),float(upside),float(variance),str(dst_lock))
+            build_signature=(result["seed"],result["n_games"],tuple(sorted(dst_scores.items())),int(lineup_count),int(floor),int(exposure),float(upside),float(variance),str(dst_lock))
             if st.session_state.get("classic_lineups_signature") != build_signature:
                 st.session_state.pop("classic_lineups",None)
             if st.button("Build experimental nine-player lineups"):
@@ -187,12 +170,12 @@ if salary_file is not None:
                         excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()])
                     st.session_state["classic_lineups"]=picks
                     st.session_state["classic_lineups_signature"]=build_signature
-                    st.success("New portfolio built with "+("automatic" if auto_dst else "manual")+" DST estimates.")
+                    st.success("New portfolio built with "+"automatic DST estimates.")
                 except Exception as exc:
                     st.error(f"Lineup builder: {exc}")
             if "classic_lineups" in st.session_state:
                 picks=st.session_state["classic_lineups"]
-                st.caption("DST scoring mode: "+("automatic research estimates" if auto_dst else "manual assumptions"))
+                st.caption("DST scoring mode: "+"automatic research estimates")
                 st.dataframe(picks,use_container_width=True)
                 exposures=picks.groupby(["ID","Name","team"],as_index=False).agg(lineups=("lineup","nunique"))
                 exposures["exposure_pct"]=100*exposures["lineups"]/picks["lineup"].nunique()
