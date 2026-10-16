@@ -5,7 +5,7 @@ import pandas as pd
 from scipy.optimize import milp, Bounds, LinearConstraint
 
 def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_floor=47500,
-                          locked_dst=None, excluded_names=(), max_overlap=7,
+                          locked_dst=None, excluded_names=(), max_overlap=6,
                           max_exposure=1.0, upside_weight=0.15, variance_penalty=0.0, ownership=None, leverage_weight=0.0):
     pool=salaries.copy()
     pool["Position"]=pool["Position"].astype(str).str.upper().str.strip().replace({"D":"DST"})
