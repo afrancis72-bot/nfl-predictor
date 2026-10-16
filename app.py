@@ -1035,9 +1035,26 @@ def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, 
                 row=np.zeros(n,dtype=float); row[i]=1.0; row[j]=1.0
                 rows.append(row); lbs.append(-np.inf); ubs.append(1.0)
 
+    # Penalize excessive repeated offensive pairs without banning strong stacks.
+    from collections import Counter
+    from itertools import combinations
+    pair_counts=Counter(pair for lineup in sets for pair in combinations(sorted(lineup-set(locked_players)),2))
+    repeated=[pair for pair,count in pair_counts.items() if count>4]
+    extra=len(repeated)
+    if extra:
+        rows=[np.pad(row,(0,extra)) for row in rows]
+        for j,pair in enumerate(repeated):
+            row=np.zeros(n+extra,dtype=float)
+            row[:n]=[float(set(pair).issubset(lineup)) for lineup in sets]
+            row[n+j]=-1.0
+            rows.append(row); lbs.append(-np.inf); ubs.append(4.0)
     A=csr_matrix(np.vstack(rows))
     constraints=LinearConstraint(A,np.asarray(lbs),np.asarray(ubs))
-    res=milp(c=-scores, integrality=np.ones(n,dtype=int), bounds=Bounds(0,1),
+    objective=np.concatenate([-scores,np.full(extra,0.5)])
+    integrality=np.concatenate([np.ones(n,dtype=int),np.zeros(extra,dtype=int)])
+    lower=np.zeros(n+extra)
+    upper=np.concatenate([np.ones(n),np.full(extra,np.inf)])
+    res=milp(c=objective, integrality=integrality, bounds=Bounds(lower,upper),
              constraints=constraints,
              options={"time_limit":float(time_limit),"mip_rel_gap":0.001,"presolve":True})
     if res.x is None:
@@ -1046,7 +1063,7 @@ def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, 
     selected=[lineups[i].copy() for i in chosen]
     selected.sort(key=lambda x: lineup_score(x,"GPP Ceiling",0.0,0.0), reverse=True)
     meta={"success":len(selected)==n_lineups,"message":str(res.message),"status":int(res.status),
-          "candidate_count":n,"constraint_count":len(rows),"max_count":max_count,
+          "candidate_count":n,"constraint_count":len(rows),"pair_penalty_count":extra,"max_count":max_count,
           "objective_score":float(scores[chosen].sum()) if chosen else 0.0,
           "mip_gap":getattr(res,"mip_gap",None)}
     return selected, meta
