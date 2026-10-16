@@ -124,13 +124,14 @@ if salary_file is not None:
                         key=f'classic_dst_{d["TeamAbbrev"]}')
             dst_options=["No DST lock"]+sorted(dst_scores)
             dst_lock=st.selectbox("Lock a defense (optional)",dst_options,
-                                  index=dst_options.index("CAR") if "CAR" in dst_options else 0)
+                                  index=0)
             lineup_count=st.number_input("Number of lineups",min_value=1,max_value=20,value=5)
             floor=st.number_input("Minimum total salary",min_value=0,max_value=50000,value=47500,step=100)
             exposure=st.slider("Maximum player exposure (%)",min_value=20,max_value=100,value=40,step=5,help="A locked DST is exempt. For five lineups, 40% means at most two appearances.")
             upside=st.slider("Tournament upside weight",min_value=0.0,max_value=1.0,value=0.15,step=0.05,help="Boosts 90th-percentile upside in every fourth lineup.")
             variance=st.slider("Balanced-lineup variability penalty",min_value=0.0,max_value=0.5,value=0.05,step=0.05,help="Penalizes the difference between mean and 90th-percentile points in other lineups.")
             if st.button("Build experimental nine-player lineups"):
+                st.session_state.pop("classic_lineups", None)
                 try:
                     picks=build_classic_lineups(
                         salary,projections,dst_points=dst_scores,count=int(lineup_count),
