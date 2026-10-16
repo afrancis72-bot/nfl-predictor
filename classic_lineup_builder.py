@@ -1,10 +1,12 @@
 """Experimental DraftKings classic lineup optimizer; DST scores are manual assumptions."""
+import math
 import numpy as np
 import pandas as pd
 from scipy.optimize import milp, Bounds, LinearConstraint
 
 def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_floor=47500,
-                          locked_dst=None, excluded_names=(), max_overlap=7):
+                          locked_dst=None, excluded_names=(), max_overlap=7,
+                          max_exposure=1.0, upside_weight=0.15, variance_penalty=0.0):
     pool=salaries.copy()
     pool["Position"]=pool["Position"].astype(str).str.upper().str.strip().replace({"D":"DST"})
     pool["Salary"]=pd.to_numeric(pool["Salary"],errors="raise")
@@ -44,25 +46,39 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
             opp=opponents.get(t)
             if opp:
                 constraint(((pos=="QB")&(teams==t))|((pos=="DST")&(teams==opp)),0,1)
+    if not 0 < max_exposure <= 1: raise ValueError("Exposure must be between 0 and 100%")
+    cap=max(1,math.floor(int(count)*max_exposure+1e-9))
+    # A locked defense is intentionally exempt from the general exposure cap.
+    exposure_counts={}
     results=[]
     for k in range(int(count)):
         # Later lineups reward p90 upside modestly and penalize repeated players.
         scores=pool.score.to_numpy(dtype=float).copy()
+        ceiling=pool.dk_points_p90.fillna(pool.score).to_numpy(dtype=float)
+        spread=np.maximum(0,ceiling-scores)
         if k%4==3:
-            scores+=0.15*np.maximum(0,pool.dk_points_p90.fillna(pool.score).to_numpy(dtype=float)-scores)
+            scores+=upside_weight*spread
+        else:
+            scores-=variance_penalty*spread
         for prior in results:
             ids=set(prior.ID.astype(str))
             scores-=0.65*pool.ID.isin(ids).to_numpy(dtype=float)
+        # Enforce actual player exposure, not merely a soft diversification penalty.
+        remaining=np.ones(n)
+        for idx, player_id in enumerate(pool.ID):
+            if exposure_counts.get(player_id,0)>=cap and not (locked_dst and pos[idx]=="DST" and teams[idx]==locked_dst):
+                remaining[idx]=0
         matrix=np.stack(rows)
-        result=milp(c=-scores,integrality=np.ones(n),bounds=Bounds(np.zeros(n),np.ones(n)),
+        result=milp(c=-scores,integrality=np.ones(n),bounds=Bounds(np.zeros(n),remaining),
                     constraints=LinearConstraint(matrix,np.array(lower),np.array(upper)),
                     options={"time_limit":20})
         if result.x is None: 
             if not results: raise ValueError("No legal lineup found. Check salary floor, DST lock, and eligible players.")
-            break
+            raise ValueError(f"Only {len(results)} of {count} lineups feasible at {max_exposure:.0%} exposure; try a higher cap or lower salary floor.")
         chosen=pool.loc[result.x>0.5].copy()
         if len(chosen)!=9: raise ValueError("Optimizer returned an incomplete lineup")
         results.append(chosen)
+        for player_id in chosen.ID: exposure_counts[player_id]=exposure_counts.get(player_id,0)+1
         constraint(pool.ID.isin(chosen.ID).to_numpy(dtype=float),0,max_overlap)
     if not results: raise ValueError("No feasible lineup")
     output=[]
