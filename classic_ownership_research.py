@@ -10,12 +10,12 @@ def estimate_ownership(salaries, projections, dst_points, excluded_names=()):
     FLEX mass is distributed between RB/WR/TE.
     """
     pool=salaries.copy()
-    pool["ID"]=pool["ID"].astype(str).str.replace(r"\\.0$","",regex=True)
+    pool["ID"]=pool["ID"].astype(str).str.replace(r"\.0$","",regex=True)
     pool["Position"]=pool["Position"].astype(str).str.upper().str.strip().replace({"D":"DST"})
     pool["Salary"]=pd.to_numeric(pool["Salary"],errors="coerce")
     pool=pool[pool.Position.isin(["QB","RB","WR","TE","DST"]) & ~pool.Name.isin(excluded_names)].copy()
     proj=projections[["ID","dk_points_mean"]].copy()
-    proj["ID"]=proj["ID"].astype(str).str.replace(r"\\.0$","",regex=True)
+    proj["ID"]=proj["ID"].astype(str).str.replace(r"\.0$","",regex=True)
     pool=pool.merge(proj,on="ID",how="left",validate="one_to_one")
     pool["projected_points"]=np.where(pool.Position.eq("DST"),pool.TeamAbbrev.map(dst_points),pool.dk_points_mean)
     pool=pool[pool.projected_points.notna() & pool.Salary.gt(0)].copy()
