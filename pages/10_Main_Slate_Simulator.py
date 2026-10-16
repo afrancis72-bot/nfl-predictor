@@ -115,7 +115,7 @@ if salary_file is not None:
         else:
             ownership_data=None  # Computed below once DST estimates are ready.
 
-        leverage_weight=st.slider("Ownership leverage strength (every fifth lineup)",0.0,10.0,4.0,0.5,disabled=ownership_data is None)
+        leverage_weight=st.slider("Ownership leverage strength (every fifth lineup)",0.0,10.0,4.0,0.5,disabled=False)
         st.caption("Nine-player DraftKings lineups with DST. DST points are estimated automatically from historical performance and opponent QB projections; they are not calibrated snap-simulated predictions. Check injuries, eligibility and projections before entry.")
         dst_pool=salary_pool[salary_pool.Position.isin(["DST","D"])].copy()
         if dst_pool.empty:
