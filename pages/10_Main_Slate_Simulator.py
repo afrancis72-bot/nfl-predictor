@@ -108,11 +108,15 @@ if salary_file is not None:
                                   index=dst_options.index("CAR") if "CAR" in dst_options else 0)
             lineup_count=st.number_input("Number of lineups",min_value=1,max_value=20,value=5)
             floor=st.number_input("Minimum total salary",min_value=0,max_value=50000,value=47500,step=100)
+            exposure=st.slider("Maximum player exposure (%)",min_value=20,max_value=100,value=40,step=5,help="A locked DST is exempt. For five lineups, 40% means at most two appearances.")
+            upside=st.slider("Tournament upside weight",min_value=0.0,max_value=1.0,value=0.15,step=0.05,help="Boosts 90th-percentile upside in every fourth lineup.")
+            variance=st.slider("Balanced-lineup variability penalty",min_value=0.0,max_value=0.5,value=0.05,step=0.05,help="Penalizes the difference between mean and 90th-percentile points in other lineups.")
             if st.button("Build experimental nine-player lineups"):
                 try:
                     picks=build_classic_lineups(
                         salary,projections,dst_points=dst_scores,count=int(lineup_count),
-                        salary_floor=int(floor),
+                        salary_floor=int(floor),max_exposure=exposure/100,
+                        upside_weight=upside,variance_penalty=variance,
                         locked_dst=None if dst_lock=="No DST lock" else dst_lock,
                         excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()])
                     st.session_state["classic_lineups"]=picks
@@ -121,6 +125,11 @@ if salary_file is not None:
             if "classic_lineups" in st.session_state:
                 picks=st.session_state["classic_lineups"]
                 st.dataframe(picks,use_container_width=True)
+                exposures=picks.groupby(["ID","Name","team"],as_index=False).agg(lineups=("lineup","nunique"))
+                exposures["exposure_pct"]=100*exposures["lineups"]/picks["lineup"].nunique()
+                st.subheader("Player exposure audit")
+                st.dataframe(exposures.sort_values(["lineups","Name"],ascending=[False,True]),use_container_width=True)
+                st.download_button("Download exposure audit",exposures.to_csv(index=False),file_name="teamai2_classic_exposure.csv",mime="text/csv",key="classic_download_exposure")
                 st.dataframe(picks.groupby("lineup").agg(salary=("salary","sum"),
                     projected_points=("projected_points","sum")),use_container_width=True)
                 st.download_button("Download nine-player lineup CSV",
