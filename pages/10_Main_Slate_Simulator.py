@@ -7,6 +7,7 @@ import time
 import secrets
 import pandas as pd
 import streamlit as st
+from classic_lineup_builder import build_classic_lineups
 from classic_slate_research import prepare_classic_slate
 from classic_snap_runner import run_classic_snap_slate
 from historical_usage import download_weekly_stats, build_usage_priors, apply_usage_priors, usage_audit
@@ -16,7 +17,8 @@ st.caption("Experimental snap-by-snap research. No calibrated DST projection or 
 season=st.number_input("Season",min_value=1999,max_value=2100,value=2026,step=1)
 week=st.number_input("NFL week",min_value=1,max_value=22,value=6,step=1)
 n_games=st.number_input("Simulated games per matchup",min_value=1,max_value=100000,value=10,step=10)
-seed_mode=st.radio("Simulation randomness",["Reproducible","Fresh random sample"],horizontal=True)
+seed_mode=st.radio("Simulation randomness",["Fresh random sample","Reproducible"],horizontal=True)
+st.caption("A seed only controls the random sequence. Any whole number works; choose Fresh random sample to let the app pick automatically.")
 fixed_seed=st.number_input("Seed",min_value=0,max_value=2147483647,value=316,disabled=seed_mode!="Reproducible")
 salary_file=st.file_uploader("DraftKings main slate salary CSV",type="csv",key="classic_salaries")
 weekly_file=st.file_uploader("Historical weekly player stats CSV (optional)",type="csv",key="classic_history")
@@ -88,6 +90,42 @@ if salary_file is not None:
         team_volume["offensive_plays"]=team_volume["pass_att"]+team_volume["rush_att"]
         team_volume["pass_rate"]=team_volume["pass_att"]/team_volume["offensive_plays"].replace(0,float("nan"))
         team_volume["volume_warning"]=(team_volume["offensive_plays"]<40)|(team_volume["offensive_plays"]>85)|(team_volume["pass_rate"]<.30)|(team_volume["pass_rate"]>.75)
+        st.subheader("Experimental Classic Lineup Builder")
+        st.caption("Nine-player DraftKings lineups with DST. DST projections below are YOUR assumptions, not snap-simulated predictions. Check injuries, eligibility and projections before entry.")
+        dst_pool=salary_pool[salary_pool.Position.isin(["DST","D"])].copy()
+        if dst_pool.empty:
+            st.warning("No DST entries found in the uploaded DraftKings salary file.")
+        else:
+            with st.expander("DST point assumptions (editable)",expanded=True):
+                dst_scores={}
+                for _,d in dst_pool.sort_values("TeamAbbrev").iterrows():
+                    dst_scores[d["TeamAbbrev"]]=st.number_input(
+                        f'{d["TeamAbbrev"]} DST — ${int(d["Salary"]):,}',
+                        min_value=-10.0,max_value=40.0,value=5.0,step=0.5,
+                        key=f'classic_dst_{d["TeamAbbrev"]}')
+            dst_options=["No DST lock"]+sorted(dst_scores)
+            dst_lock=st.selectbox("Lock a defense (optional)",dst_options,
+                                  index=dst_options.index("CAR") if "CAR" in dst_options else 0)
+            lineup_count=st.number_input("Number of lineups",min_value=1,max_value=20,value=5)
+            floor=st.number_input("Minimum total salary",min_value=0,max_value=50000,value=47500,step=100)
+            if st.button("Build experimental nine-player lineups"):
+                try:
+                    picks=build_classic_lineups(
+                        salary,projections,dst_points=dst_scores,count=int(lineup_count),
+                        salary_floor=int(floor),
+                        locked_dst=None if dst_lock=="No DST lock" else dst_lock,
+                        excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()])
+                    st.session_state["classic_lineups"]=picks
+                except Exception as exc:
+                    st.error(f"Lineup builder: {exc}")
+            if "classic_lineups" in st.session_state:
+                picks=st.session_state["classic_lineups"]
+                st.dataframe(picks,use_container_width=True)
+                st.dataframe(picks.groupby("lineup").agg(salary=("salary","sum"),
+                    projected_points=("projected_points","sum")),use_container_width=True)
+                st.download_button("Download nine-player lineup CSV",
+                    picks.to_csv(index=False),file_name="teamai2_experimental_classic_lineups.csv",
+                    mime="text/csv",key="classic_download_lineups")
         st.subheader("Team opportunity sanity audit")
         st.dataframe(team_volume,use_container_width=True)
         st.download_button("Download team volume audit",team_volume.to_csv(index=False),file_name="teamai2_team_volume_audit.csv",mime="text/csv",key="classic_download_volume")
