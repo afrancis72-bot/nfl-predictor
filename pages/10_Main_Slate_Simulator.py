@@ -151,11 +151,6 @@ if salary_file is not None:
                 st.download_button("Download exposure audit",exposures.to_csv(index=False),file_name="teamai2_classic_exposure.csv",mime="text/csv",key="classic_download_exposure")
                 st.dataframe(picks.groupby("lineup").agg(salary=("salary","sum"),
                     projected_points=("projected_points","sum"),ownership_sum=("ownership_pct","sum")),use_container_width=True)
-                exposure=picks.groupby(["ID","Name"],as_index=False).agg(lineups=("lineup","nunique"),projected_points=("projected_points","mean"),ownership_pct=("ownership_pct","mean"))
-                exposure["exposure_pct"]=100*exposure["lineups"]/picks["lineup"].nunique()
-                st.subheader("Portfolio exposure")
-                st.dataframe(exposure.sort_values(["lineups","projected_points"],ascending=False),use_container_width=True)
-                st.download_button("Download portfolio exposure CSV",exposure.to_csv(index=False),file_name="teamai2_classic_exposure.csv",mime="text/csv",key="classic_download_exposure")
                 if ownership_data is not None:
                     matched=picks["ownership_pct"].notna().sum()
                     st.caption(f"Ownership coverage: {matched}/{len(picks)} lineup slots. Ownership sum is descriptive, not a calibrated duplication probability.")
