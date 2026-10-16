@@ -259,6 +259,11 @@ def rebuild_uploaded_weekly_projections(pool, env):
     mean=(history*market*role).clip(lower=0.1)
     # DST remains conservative because DK PPG is especially noisy; market total supplies the weekly direction.
     x["proj"]=mean
+    # Preserve a clear audit trail: DST means are shrinkage estimates, not
+    # pressure/sack/turnover models. Do not mislabel them as researched data.
+    x["dst_projection_method"]=np.where(pos=="DST",
+        "DK historical scoring + salary peers + opponent implied points (proxy)",
+        "Not applicable")
     tail={"QB":(1.55,1.78,2.18),"RB":(1.72,2.05,2.62),"WR":(1.72,2.08,2.70),"TE":(1.78,2.16,2.80),"DST":(1.80,2.20,2.75)}
     x["ceiling"]=[m*tail.get(p,(1.7,2.0,2.6))[0] for m,p in zip(mean,pos)]
     x["p95_use"]=[m*tail.get(p,(1.7,2.0,2.6))[1] for m,p in zip(mean,pos)]
@@ -2583,7 +2588,7 @@ elif view == "Lineup Builder":
         st.markdown("#### Defensive options — selected automatically")
         dst_audit=eligible[eligible["Position"].astype(str).eq("DST")].copy()
         dst_audit["Projected DK / $1K"]=pd.to_numeric(dst_audit["proj"],errors="coerce")/(pd.to_numeric(dst_audit["Salary"],errors="coerce")/1000.0)
-        st.dataframe(dst_audit[[c for c in ["Name","TeamAbbrev","Salary","proj","ceiling","opponent","team_implied_points","Projected DK / $1K"] if c in dst_audit.columns]].sort_values("proj",ascending=False),hide_index=True,use_container_width=True)
+        st.dataframe(dst_audit[[c for c in ["Name","TeamAbbrev","Salary","proj","ceiling","opponent","team_implied_points","dst_projection_method","Projected DK / $1K"] if c in dst_audit.columns]].sort_values("proj",ascending=False),hide_index=True,use_container_width=True)
         st.caption("DST projections use the current eligible player pool. All defenses are capped by Max exposure; no defense is automatically locked.")
     excludes=st.multiselect("Exclude players",names,key="classic_excludes")
 
