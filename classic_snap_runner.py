@@ -56,8 +56,7 @@ def run_classic_snap_slate(salaries: pd.DataFrame, weekly_stats: pd.DataFrame,
             if len(unknown_qb_idx):
                 recovered = apply_usage_priors(g.loc[unknown_qb_idx, raw.columns.intersection(g.columns)],
                                                fallback_priors, min_games=min_history_games)
-                for idx in unknown_qb_idx:
-                    record = recovered.loc[idx]
+                for idx, (_, record) in zip(unknown_qb_idx, recovered.iterrows()):
                     if bool(record["usage_verified"]) and float(record.get("attempts_per_game", 0)) > 0:
                         for col in recovered.columns:
                             if col in g.columns and col not in raw.columns:
