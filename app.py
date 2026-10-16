@@ -2567,7 +2567,19 @@ elif view == "Lineup Builder":
 
     eligible=pool[pool["optimizer_eligible"] == True].sort_values(["Position","proj"],ascending=[True,False])
     names=eligible["Name"].drop_duplicates().tolist()
-    locks=st.multiselect("Lock players",names,key="classic_locks")
+    # DST is always portfolio-selected; never carry an old slate-wide DST lock.
+    dst_names=set(eligible.loc[eligible["Position"].astype(str).eq("DST"),"Name"].astype(str))
+    previous_locks=list(st.session_state.get("classic_locks",[]))
+    if any(name in dst_names for name in previous_locks):
+        st.session_state["classic_locks"]=[name for name in previous_locks if name not in dst_names]
+        st.warning("Removed locked defense(s). Team AI² now chooses DST across the portfolio under the exposure cap.")
+    locks=st.multiselect("Lock offensive players", [name for name in names if name not in dst_names],key="classic_locks")
+    if len(dst_names):
+        st.markdown("#### Defensive options — selected automatically")
+        dst_audit=eligible[eligible["Position"].astype(str).eq("DST")].copy()
+        dst_audit["Projected DK / $1K"]=pd.to_numeric(dst_audit["proj"],errors="coerce")/(pd.to_numeric(dst_audit["Salary"],errors="coerce")/1000.0)
+        st.dataframe(dst_audit[[c for c in ["Name","TeamAbbrev","Salary","proj","ceiling","opponent","team_implied_points","Projected DK / $1K"] if c in dst_audit.columns]].sort_values("proj",ascending=False),hide_index=True,use_container_width=True)
+        st.caption("DST projections use the current eligible player pool. All defenses are capped by Max exposure; no defense is automatically locked.")
     excludes=st.multiselect("Exclude players",names,key="classic_excludes")
 
     portfolio_mode=st.radio("Portfolio construction",["DFS Engine V2 Scenario Portfolio","V3.1.7 Portfolio Optimize (control)"],horizontal=True,key="classic_portfolio_mode")
