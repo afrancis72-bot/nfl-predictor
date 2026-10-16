@@ -91,6 +91,10 @@ if salary_file is not None:
         team_volume["pass_rate"]=team_volume["pass_att"]/team_volume["offensive_plays"].replace(0,float("nan"))
         team_volume["volume_warning"]=(team_volume["offensive_plays"]<40)|(team_volume["offensive_plays"]>85)|(team_volume["pass_rate"]<.30)|(team_volume["pass_rate"]>.75)
         st.subheader("Experimental Classic Lineup Builder")
+        st.caption("Ownership is optional. Upload CSV with columns ID and ownership_pct (0–100). These are external estimates, not model-derived ownership.")
+        ownership_file=st.file_uploader("Projected ownership CSV (optional)",type="csv",key="classic_ownership")
+        ownership_data=pd.read_csv(ownership_file) if ownership_file is not None else None
+        leverage_weight=st.slider("Ownership leverage strength (every fifth lineup)",0.0,10.0,4.0,0.5,disabled=ownership_data is None)
         st.caption("Nine-player DraftKings lineups with DST. DST projections below are YOUR assumptions, not snap-simulated predictions. Check injuries, eligibility and projections before entry.")
         dst_pool=salary_pool[salary_pool.Position.isin(["DST","D"])].copy()
         if dst_pool.empty:
@@ -115,7 +119,7 @@ if salary_file is not None:
                 try:
                     picks=build_classic_lineups(
                         salary,projections,dst_points=dst_scores,count=int(lineup_count),
-                        salary_floor=int(floor),max_exposure=exposure/100,
+                        salary_floor=int(floor),ownership=ownership_data,leverage_weight=float(leverage_weight),max_exposure=exposure/100,
                         upside_weight=upside,variance_penalty=variance,
                         locked_dst=None if dst_lock=="No DST lock" else dst_lock,
                         excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()])
@@ -131,7 +135,15 @@ if salary_file is not None:
                 st.dataframe(exposures.sort_values(["lineups","Name"],ascending=[False,True]),use_container_width=True)
                 st.download_button("Download exposure audit",exposures.to_csv(index=False),file_name="teamai2_classic_exposure.csv",mime="text/csv",key="classic_download_exposure")
                 st.dataframe(picks.groupby("lineup").agg(salary=("salary","sum"),
-                    projected_points=("projected_points","sum")),use_container_width=True)
+                    projected_points=("projected_points","sum"),ownership_sum=("ownership_pct","sum")),use_container_width=True)
+                exposure=picks.groupby(["ID","Name"],as_index=False).agg(lineups=("lineup","nunique"),projected_points=("projected_points","mean"),ownership_pct=("ownership_pct","mean"))
+                exposure["exposure_pct"]=100*exposure["lineups"]/picks["lineup"].nunique()
+                st.subheader("Portfolio exposure")
+                st.dataframe(exposure.sort_values(["lineups","projected_points"],ascending=False),use_container_width=True)
+                st.download_button("Download portfolio exposure CSV",exposure.to_csv(index=False),file_name="teamai2_classic_exposure.csv",mime="text/csv",key="classic_download_exposure")
+                if ownership_data is not None:
+                    matched=picks["ownership_pct"].notna().sum()
+                    st.caption(f"Ownership coverage: {matched}/{len(picks)} lineup slots. Ownership sum is descriptive, not a calibrated duplication probability.")
                 st.download_button("Download nine-player lineup CSV",
                     picks.to_csv(index=False),file_name="teamai2_experimental_classic_lineups.csv",
                     mime="text/csv",key="classic_download_lineups")
