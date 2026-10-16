@@ -8,6 +8,7 @@ import secrets
 import pandas as pd
 import streamlit as st
 from classic_lineup_builder import build_classic_lineups
+from classic_ownership_research import estimate_ownership
 from classic_slate_research import prepare_classic_slate
 from classic_snap_runner import run_classic_snap_slate
 from historical_usage import download_weekly_stats, build_usage_priors, apply_usage_priors, usage_audit
@@ -106,9 +107,14 @@ if salary_file is not None:
         team_volume["pass_rate"]=team_volume["pass_att"]/team_volume["offensive_plays"].replace(0,float("nan"))
         team_volume["volume_warning"]=(team_volume["offensive_plays"]<40)|(team_volume["offensive_plays"]>85)|(team_volume["pass_rate"]<.30)|(team_volume["pass_rate"]>.75)
         st.subheader("Experimental Classic Lineup Builder")
-        st.caption("Ownership is optional. Upload CSV with columns ID and ownership_pct (0–100). These are external estimates, not model-derived ownership.")
+        st.caption("Ownership is estimated automatically unless you upload an external projection CSV (ID, ownership_pct). Automatic estimates are uncalibrated.")
         ownership_file=st.file_uploader("Projected ownership CSV (optional)",type="csv",key="classic_ownership")
-        ownership_data=pd.read_csv(ownership_file) if ownership_file is not None else None
+        if ownership_file is not None:
+            ownership_data=pd.read_csv(ownership_file)
+            st.caption("Using externally supplied projected ownership.")
+        else:
+            ownership_data=None  # Computed below once DST estimates are ready.
+
         leverage_weight=st.slider("Ownership leverage strength (every fifth lineup)",0.0,10.0,4.0,0.5,disabled=ownership_data is None)
         st.caption("Nine-player DraftKings lineups with DST. DST points are estimated automatically from historical performance and opponent QB projections; they are not calibrated snap-simulated predictions. Check injuries, eligibility and projections before entry.")
         dst_pool=salary_pool[salary_pool.Position.isin(["DST","D"])].copy()
@@ -148,6 +154,16 @@ if salary_file is not None:
             # DST is computed automatically from pregame data and passed to
             # the lineup builder without any manual input or display table.
             dst_scores=dst_defaults.copy()
+            if ownership_file is None:
+                ownership_estimates=estimate_ownership(salary_pool,projections,dst_scores,
+                    excluded_names=[name.strip() for name in exclusions.splitlines() if name.strip()])
+                ownership_data=ownership_estimates[["ID","ownership_pct"]].copy()
+                with st.expander("Estimated ownership (experimental; uncalibrated)",expanded=False):
+                    st.caption("Automatic slate-aware estimates, not observed DraftKings ownership. Position totals sum to 900% across nine roster slots.")
+                    st.dataframe(ownership_estimates,hide_index=True,use_container_width=True)
+                    st.download_button("Download ownership estimates",ownership_estimates.to_csv(index=False),
+                        file_name="teamai2_estimated_ownership.csv",mime="text/csv")
+
             dst_options=["No DST lock"]+sorted(dst_scores)
             dst_lock=st.selectbox("Lock a defense (optional)",dst_options,
                                   index=0)
