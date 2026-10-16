@@ -22,7 +22,7 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
     if ownership is not None:
         own=ownership.copy()
         if not {"ID","ownership_pct"}.issubset(own.columns): raise ValueError("Ownership CSV needs ID and ownership_pct columns")
-        own["ID"]=own["ID"].astype(str).str.replace(r"\\.0$","",regex=True).str.strip()
+        own["ID"]=own["ID"].astype(str).str.replace(r"\.0$","",regex=True).str.strip()
         own["ownership_pct"]=pd.to_numeric(own["ownership_pct"],errors="raise")
         if own["ID"].duplicated().any() or own["ownership_pct"].isna().any() or (~own["ownership_pct"].between(0,100)).any():
             raise ValueError("Ownership IDs must be unique and percentages between 0 and 100")
