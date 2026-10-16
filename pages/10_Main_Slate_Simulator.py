@@ -148,14 +148,23 @@ if salary_file is not None:
             st.caption("Research DST estimates blend historical DK points and a modest opposing-QB matchup adjustment. Not calibrated sack/turnover/TD predictions.")
             st.dataframe(pd.DataFrame(dst_audit).sort_values("DST estimate",ascending=False),hide_index=True,use_container_width=True)
             auto_dst=st.checkbox("Use automatic DST research estimates",value=True,key="classic_auto_dst")
-            with st.expander("DST point assumptions (editable)",expanded=not auto_dst):
-                dst_scores={}
-                for _,d in dst_pool.sort_values("TeamAbbrev").iterrows():
-                    manual_dst=st.number_input(
-                        f'{d["TeamAbbrev"]} DST — ${int(d["Salary"]):,}',
-                        min_value=-10.0,max_value=40.0,value=5.0,step=0.5,
-                        key=f'classic_dst_{d["TeamAbbrev"]}')
-                    dst_scores[d["TeamAbbrev"]]=dst_defaults[str(d["TeamAbbrev"])] if auto_dst else float(manual_dst)
+            dst_scores={}
+            if auto_dst:
+                st.subheader("Active DST projections — used by lineup builder")
+                st.dataframe(pd.DataFrame([
+                    {"Defense":team,"Projected DK points":score,"Source":"Automatic research estimate"}
+                    for team,score in sorted(dst_defaults.items())
+                ]),hide_index=True,use_container_width=True)
+                dst_scores=dst_defaults.copy()
+                st.caption("The automatic values above are passed directly to the optimizer. Disable automatic estimates to enter manual values.")
+            else:
+                with st.expander("Manual DST point assumptions (editable)",expanded=True):
+                    for _,d in dst_pool.sort_values("TeamAbbrev").iterrows():
+                        team=str(d["TeamAbbrev"])
+                        dst_scores[team]=st.number_input(
+                            f'{team} DST — ${int(d["Salary"]):,}',
+                            min_value=-10.0,max_value=40.0,value=5.0,step=0.5,
+                            key=f'classic_dst_{team}')
             dst_options=["No DST lock"]+sorted(dst_scores)
             dst_lock=st.selectbox("Lock a defense (optional)",dst_options,
                                   index=0)
