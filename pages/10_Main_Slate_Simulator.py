@@ -63,10 +63,20 @@ if salary_file is not None:
                 priors=build_usage_priors(weekly,as_of_week=int(week),season=int(season))
                 diagnostic=usage_audit(apply_usage_priors(offense,priors))
                 st.session_state["classic_usage_audit"]=diagnostic
+                missing_starter_prior = diagnostic.loc[
+                    diagnostic["Name"].isin(starters.values()) & (~diagnostic["usage_verified"])
+                ]
+                qb_fallback_stats = None
+                if not missing_starter_prior.empty:
+                    stage.info(f"Loading verified {int(season)-1} quarterback history for backup starters...")
+                    qb_fallback_stats = download_weekly_stats(
+                        int(season)-1, f"/tmp/teamai2_classic_qb_history_{int(season)-1}.csv"
+                    )
                 projections,stats,game_audit,excluded_players,omitted_players=run_classic_snap_slate(
                     salary,weekly,season=int(season),week=int(week),starting_qbs=starters,
                     excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()],
-                    n_games=int(n_games),seed=run_seed,progress_callback=report_progress)
+                    n_games=int(n_games),seed=run_seed,progress_callback=report_progress,
+                    qb_fallback_stats=qb_fallback_stats)
             st.session_state["classic_last_run"]={
                 "projections":projections,"stats":stats,"omitted_players":omitted_players,
                 "seed":run_seed,"n_games":int(n_games),"season":int(season),"week":int(week),
@@ -80,6 +90,11 @@ if salary_file is not None:
         projections=result["projections"]
         stats=result["stats"]
         omitted_players=result["omitted_players"]
+        if "usage_source" in projections.columns:
+            fallback_players=projections.loc[projections.usage_source.str.contains("fallback",na=False),["Name","Team","usage_source"]].drop_duplicates()
+            if not fallback_players.empty:
+                st.warning("Limited-history QB fallback applied (previous season only):")
+                st.dataframe(fallback_players,use_container_width=True)
         st.success(f"Saved simulation: {result['n_games']} games/matchup, seed {result['seed']}, {result['elapsed']:.1f}s. Downloads will not rerun the simulation.")
         if not omitted_players.empty:
             st.warning(f"{len(omitted_players)} players omitted due to insufficient matched history. Research output is not entry-ready.")
