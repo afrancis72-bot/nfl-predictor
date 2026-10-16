@@ -115,13 +115,47 @@ if salary_file is not None:
         if dst_pool.empty:
             st.warning("No DST entries found in the uploaded DraftKings salary file.")
         else:
-            with st.expander("DST point assumptions (editable)",expanded=True):
+            # Pregame heuristic: historical DST DK PPG adjusted modestly for
+            # simulated opponent QB strength. Not a calibrated DST simulation.
+            import numpy as np
+            import re
+            opponent_by_team={}
+            for game in salary_pool["Game Info"].dropna().astype(str).unique() if "Game Info" in salary_pool else []:
+                match=re.match(r"^([A-Z]{2,3})@([A-Z]{2,3})",game)
+                if match:
+                    a,b=match.groups()
+                    opponent_by_team[a]=b
+                    opponent_by_team[b]=a
+            qb_salary=salary_pool[salary_pool.Position.eq("QB")][["ID","TeamAbbrev"]].copy()
+            qb_salary["ID"]=qb_salary["ID"].astype(str)
+            qb_predictions=projections[["ID","dk_points_mean"]].copy()
+            qb_predictions["ID"]=qb_predictions["ID"].astype(str)
+            qb_means=qb_predictions.merge(qb_salary,on="ID",how="inner").groupby("TeamAbbrev")["dk_points_mean"].max().to_dict()
+            dst_defaults={}
+            dst_audit=[]
+            for _,defense in dst_pool.iterrows():
+                team=str(defense["TeamAbbrev"])
+                opp=opponent_by_team.get(team)
+                ppg=pd.to_numeric(pd.Series([defense.get("AvgPointsPerGame",np.nan)]),errors="coerce").iloc[0]
+                history=float(ppg) if pd.notna(ppg) and np.isfinite(ppg) else 5.0
+                qb=qb_means.get(opp)
+                adjustment=float(np.clip((18.0-float(qb))*0.12,-1.5,1.5)) if qb is not None and np.isfinite(qb) else 0.0
+                estimate=round(float(np.clip(0.70*history+0.30*5.0+adjustment,0,15)),2)
+                dst_defaults[team]=estimate
+                dst_audit.append({"DST":team,"Opponent":opp or "Unknown","Historical DK PPG":round(history,2),
+                                  "Opposing QB projected DK":round(float(qb),2) if qb is not None and np.isfinite(qb) else np.nan,
+                                  "DST estimate":estimate})
+            st.caption("Research DST estimates blend historical DK points and a modest opposing-QB matchup adjustment. Not calibrated sack/turnover/TD predictions.")
+            st.dataframe(pd.DataFrame(dst_audit).sort_values("DST estimate",ascending=False),hide_index=True,use_container_width=True)
+            auto_dst=st.checkbox("Use automatic DST research estimates",value=True,key="classic_auto_dst")
+            with st.expander("DST point assumptions (editable)",expanded=not auto_dst):
                 dst_scores={}
                 for _,d in dst_pool.sort_values("TeamAbbrev").iterrows():
-                    dst_scores[d["TeamAbbrev"]]=st.number_input(
+                    manual_dst=st.number_input(
                         f'{d["TeamAbbrev"]} DST — ${int(d["Salary"]):,}',
                         min_value=-10.0,max_value=40.0,value=5.0,step=0.5,
                         key=f'classic_dst_{d["TeamAbbrev"]}')
+                    dst_scores[d["TeamAbbrev"]]=dst_defaults[str(d["TeamAbbrev"])] if auto_dst else float(manual_dst)
             dst_options=["No DST lock"]+sorted(dst_scores)
             dst_lock=st.selectbox("Lock a defense (optional)",dst_options,
                                   index=0)
