@@ -27,7 +27,7 @@ class ShowdownExportTests(unittest.TestCase):
         self.salary.loc[self.salary["Roster Position"]=="FLEX","Salary"]=7000
         self.salary.loc[self.salary["Roster Position"]=="CPT","Salary"]=10500
         ids=export_showdown_ids(self.lineups,self.salary)
-        template="Entry ID,Contest Name,Contest ID,Entry Fee,CPT,FLEX,FLEX,FLEX,FLEX,FLEX,,Instructions\\n1,Game,12,0.5,999,998,997,996,995,994,,\\n2,Game,12,0.5,,,,,,,,\\n"
+        template="Entry ID,Contest Name,Contest ID,Entry Fee,CPT,FLEX,FLEX,FLEX,FLEX,FLEX,,Instructions\n1,Game,12,0.5,999,998,997,996,995,994,,\n2,Game,12,0.5,,,,,,,,\n"
         out=fill_reserved_entries(template,ids)
         rows=list(__import__("csv").reader(io.StringIO(out)))
         self.assertEqual(rows[1][4:10],["999","998","997","996","995","994"])
