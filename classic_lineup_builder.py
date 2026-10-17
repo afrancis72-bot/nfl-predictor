@@ -1,4 +1,4 @@
-"""Experimental DraftKings classic lineup optimizer; DST scores are manual assumptions."""
+"""Experimental DraftKings classic portfolio optimizer with automatic DST inputs."""
 import math
 import numpy as np
 import pandas as pd
@@ -58,43 +58,133 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
                 constraint(((pos=="QB")&(teams==t))|((pos=="DST")&(teams==opp)),0,1)
     if not 0 < max_exposure <= 1: raise ValueError("Exposure must be between 0 and 100%")
     cap=max(1,math.floor(int(count)*max_exposure+1e-9))
-    # A locked defense is intentionally exempt from the general exposure cap.
-    exposure_counts={}
-    results=[]
-    for k in range(int(count)):
-        # Later lineups reward p90 upside modestly and penalize repeated players.
-        scores=pool.score.to_numpy(dtype=float).copy()
-        ceiling=pool.dk_points_p90.fillna(pool.score).to_numpy(dtype=float)
-        spread=np.maximum(0,ceiling-scores)
-        if k%4==3:
-            scores+=upside_weight*spread
+    # Two-stage portfolio optimizer: generate independently, then select ALL
+    # lineups together. This prevents early lineups consuming chalk exposure.
+    from scipy import sparse
+    rng=np.random.default_rng(5100)
+    base=pool.score.to_numpy(dtype=float)
+    ceiling=pool.dk_points_p90.fillna(pool.score).to_numpy(dtype=float)
+    spread=np.maximum(0,ceiling-base)
+    own=pool.ownership_pct.fillna(20).to_numpy(dtype=float)
+    known=pool.ownership_pct.notna().to_numpy()
+    matrix=sparse.csr_matrix(np.stack(rows))
+    lineup_constraints=LinearConstraint(matrix,np.asarray(lower),np.asarray(upper))
+    candidate_bank={}
+    recent=[]
+    best_mean=None
+    target=max(180,int(count)*16)
+    for attempt in range(target):
+        upside_candidate=attempt%4==3
+        # Small perturbations diversify credible alternatives; ownership
+        # never replaces fantasy-point projection as the primary signal.
+        scores=base.copy()
+        if upside_candidate:
+            scores+=float(upside_weight)*spread
+            if ownership is not None:
+                scores+=np.where(known,0.15*float(leverage_weight)*(20-own)/20,0)
         else:
-            scores-=variance_penalty*spread
-        if ownership is not None and k%5==4:
-            # One leverage-oriented lineup per five; never fabricate missing ownership.
-            known=pool.ownership_pct.notna().to_numpy()
-            scores+=np.where(known, leverage_weight*(20-pool.ownership_pct.fillna(20).to_numpy(dtype=float))/20,0)
-        for prior in results:
-            ids=set(prior.ID.astype(str))
-            scores-=0.65*pool.ID.isin(ids).to_numpy(dtype=float)
-        # Enforce actual player exposure, not merely a soft diversification penalty.
-        remaining=np.ones(n)
-        for idx, player_id in enumerate(pool.ID):
-            if exposure_counts.get(player_id,0)>=cap and not (locked_dst and pos[idx]=="DST" and teams[idx]==locked_dst):
-                remaining[idx]=0
-        matrix=np.stack(rows)
-        result=milp(c=-scores,integrality=np.ones(n),bounds=Bounds(np.zeros(n),remaining),
-                    constraints=LinearConstraint(matrix,np.array(lower),np.array(upper)),
-                    options={"time_limit":20})
-        if result.x is None: 
-            if not results: raise ValueError("No legal lineup found. Check salary floor, DST lock, and eligible players.")
-            raise ValueError(f"Only {len(results)} of {count} lineups feasible at {max_exposure:.0%} exposure; try a higher cap or lower salary floor.")
-        chosen=pool.loc[result.x>0.5].copy()
-        if len(chosen)!=9: raise ValueError("Optimizer returned an incomplete lineup")
-        results.append(chosen)
-        for player_id in chosen.ID: exposure_counts[player_id]=exposure_counts.get(player_id,0)+1
-        constraint(pool.ID.isin(chosen.ID).to_numpy(dtype=float),0,max_overlap)
-    if not results: raise ValueError("No feasible lineup")
+            scores-=float(variance_penalty)*spread
+        scores+=rng.normal(0,1.5+(attempt%7)*0.55,size=n)
+        if recent:
+            frequency=np.zeros(n)
+            for ids in recent[-12:]:
+                frequency[list(ids)]+=1
+            scores-=0.30*frequency
+        res=milp(c=-scores,integrality=np.ones(n),
+                 bounds=Bounds(np.zeros(n),np.ones(n)),
+                 constraints=lineup_constraints,options={"time_limit":1.5,"mip_rel_gap":0.03})
+        if res.x is None: continue
+        ids=frozenset(np.flatnonzero(res.x>0.5).tolist())
+        if len(ids)!=9: continue
+        mean=float(base[list(ids)].sum())
+        high=float((base+float(upside_weight)*spread)[list(ids)].sum())
+        recent.append(ids)
+        if best_mean is None or mean>best_mean: best_mean=mean
+        # A candidate can be eligible for either allocation; classify
+        # based on the selection variable, not its generation pass.
+        if ids not in candidate_bank:
+            candidate_bank[ids]=(mean,high)
+    if not candidate_bank:
+        raise ValueError("No legal candidate lineups. Check salary floor and eligible players.")
+    candidates=list(candidate_bank)
+    m=len(candidates)
+    if m<int(count):
+        raise ValueError(f"Only {m} distinct candidate lineups found; cannot select {count}.")
+    incidence=sparse.lil_matrix((n,m),dtype=float)
+    for j,ids in enumerate(candidates):
+        incidence[list(ids),j]=1
+    incidence=incidence.tocsr()
+    # Variables: first m are balanced candidates; next m are upside
+    # candidates. A candidate cannot be chosen twice.
+    upside_count=int(round(int(count)*0.25))
+    balanced_count=int(count)-upside_count
+    cap=max(1,math.floor(int(count)*max_exposure+1e-9))
+    cap_vec=np.full(n,cap,dtype=float)
+    if locked_dst:
+        cap_vec[(pos=="DST")&(teams==locked_dst)]=int(count)
+    means=np.array([candidate_bank[c][0] for c in candidates])
+    highs=np.array([candidate_bank[c][1] for c in candidates])
+    # Reject extremely weak pivots relative to the best candidate.
+    # Thresholds relax only if no legal portfolio exists.
+    from scipy.sparse import vstack,hstack
+    unique_rows=[]
+    for j in range(m):
+        unique_rows.append((j,j+m))
+    overlaps=incidence.T@incidence
+    conflict_pairs=[]
+    coo=sparse.triu(overlaps,k=1).tocoo()
+    for j,k,v in zip(coo.row,coo.col,coo.data):
+        if v>max_overlap: conflict_pairs.append((int(j),int(k)))
+    def portfolio_select(floor_ratio):
+        constraints_rows=[];lo=[];hi=[]
+        def add(indices,values,minimum,maximum):
+            constraints_rows.append(sparse.csr_matrix((values,([0]*len(indices),indices)),shape=(1,2*m)))
+            lo.append(minimum);hi.append(maximum)
+        add(list(range(m)),[1.]*m,balanced_count,balanced_count)
+        add(list(range(m,2*m)),[1.]*m,upside_count,upside_count)
+        for j,k in unique_rows:
+            add([j,k],[1,1],0,1)
+        for j,k in conflict_pairs:
+            add([j,k,j+m,k+m],[1,1,1,1],0,1)
+        # Exposure across both balanced and upside slots.
+        exp=sparse.hstack([incidence,incidence],format="csr")
+        constraints_rows.append(exp)
+        lo.extend([0.]*n);hi.extend(cap_vec.tolist())
+        permitted_balanced=means>=max(means)*floor_ratio
+        permitted_upside=means>=max(means)*max(0.70,floor_ratio-0.07)
+        upper_bounds=np.concatenate([permitted_balanced,permitted_upside]).astype(float)
+        utility=np.concatenate([means,highs])
+        res=milp(c=-utility,integrality=np.ones(2*m),
+                 bounds=Bounds(np.zeros(2*m),upper_bounds),
+                 constraints=LinearConstraint(sparse.vstack(constraints_rows,format="csr"),
+                     np.asarray(lo),np.asarray(hi)),
+                 options={"time_limit":35,"mip_rel_gap":0.04})
+        return res
+    selected=None
+    for threshold in (0.88,0.84,0.80,0.75,0.0):
+        solution=portfolio_select(threshold)
+        if solution.x is not None and np.count_nonzero(solution.x>0.5)==int(count):
+            selected=solution
+            break
+    if selected is None:
+        raise ValueError(f"Could not select {count} diverse lineups under {max_exposure:.0%} exposure from {m} candidates. Try reducing lineup count or salary floor.")
+    selected_balanced=np.flatnonzero(selected.x[:m]>0.5)
+    selected_upside=np.flatnonzero(selected.x[m:]>0.5)
+    chosen_indices=list(selected_balanced)+list(selected_upside)
+    results=[pool.iloc[sorted(candidates[j])].copy() for j in chosen_indices]
+    # Verify global constraints before exporting.
+    exposure_counts={}
+    for chosen in results:
+        for player_id in chosen.ID:
+            exposure_counts[player_id]=exposure_counts.get(player_id,0)+1
+    for player_id,frequency in exposure_counts.items():
+        if frequency>cap and not (locked_dst and
+            ((pool.ID==player_id)&(pool.Position=="DST")&(pool.TeamAbbrev==locked_dst)).any()):
+            raise ValueError("Portfolio exposure validation failed")
+    for i in range(len(results)):
+        for j in range(i+1,len(results)):
+            if len(set(results[i].ID)&set(results[j].ID))>max_overlap:
+                raise ValueError("Portfolio overlap validation failed")
     output=[]
     for i,chosen in enumerate(results,1):
         for p in ["QB","RB","WR","TE","DST"]:
