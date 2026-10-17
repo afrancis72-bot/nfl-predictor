@@ -167,14 +167,15 @@ if salary_file is not None:
             dst_options=["No DST lock"]+sorted(dst_scores)
             dst_lock=st.selectbox("Lock a defense (optional)",dst_options,
                                   index=0)
-            lineup_count=st.number_input("Number of lineups",min_value=1,max_value=20,value=5)
+            lineup_count=st.number_input("Number of lineups",min_value=1,max_value=20,value=20)
             floor=st.number_input("Minimum total salary",min_value=0,max_value=50000,value=47500,step=100)
-            exposure=st.slider("Maximum player exposure (%)",min_value=20,max_value=100,value=40,step=5,help="A locked DST is exempt. For five lineups, 40% means at most two appearances.")
+            exposure=st.slider("Maximum player exposure (%)",min_value=20,max_value=100,value=35,step=5,help="A locked DST is exempt. For five lineups, 40% means at most two appearances.")
             upside=st.slider("Tournament upside weight",min_value=0.0,max_value=1.0,value=0.15,step=0.05,help="Boosts 90th-percentile upside in every fourth lineup.")
             variance=st.slider("Balanced-lineup variability penalty",min_value=0.0,max_value=0.5,value=0.05,step=0.05,help="Penalizes the difference between mean and 90th-percentile points in other lineups.")
             build_signature=(result["seed"],result["n_games"],tuple(sorted(dst_scores.items())),int(lineup_count),int(floor),int(exposure),float(upside),float(variance),str(dst_lock))
             if st.session_state.get("classic_lineups_signature") != build_signature:
                 st.session_state.pop("classic_lineups",None)
+            st.caption("Portfolio selection: candidate bank first, then global selection of approximately 75% balanced and 25% upside lineups under exposure and overlap constraints. Building may take several minutes.")
             if st.button("Build experimental nine-player lineups"):
                 st.session_state.pop("classic_lineups", None)
                 try:
