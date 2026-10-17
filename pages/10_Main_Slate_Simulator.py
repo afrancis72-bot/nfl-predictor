@@ -204,6 +204,20 @@ if salary_file is not None:
                 if ownership_data is not None:
                     matched=picks["ownership_pct"].notna().sum()
                     st.caption(f"Ownership coverage: {matched}/{len(picks)} lineup slots. Ownership sum is descriptive, not a calibrated duplication probability.")
+                st.subheader("DraftKings Classic entry preparation")
+                st.caption("Export only after verifying player status, starters and contest eligibility. Preserve existing filled entries.")
+                classic_entries=st.file_uploader("Optional DraftKings Classic reserved-entry CSV",type="csv",key="classic_dk_entries")
+                try:
+                    from classic_dk_export import export_classic_ids, fill_classic_reserved_entries
+                    dk_ids=export_classic_ids(picks,salary)
+                    st.download_button("Download validated Classic lineup IDs",dk_ids.to_csv(index=False),
+                        file_name="teamai2_classic_lineup_ids.csv",mime="text/csv")
+                    if classic_entries is not None:
+                        filled=fill_classic_reserved_entries(classic_entries.getvalue().decode("utf-8-sig"),dk_ids)
+                        st.download_button("Download populated Classic DKEntries",filled,
+                            file_name="teamai2_classic_dkentries.csv",mime="text/csv")
+                except Exception as exc:
+                    st.warning(f"Classic DK export unavailable: {exc}")
                 st.download_button("Download nine-player lineup CSV",
                     picks.to_csv(index=False),file_name="teamai2_experimental_classic_lineups.csv",
                     mime="text/csv",key="classic_download_lineups")
