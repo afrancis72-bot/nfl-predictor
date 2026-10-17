@@ -16,5 +16,5 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install numpy pandas scipy pytest streamlit
-      - run: python -m pytest tests/test_showdown_dk_export.py tests/test_classic_slate_research.py tests/test_snap_engine_research.py tests/test_defense_backtest_research.py tests/test_nfl_command_center.py -q
-      - run: python -m compileall -q showdown_dk_export.py pages/9_Snap_Research_Lab.py pages/10_Main_Slate_Simulator.py pages/0_Team_AI2_NFL_Command_Center.py
+      - run: python -m pytest tests/test_showdown_dk_export.py tests/test_classic_dk_export.py tests/test_classic_slate_research.py tests/test_snap_engine_research.py tests/test_defense_backtest_research.py tests/test_nfl_command_center.py -q
+      - run: python -m compileall -q showdown_dk_export.py classic_dk_export.py pages/9_Snap_Research_Lab.py pages/10_Main_Slate_Simulator.py pages/0_Team_AI2_NFL_Command_Center.py
