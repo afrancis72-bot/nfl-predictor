@@ -53,6 +53,7 @@ class ReplayIntegrationTests(unittest.TestCase):
                 players.append(dict(Name=team+" "+role,TeamAbbrev=team,
                     Position=role,usage_verified=True,
                     rush_weight=rush,target_weight=target,
+                    carries_per_game=rush,
                     **{"FLEX Salary":5000}))
         pbp=[]
         for week in (1,2,3):
