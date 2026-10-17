@@ -6,7 +6,7 @@ from scipy.optimize import milp, Bounds, LinearConstraint
 
 def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_floor=47500,
                           locked_dst=None, excluded_names=(), max_overlap=6,
-                          max_exposure=1.0, upside_weight=0.15, variance_penalty=0.0, ownership=None, leverage_weight=0.0):
+                          max_exposure=1.0, upside_weight=0.15, variance_penalty=0.0, ownership=None, leverage_weight=0.0, seed=5100):
     pool=salaries.copy()
     pool["Position"]=pool["Position"].astype(str).str.upper().str.strip().replace({"D":"DST"})
     pool["Salary"]=pd.to_numeric(pool["Salary"],errors="raise")
@@ -67,7 +67,7 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
     # Two-stage portfolio optimizer: generate independently, then select ALL
     # lineups together. This prevents early lineups consuming chalk exposure.
     from scipy import sparse
-    rng=np.random.default_rng(5100)
+    rng=np.random.default_rng(seed)
     base=pool.score.to_numpy(dtype=float)
     ceiling=pool.dk_points_p90.fillna(pool.score).to_numpy(dtype=float)
     spread=np.maximum(0,ceiling-base)
