@@ -7,7 +7,7 @@ import streamlit as st
 st.title("🏈 Team AI² | NFL Command Center")
 st.caption("Experimental unified workflow — the production NFL predictor remains available.")
 
-st.warning("Research status: Snap Showdown exports are not yet DraftKings entry-ready; verify roster and availability. Classic DST and ownership estimates are not calibrated.")
+st.warning("Research status: Showdown can generate validated DraftKings ID and reserved-entry CSVs using native DK salary files. Verify starters, injuries and contest eligibility before upload. Classic DST and ownership estimates remain uncalibrated.")
 st.markdown("### Choose your contest")
 left,right=st.columns(2)
 with left:
