@@ -6,6 +6,7 @@ import streamlit as st
 from historical_usage import download_weekly_stats, build_usage_priors, apply_usage_priors, usage_audit
 from snap_level_research import simulate_snaps, summarize_player_props
 from snap_portfolio_research import build_research_portfolio
+from showdown_dk_export import export_showdown_ids, fill_reserved_entries
 from defensive_priors_research import build_defense_profiles
 from historical_replay_research import replay_game
 
@@ -180,7 +181,23 @@ if "snap_summary" in st.session_state:
         lineups=pd.DataFrame(chosen)
         st.dataframe(lineups,use_container_width=True)
         st.download_button("Download research lineups",lineups.to_csv(index=False),"snap_five_research_lineups.csv","text/csv")
-    st.info("Research-only: candidate lineups are sampled, not globally optimized. Scenario scores are not contest ROI or winning probabilities. Real-time depth charts, injuries, measured opponent defense profiles, and historical calibration remain missing. DK IDs are not included, so this is NOT a DK entry upload file.")
+        st.subheader("DraftKings entry preparation")
+        st.caption("Only original DK salary files with separate CPT/FLEX IDs can be exported. Verify injuries, starters and team assignments independently before entry.")
+        entries_file=st.file_uploader("Optional DraftKings reserved-entry template CSV",type=["csv"],key="snap_dk_entries")
+        if salary_file is not None:
+            try:
+                original_salary=pd.read_csv(salary_file)
+                ids=export_showdown_ids(lineups,original_salary)
+                st.download_button("Download validated Showdown lineup IDs",ids.to_csv(index=False),
+                                   "teamai2_showdown_lineup_ids.csv","text/csv")
+                if entries_file is not None:
+                    entry_text=fill_reserved_entries(entries_file.getvalue().decode("utf-8-sig"),ids)
+                    st.download_button("Download populated DraftKings entries CSV",entry_text,
+                                       "teamai2_showdown_dkentries.csv","text/csv")
+            except Exception as exc:
+                st.warning(f"DK export unavailable: {exc}")
+
+    st.info("Research-only: candidate lineups are sampled, not globally optimized. Scenario scores are not contest ROI or winning probabilities. Real-time depth charts, injuries, measured opponent defense profiles, and historical calibration remain missing. Use the validated DK entry preparation above; research CSV itself is not a DK upload file.")
 
 st.divider()
 st.subheader("Historical game replay — held-out evaluation")
