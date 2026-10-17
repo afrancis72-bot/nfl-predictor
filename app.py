@@ -1985,12 +1985,19 @@ if view == "Home":
     import base64
     logo_file = ROOT / "assets" / "team_ai2_sports_emblem.b64"
     if logo_file.is_file():
-        _, center, _ = st.columns([1, 2, 1])
-        with center:
-            try:
-                st.image(base64.b64decode(logo_file.read_text().strip()), width=160)
-            except Exception:
-                st.warning("Logo image is being repaired. The rest of the NFL app is available.")
+        try:
+            from PIL import Image
+            from io import BytesIO
+            emblem = Image.open(BytesIO(base64.b64decode(logo_file.read_text().strip())))
+            emblem.load()
+            # Center the existing image without claiming that scaling restores lost detail.
+            st.markdown("<div style='text-align:center'>", unsafe_allow_html=True)
+            left, middle, right = st.columns([1, 1, 1])
+            with middle:
+                st.image(emblem, width=192)
+            st.markdown("</div>", unsafe_allow_html=True)
+        except Exception:
+            st.warning("Logo image is unavailable. The rest of the NFL app is available.")
     else:
         st.caption("Team AI² sports emblem is not yet available.")
     st.markdown("### Choose your workflow from the sidebar")
