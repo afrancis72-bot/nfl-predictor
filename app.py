@@ -62,6 +62,9 @@ from scipy.sparse import lil_matrix, vstack, csr_matrix
 
 st.set_page_config(page_title="NFL Predictor Pro", page_icon="🏈", layout="wide")
 
+# Experimental unified navigation; existing production controls remain unchanged.
+st.info("Team AI² unified NFL workflow is available in the sidebar: **Team AI2 NFL Command Center**. The original predictor remains available here.")
+
 ROOT = Path(__file__).parent
 DATA = ROOT / "data"
 MC_FILE = DATA / "nfl_week4_2026_correlated_monte_carlo_50000_v8_airyards_redzone.csv"
@@ -242,7 +245,12 @@ def rebuild_uploaded_weekly_projections(pool, env):
     # Current market scoring environment: position-sensitive and deliberately bounded.
     team_pts=pd.to_numeric(x["team_implied_points"],errors="coerce")
     expo=pos.map({"QB":0.72,"RB":0.62,"WR":0.68,"TE":0.55,"DST":-0.30}).fillna(0.6)
-    market=np.power((team_pts/22.5).clip(0.72,1.35),expo)
+    # DST scoring is driven by the OPPONENT's expected points, not its own offense.
+    # This corrects the direction of the existing DST market adjustment.
+    game_totals=x["game"].astype(str).str.upper().map({k:float(v["game_total"]) for k,v in em.items()})
+    opponent_pts=(game_totals-team_pts).clip(lower=0)
+    market_points=team_pts.where(pos!="DST",opponent_pts)
+    market=np.power((market_points/22.5).clip(0.72,1.35),expo)
     market=market.clip(0.82,1.22).fillna(1.0)
     # Bounded role proxy from current DK salary within team/position.  This is not an injury/depth-chart claim.
     role=np.ones(len(x),dtype=float)
@@ -254,6 +262,11 @@ def rebuild_uploaded_weekly_projections(pool, env):
     mean=(history*market*role).clip(lower=0.1)
     # DST remains conservative because DK PPG is especially noisy; market total supplies the weekly direction.
     x["proj"]=mean
+    # Preserve a clear audit trail: DST means are shrinkage estimates, not
+    # pressure/sack/turnover models. Do not mislabel them as researched data.
+    x["dst_projection_method"]=np.where(pos=="DST",
+        "DK historical scoring + salary peers + opponent implied points (proxy)",
+        "Not applicable")
     tail={"QB":(1.55,1.78,2.18),"RB":(1.72,2.05,2.62),"WR":(1.72,2.08,2.70),"TE":(1.78,2.16,2.80),"DST":(1.80,2.20,2.75)}
     x["ceiling"]=[m*tail.get(p,(1.7,2.0,2.6))[0] for m,p in zip(mean,pos)]
     x["p95_use"]=[m*tail.get(p,(1.7,2.0,2.6))[1] for m,p in zip(mean,pos)]
@@ -1007,7 +1020,7 @@ def generate_candidate_bank(pool, bank_size, min_salary, max_salary, strategy,
     return items,ref,floor
 
 
-def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, time_limit=20.0):
+def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, time_limit=20.0, locked_players=()):
     """Choose the entire portfolio simultaneously from a candidate bank."""
     if len(candidate_items) < n_lineups:
         return [], {"success":False,"message":"Candidate bank smaller than requested portfolio."}
@@ -1021,7 +1034,7 @@ def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, 
     rows=[]; lbs=[]; ubs=[]
     rows.append(np.ones(n)); lbs.append(float(n_lineups)); ubs.append(float(n_lineups))
 
-    players=sorted(set().union(*sets))
+    players=sorted(set().union(*sets)-set(locked_players))
     for player in players:
         row=np.fromiter((1.0 if player in s else 0.0 for s in sets),dtype=float,count=n)
         rows.append(row); lbs.append(-np.inf); ubs.append(float(max_count))
@@ -1035,9 +1048,26 @@ def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, 
                 row=np.zeros(n,dtype=float); row[i]=1.0; row[j]=1.0
                 rows.append(row); lbs.append(-np.inf); ubs.append(1.0)
 
+    # Penalize excessive repeated offensive pairs without banning strong stacks.
+    from collections import Counter
+    from itertools import combinations
+    pair_counts=Counter(pair for lineup in sets for pair in combinations(sorted(lineup-set(locked_players)),2))
+    repeated=[pair for pair,count in pair_counts.items() if count>4]
+    extra=len(repeated)
+    if extra:
+        rows=[np.pad(row,(0,extra)) for row in rows]
+        for j,pair in enumerate(repeated):
+            row=np.zeros(n+extra,dtype=float)
+            row[:n]=[float(set(pair).issubset(lineup)) for lineup in sets]
+            row[n+j]=-1.0
+            rows.append(row); lbs.append(-np.inf); ubs.append(4.0)
     A=csr_matrix(np.vstack(rows))
     constraints=LinearConstraint(A,np.asarray(lbs),np.asarray(ubs))
-    res=milp(c=-scores, integrality=np.ones(n,dtype=int), bounds=Bounds(0,1),
+    objective=np.concatenate([-scores,np.full(extra,0.5)])
+    integrality=np.concatenate([np.ones(n,dtype=int),np.zeros(extra,dtype=int)])
+    lower=np.zeros(n+extra)
+    upper=np.concatenate([np.ones(n),np.full(extra,np.inf)])
+    res=milp(c=objective, integrality=integrality, bounds=Bounds(lower,upper),
              constraints=constraints,
              options={"time_limit":float(time_limit),"mip_rel_gap":0.001,"presolve":True})
     if res.x is None:
@@ -1046,13 +1076,13 @@ def select_portfolio_milp(candidate_items, n_lineups, max_exposure, min_unique, 
     selected=[lineups[i].copy() for i in chosen]
     selected.sort(key=lambda x: lineup_score(x,"GPP Ceiling",0.0,0.0), reverse=True)
     meta={"success":len(selected)==n_lineups,"message":str(res.message),"status":int(res.status),
-          "candidate_count":n,"constraint_count":len(rows),"max_count":max_count,
+          "candidate_count":n,"constraint_count":len(rows),"pair_penalty_count":extra,"max_count":max_count,
           "objective_score":float(scores[chosen].sum()) if chosen else 0.0,
           "mip_gap":getattr(res,"mip_gap",None)}
     return selected, meta
 
 
-def validate_portfolio(lineups, n_lineups, max_exposure, min_unique, min_salary, max_salary):
+def validate_portfolio(lineups, n_lineups, max_exposure, min_unique, min_salary, max_salary, locked_players=()):
     issues=[]
     if len(lineups) != int(n_lineups):
         issues.append(f"Expected {int(n_lineups)} lineups; found {len(lineups)}.")
@@ -1066,7 +1096,7 @@ def validate_portfolio(lineups, n_lineups, max_exposure, min_unique, min_salary,
             issues.append(f"Lineup {i}: QB faces selected DST (or QB opponent cannot be verified).")
         names=set(l["Name"].astype(str)); keys.append(tuple(sorted(names)))
         for name in names: counts[name]=counts.get(name,0)+1
-    over={k:v for k,v in counts.items() if v>max_count}
+    over={k:v for k,v in counts.items() if v>max_count and k not in set(locked_players)}
     if over:
         issues.append("Exposure violations: "+", ".join(f"{k} {v}/{n_lineups}" for k,v in sorted(over.items())))
     # Second-line injury QC: even if an upstream eligibility filter regresses,
@@ -1464,7 +1494,8 @@ SHOWDOWN_DEFAULTS = {
     "sd_n_lineups": 20, "sd_max_player_exp": 0.75, "sd_max_cpt_exp": 0.50,
     "sd_min_unique": 2, "sd_min_salary": 38000, "sd_sims": 20000,
     "sd_candidate_bank": 6000, "sd_strategy": "Tournament Ceiling",
-    "sd_min_standard": "Off", "sd_allow_deep_punt": True,
+    "sd_min_standard": "Balanced GPP", "sd_allow_deep_punt": False,
+    "sd_player_salary_floor": 2000,
     "sd_locks": [], "sd_excludes": [], "sd_cpt_excludes": [],
 }
 
@@ -1755,7 +1786,7 @@ def showdown_viability_flags(players, sims, standard="Balanced GPP"):
         rows.append({"Viable":bool(viable),"Deep Punt OK":bool(deep_ok),"Viability Tests":int(tests)})
     return pd.DataFrame(rows,index=players.index)
 
-def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salary=44000, max_salary=50000, seed=316, min_standard="Balanced GPP", allow_deep_punt=True):
+def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salary=44000, max_salary=50000, seed=316, min_standard="Balanced GPP", allow_deep_punt=True, min_player_salary=2000):
     """V1.7a performance fix: same V1.7 construction logic, precomputed arrays.
 
     The expensive player metrics and roster metadata are calculated once. Candidate
@@ -1781,6 +1812,10 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
     viable=flags["Viable"].to_numpy(dtype=bool)
     deep_ok=flags["Deep Punt OK"].to_numpy(dtype=bool)
 
+    # Hard per-player floor and nonzero modeled opportunity; never relax via deep-punt toggle.
+    # K/DST are judged on scoring opportunities, not offensive touches.
+    eligible=(flex_salary>=int(min_player_salary)) & (sim_p90>=3.0) & (prob5>=0.05) & (sim_mean>=1.0)
+    eligible &= np.array([bool(v) for v in players.get("Role CPT Eligible",pd.Series(True,index=players.index))],dtype=bool) | np.isin(pos,["K","DST","D"])
     core=np.zeros(n,dtype=bool); relief=np.zeros(n,dtype=bool); captain_ok=np.zeros(n,dtype=bool)
     for i in range(n):
         if pos[i] in ["QB","K","DST","D"]:
@@ -1789,13 +1824,14 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
             core[i]=(sim_mean[i]>=3.25 and sim_p75[i]>=4.0 and sim_p90[i]>=7.0 and prob5[i]>=0.20)
         relief[i]=(sim_p90[i]>=6.0 and prob5[i]>=0.15 and sim_mean[i]>=1.75)
         role_cpt_ok=bool(players.iloc[i].get("Role CPT Eligible",True))
-        captain_ok[i]=role_cpt_ok
+        captain_ok[i]=role_cpt_ok and eligible[i]
 
     mean_scale=np.maximum(sim_mean,0.10); p90_scale=np.maximum(sim_p90,0.10); ceiling_scale=np.maximum(sim_p95,0.10)
     weights=(0.40*mean_scale/mean_scale.max()+0.40*p90_scale/p90_scale.max()+0.20*ceiling_scale/ceiling_scale.max())
-    weights=np.maximum(weights,0.005)
+    weights=np.where(eligible,np.maximum(weights,0.005),0.0)
     weights=np.where(core,weights,weights*0.55)
     weights=np.where((~core)&(~relief),weights*0.35,weights)
+    if weights.sum()<=0: return [],flags
     weights=weights/weights.sum()
     cpt_weights=weights*captain_ok.astype(float)
     if cpt_weights.sum()>0: cpt_weights=cpt_weights/cpt_weights.sum()
@@ -1808,7 +1844,8 @@ def generate_showdown_candidates(players, sims, teams, bank_size=6000, min_salar
         if cpt_weights.sum()<=0: break
         c=int(rng.choice(n,p=cpt_weights))
         if not captain_ok[c]: continue
-        avail=all_idx[all_idx!=c]
+        avail=all_idx[(all_idx!=c)&eligible]
+        if len(avail)<5: break
         pw=weights[avail]; pw=pw/pw.sum()
         flex_idx=np.sort(rng.choice(avail,size=5,replace=False,p=pw)).astype(int)
         key=(c,tuple(flex_idx.tolist()))
@@ -2543,7 +2580,19 @@ elif view == "Lineup Builder":
 
     eligible=pool[pool["optimizer_eligible"] == True].sort_values(["Position","proj"],ascending=[True,False])
     names=eligible["Name"].drop_duplicates().tolist()
-    locks=st.multiselect("Lock players",names,key="classic_locks")
+    # DST is always portfolio-selected; never carry an old slate-wide DST lock.
+    dst_names=set(eligible.loc[eligible["Position"].astype(str).eq("DST"),"Name"].astype(str))
+    previous_locks=list(st.session_state.get("classic_locks",[]))
+    if any(name in dst_names for name in previous_locks):
+        st.session_state["classic_locks"]=[name for name in previous_locks if name not in dst_names]
+        st.warning("Removed locked defense(s). Team AI² now chooses DST across the portfolio under the exposure cap.")
+    locks=st.multiselect("Lock offensive players", [name for name in names if name not in dst_names],key="classic_locks")
+    if len(dst_names):
+        st.markdown("#### Defensive options — selected automatically")
+        dst_audit=eligible[eligible["Position"].astype(str).eq("DST")].copy()
+        dst_audit["Projected DK / $1K"]=pd.to_numeric(dst_audit["proj"],errors="coerce")/(pd.to_numeric(dst_audit["Salary"],errors="coerce")/1000.0)
+        st.dataframe(dst_audit[[c for c in ["Name","TeamAbbrev","Salary","proj","ceiling","opponent","team_implied_points","dst_projection_method","Projected DK / $1K"] if c in dst_audit.columns]].sort_values("proj",ascending=False),hide_index=True,use_container_width=True)
+        st.caption("DST projections use the current eligible player pool. All defenses are capped by Max exposure; no defense is automatically locked.")
     excludes=st.multiselect("Exclude players",names,key="classic_excludes")
 
     portfolio_mode=st.radio("Portfolio construction",["DFS Engine V2 Scenario Portfolio","V3.1.7 Portfolio Optimize (control)"],horizontal=True,key="classic_portfolio_mode")
@@ -2600,7 +2649,7 @@ elif view == "Lineup Builder":
                 st.session_state['classic_v2_sim_players']=sim_players; st.session_state['classic_v2_sims']=classic_sims
                 st.session_state['classic_v2_records']=records
             else:
-                lineups, solver_meta = select_portfolio_milp(candidate_items,int(n_lineups),float(max_exp),int(min_unique),float(solver_seconds))
+                lineups, solver_meta = select_portfolio_milp(candidate_items,int(n_lineups),float(max_exp),int(min_unique),float(solver_seconds),locked_players=locks)
             expo={}; max_count=max(1,math.ceil(int(n_lineups)*float(max_exp)-1e-12))
             for l in lineups:
                 for nm in set(l.Name): expo[nm]=expo.get(nm,0)+1
@@ -2610,7 +2659,7 @@ elif view == "Lineup Builder":
             st.session_state["nfl_lineups"]=lineups
             st.session_state["classic_scenario_upside_used"]=bool(scenario_upside)
             st.session_state["nfl_rank_settings"]={"strategy":strategy,"own_weight":float(own_weight),"leverage_weight":float(leverage_weight)}
-            qc=validate_portfolio(lineups,int(n_lineups),float(max_exp),int(min_unique),int(min_salary),50000)
+            qc=validate_portfolio(lineups,int(n_lineups),float(max_exp),int(min_unique),int(min_salary),50000,locked_players=locks)
             if qc["pass"]:
                 st.success(f"Generated {len(lineups)} of {int(n_lineups)} requested lineups. FINAL QC: PASS")
                 st.success("Portfolio Injury QC: OUT/DOUBTFUL/IR/inactive players = 0")
@@ -2739,6 +2788,7 @@ elif view == "Single Game Showdown":
             q1,q2=st.columns(2)
             min_standard=q1.selectbox("Minimum player standard",["Off","Loose GPP","Balanced GPP","Strong Floor"],key="sd_min_standard",help="Screens players by their simulated scoring distribution, not salary. Captain must pass the selected standard.")
             allow_deep_punt=q2.checkbox("Allow one deep punt",key="sd_allow_deep_punt",help="Allows at most one player who misses the full standard, but only if the simulation still shows a legitimate scoring path.")
+            min_player_salary=st.selectbox("Minimum individual FLEX salary",options=[0,1000,1500,2000,2500,3000],index=3,key="sd_player_salary_floor",help="Hard per-player floor, including Captain. $2,000 default; every player must also pass a modeled scoring-opportunity gate.")
             names=players["Name"].tolist()
             locks=st.multiselect("Lock player(s)",names,key="sd_locks")
             excludes=st.multiselect("Exclude player(s)",names,key="sd_excludes")
@@ -2746,10 +2796,15 @@ elif view == "Single Game Showdown":
             eff_p,eff_c=_showdown_exposure_counts(int(n_lineups),float(max_player),float(max_cpt))
             st.caption(f"Effective small-portfolio limits: any player ≤ {eff_p}/{int(n_lineups)} lineups ({100*eff_p/int(n_lineups):.0f}%) • any Captain ≤ {eff_c}/{int(n_lineups)} ({100*eff_c/int(n_lineups):.0f}%). Percentages are rounded up to the nearest attainable lineup count.")
             st.info("V2 defaults: 20 lineups • 75% safety player ceiling • 50% Captain ceiling • 2 minimum uniques • $38,000 salary floor • 20,000 correlated game simulations • 6,000 candidates • viability screen Off. Rare legal constructions are probability-weighted rather than prohibited. V1.7 keeps opportunity-first candidate generation and adds a bounded role sanity calibration for weekly-model skill players. DK PPG is used only as a 20% role anchor when available; it never replaces the weekly projection. V2 no longer bans unusual legal constructions (including DST Captain, double-DST, no-QB, or unusual salary usage) merely because they are rare; simulated outcomes and portfolio value determine representation.")
+            experimental_script=st.checkbox("EXPERIMENTAL: possession-driven game-script simulation (research only)",value=False,key="sd_exp_game_script",help="Prototype; not snap-by-snap or historically calibrated. Existing engine remains default.")
             if st.button("Simulate game + build Showdown portfolio",type="primary",key="sd_generate",disabled=bool(missing_qb)):
                 with st.spinner("Simulating correlated game outcomes and optimizing Showdown lineups..."):
-                    sim=simulate_showdown_players(players,sd_teams,int(n_sims))
-                    cands,viability=generate_showdown_candidates(players,sim,sd_teams,int(bank),int(min_salary),50000,min_standard=min_standard,allow_deep_punt=bool(allow_deep_punt))
+                    if experimental_script:
+                        from showdown_game_script_engine import simulate_game_scripts
+                        sim=simulate_game_scripts(players,sd_teams,int(n_sims))
+                    else:
+                        sim=simulate_showdown_players(players,sd_teams,int(n_sims))
+                    cands,viability=generate_showdown_candidates(players,sim,sd_teams,int(bank),int(min_salary),50000,min_standard=min_standard,allow_deep_punt=bool(allow_deep_punt),min_player_salary=int(min_player_salary))
                     ranked=rank_showdown_candidates(cands,strategy)
                     diagnostics=showdown_value_diagnostics(players,sim)
                     diagnostics=diagnostics.join(viability[["Viable","Deep Punt OK","Viability Tests"]])

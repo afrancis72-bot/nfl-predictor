@@ -1,0 +1,237 @@
+"""Team AI² experimental NFL classic main-slate snap research page.
+
+The page deliberately fails closed on unverified usage and unknown starters.
+"""
+import io
+import time
+import secrets
+import pandas as pd
+import streamlit as st
+from classic_lineup_builder import build_classic_lineups
+from classic_ownership_research import estimate_ownership
+from classic_slate_research import prepare_classic_slate
+from classic_snap_runner import run_classic_snap_slate
+from historical_usage import download_weekly_stats, build_usage_priors, apply_usage_priors, usage_audit
+
+st.title("Main Slate Simulator — Research")
+st.caption("Experimental snap-by-snap research. No calibrated DST projection or entry-ready optimizer.")
+season=st.number_input("Season",min_value=1999,max_value=2100,value=2026,step=1)
+week=st.number_input("NFL week",min_value=1,max_value=22,value=6,step=1)
+n_games=st.number_input("Simulated games per matchup",min_value=1,max_value=100000,value=10,step=10)
+seed_mode=st.radio("Simulation randomness",["Reproducible","Fresh random sample"],horizontal=True)
+st.caption("A seed only controls the random sequence. Any whole number works; choose Fresh random sample to let the app pick automatically.")
+fixed_seed=st.number_input("Seed (editable in Reproducible mode)",min_value=0,max_value=2147483647,value=5100,step=1,disabled=seed_mode!="Reproducible",key="classic_sim_seed")
+salary_file=st.file_uploader("DraftKings main slate salary CSV",type="csv",key="classic_salaries")
+weekly_file=st.file_uploader("Historical weekly player stats CSV (optional)",type="csv",key="classic_history")
+exclusions=st.text_area("Excluded players (one full name per line)",value="Jalen Hurts\nTanner McKee\nCole Payton")
+if salary_file is not None:
+    try:
+        salary=pd.read_csv(salary_file)
+        salary_pool,offense,audit,excluded=prepare_classic_slate(salary, ())
+        st.subheader("Matchup and roster audit")
+        st.dataframe(audit,use_container_width=True)
+        st.caption("Select the actual starter even when excluded from DFS. Exclusions affect lineup eligibility, not simulation.")
+        starters={}
+        for matchup in sorted(offense.matchup.unique()):
+            st.markdown(f"**{matchup}**")
+            teams=matchup.split("@")
+            cols=st.columns(2)
+            for col,team in zip(cols,teams):
+                options=["— Select confirmed starter —"]+sorted(
+                    salary_pool.loc[(salary_pool.matchup==matchup)&(salary_pool.TeamAbbrev==team)&
+                                (salary_pool.Position=="QB"),"Name"].unique().tolist())
+                with col:
+                    chosen=st.selectbox(f"{team} starting QB",options,key=f"starter_{matchup}_{team}")
+                    if chosen!=options[0]: starters[team]=chosen
+        ready=len(starters)==2*len(audit)
+        if not ready: st.warning("Select one confirmed starting QB for every team before running.")
+        if st.button("Run main slate snap simulations",disabled=not ready):
+            started=time.perf_counter()
+            run_seed=int(fixed_seed) if seed_mode=='Reproducible' else secrets.randbelow(2147483647)
+            st.caption(f'Simulation seed: {run_seed}')
+            stage=st.empty()
+            progress=st.progress(0,text="Preparing historical data...")
+            stage.info("Stage 1: loading historical data")
+            def report_progress(done,total,matchup,status):
+                progress.progress(done/total,text=f"{done}/{total} matchups finished — {matchup} {status}")
+                stage.info(f"Stage 3: {matchup} {status}; elapsed {time.perf_counter()-started:.1f}s")
+            with st.spinner("Running snap-level simulations..."):
+                if weekly_file is not None:
+                    weekly=pd.read_csv(weekly_file)
+                else:
+                    weekly=download_weekly_stats(int(season),"/tmp/teamai2_classic_weekly.csv")
+                stage.info(f"Stage 2: validating historical usage; elapsed {time.perf_counter()-started:.1f}s")
+                priors=build_usage_priors(weekly,as_of_week=int(week),season=int(season))
+                diagnostic=usage_audit(apply_usage_priors(offense,priors))
+                st.session_state["classic_usage_audit"]=diagnostic
+                missing_starter_prior = diagnostic.loc[
+                    diagnostic["Name"].isin(starters.values()) & (~diagnostic["usage_verified"])
+                ]
+                qb_fallback_stats = None
+                if not missing_starter_prior.empty:
+                    stage.info(f"Loading verified {int(season)-1} quarterback history for backup starters...")
+                    qb_fallback_stats = download_weekly_stats(
+                        int(season)-1, f"/tmp/teamai2_classic_qb_history_{int(season)-1}.csv"
+                    )
+                projections,stats,game_audit,excluded_players,omitted_players=run_classic_snap_slate(
+                    salary,weekly,season=int(season),week=int(week),starting_qbs=starters,
+                    excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()],
+                    n_games=int(n_games),seed=run_seed,progress_callback=report_progress,
+                    qb_fallback_stats=qb_fallback_stats)
+            st.session_state["classic_last_run"]={
+                "projections":projections,"stats":stats,"omitted_players":omitted_players,
+                "seed":run_seed,"n_games":int(n_games),"season":int(season),"week":int(week),
+                "elapsed":time.perf_counter()-started}
+            progress.progress(1.0,text="All matchups completed")
+            stage.success(f"Finished in {time.perf_counter()-started:.1f} seconds")
+    except Exception as exc:
+        st.error(f"Validation stopped the run: {exc}")
+    if "classic_last_run" in st.session_state:
+        result=st.session_state["classic_last_run"]
+        projections=result["projections"]
+        stats=result["stats"]
+        omitted_players=result["omitted_players"]
+        if "usage_source" in projections.columns:
+            fallback_players=projections.loc[projections.usage_source.str.contains("fallback",na=False),["Name","Team","usage_source"]].drop_duplicates()
+            if not fallback_players.empty:
+                st.warning("Limited-history QB fallback applied (previous season only):")
+                st.dataframe(fallback_players,use_container_width=True)
+        st.success(f"Saved simulation: {result['n_games']} games/matchup, seed {result['seed']}, {result['elapsed']:.1f}s. Downloads will not rerun the simulation.")
+        if not omitted_players.empty:
+            st.warning(f"{len(omitted_players)} players omitted due to insufficient matched history. Research output is not entry-ready.")
+            st.dataframe(omitted_players,use_container_width=True)
+            st.download_button("Download omitted-player audit",omitted_players.to_csv(index=False),file_name="teamai2_omitted_players.csv",mime="text/csv",key="classic_download_omitted")
+        team_games=stats.groupby(["matchup","team","game"],as_index=False)[["pass_att","rush_att","targets"]].sum()
+        team_volume=team_games.groupby(["matchup","team"],as_index=False)[["pass_att","rush_att","targets"]].mean()
+        team_volume["offensive_plays"]=team_volume["pass_att"]+team_volume["rush_att"]
+        team_volume["pass_rate"]=team_volume["pass_att"]/team_volume["offensive_plays"].replace(0,float("nan"))
+        team_volume["volume_warning"]=(team_volume["offensive_plays"]<40)|(team_volume["offensive_plays"]>85)|(team_volume["pass_rate"]<.30)|(team_volume["pass_rate"]>.75)
+        st.subheader("Experimental Classic Lineup Builder")
+        st.caption("Ownership is estimated automatically unless you upload an external projection CSV (ID, ownership_pct). Automatic estimates are uncalibrated.")
+        ownership_file=st.file_uploader("Projected ownership CSV (optional)",type="csv",key="classic_ownership")
+        if ownership_file is not None:
+            ownership_data=pd.read_csv(ownership_file)
+            st.caption("Using externally supplied projected ownership.")
+        else:
+            ownership_data=None  # Computed below once DST estimates are ready.
+
+        leverage_weight=st.slider("Ownership leverage strength (every fifth lineup)",0.0,10.0,4.0,0.5,disabled=False)
+        st.caption("Nine-player DraftKings lineups with DST. DST points are estimated automatically from historical performance and opponent QB projections; they are not calibrated snap-simulated predictions. Check injuries, eligibility and projections before entry.")
+        dst_pool=salary_pool[salary_pool.Position.isin(["DST","D"])].copy()
+        if dst_pool.empty:
+            st.warning("No DST entries found in the uploaded DraftKings salary file.")
+        else:
+            # Pregame heuristic: historical DST DK PPG adjusted modestly for
+            # simulated opponent QB strength. Not a calibrated DST simulation.
+            import numpy as np
+            import re
+            opponent_by_team={}
+            for game in salary_pool["Game Info"].dropna().astype(str).unique() if "Game Info" in salary_pool else []:
+                match=re.match(r"^([A-Z]{2,3})@([A-Z]{2,3})",game)
+                if match:
+                    a,b=match.groups()
+                    opponent_by_team[a]=b
+                    opponent_by_team[b]=a
+            qb_salary=salary_pool[salary_pool.Position.eq("QB")][["ID","TeamAbbrev"]].copy()
+            qb_salary["ID"]=qb_salary["ID"].astype(str)
+            qb_predictions=projections[["ID","dk_points_mean"]].copy()
+            qb_predictions["ID"]=qb_predictions["ID"].astype(str)
+            qb_means=qb_predictions.merge(qb_salary,on="ID",how="inner").groupby("TeamAbbrev")["dk_points_mean"].max().to_dict()
+            dst_defaults={}
+            dst_audit=[]
+            for _,defense in dst_pool.iterrows():
+                team=str(defense["TeamAbbrev"])
+                opp=opponent_by_team.get(team)
+                ppg=pd.to_numeric(pd.Series([defense.get("AvgPointsPerGame",np.nan)]),errors="coerce").iloc[0]
+                history=float(ppg) if pd.notna(ppg) and np.isfinite(ppg) else 5.0
+                qb=qb_means.get(opp)
+                adjustment=float(np.clip((18.0-float(qb))*0.12,-1.5,1.5)) if qb is not None and np.isfinite(qb) else 0.0
+                estimate=round(float(np.clip(0.70*history+0.30*5.0+adjustment,0,15)),2)
+                dst_defaults[team]=estimate
+                dst_audit.append({"DST":team,"Opponent":opp or "Unknown","Historical DK PPG":round(history,2),
+                                  "Opposing QB projected DK":round(float(qb),2) if qb is not None and np.isfinite(qb) else np.nan,
+                                  "DST estimate":estimate})
+            # DST is computed automatically from pregame data and passed to
+            # the lineup builder without any manual input or display table.
+            dst_scores=dst_defaults.copy()
+            if ownership_file is None:
+                ownership_estimates=estimate_ownership(salary_pool,projections,dst_scores,
+                    excluded_names=[name.strip() for name in exclusions.splitlines() if name.strip()])
+                ownership_data=ownership_estimates[["ID","ownership_pct"]].copy()
+                with st.expander("Estimated ownership (experimental; uncalibrated)",expanded=False):
+                    st.caption("Automatic slate-aware estimates, not observed DraftKings ownership. Position totals sum to 900% across nine roster slots.")
+                    st.dataframe(ownership_estimates,hide_index=True,use_container_width=True)
+                    st.download_button("Download ownership estimates",ownership_estimates.to_csv(index=False),
+                        file_name="teamai2_estimated_ownership.csv",mime="text/csv")
+
+            dst_options=["No DST lock"]+sorted(dst_scores)
+            dst_lock=st.selectbox("Lock a defense (optional)",dst_options,
+                                  index=0)
+            lineup_count=st.number_input("Number of lineups",min_value=1,max_value=20,value=20)
+            floor=st.number_input("Minimum total salary",min_value=0,max_value=50000,value=47500,step=100)
+            exposure=st.slider("Maximum player exposure (%)",min_value=20,max_value=100,value=35,step=5,help="A locked DST is exempt. For five lineups, 40% means at most two appearances.")
+            upside=st.slider("Tournament upside weight",min_value=0.0,max_value=1.0,value=0.15,step=0.05,help="Boosts 90th-percentile upside in every fourth lineup.")
+            variance=st.slider("Balanced-lineup variability penalty",min_value=0.0,max_value=0.5,value=0.05,step=0.05,help="Penalizes the difference between mean and 90th-percentile points in other lineups.")
+            build_signature=(result["seed"],result["n_games"],tuple(sorted(dst_scores.items())),int(lineup_count),int(floor),int(exposure),float(upside),float(variance),str(dst_lock))
+            if st.session_state.get("classic_lineups_signature") != build_signature:
+                st.session_state.pop("classic_lineups",None)
+            st.caption("Portfolio selection: candidate bank first, then global selection of approximately 75% balanced and 25% upside lineups under exposure and overlap constraints. Building may take several minutes.")
+            if st.button("Build experimental nine-player lineups"):
+                st.session_state.pop("classic_lineups", None)
+                try:
+                    picks=build_classic_lineups(
+                        salary,projections,dst_points=dst_scores,count=int(lineup_count),
+                        salary_floor=int(floor),ownership=ownership_data,leverage_weight=float(leverage_weight),max_exposure=exposure/100,
+                        upside_weight=upside,variance_penalty=variance,
+                        locked_dst=None if dst_lock=="No DST lock" else dst_lock,
+                        excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()])
+                    st.session_state["classic_lineups"]=picks
+                    st.session_state["classic_lineups_signature"]=build_signature
+                    st.success("New portfolio built with "+"automatic DST estimates.")
+                except Exception as exc:
+                    st.error(f"Lineup builder: {exc}")
+            if "classic_lineups" in st.session_state:
+                picks=st.session_state["classic_lineups"]
+                st.caption("DST scoring mode: "+"automatic research estimates")
+                st.dataframe(picks,use_container_width=True)
+                exposures=picks.groupby(["ID","Name","team"],as_index=False).agg(lineups=("lineup","nunique"))
+                exposures["exposure_pct"]=100*exposures["lineups"]/picks["lineup"].nunique()
+                st.subheader("Player exposure audit")
+                st.dataframe(exposures.sort_values(["lineups","Name"],ascending=[False,True]),use_container_width=True)
+                st.download_button("Download exposure audit",exposures.to_csv(index=False),file_name="teamai2_classic_exposure.csv",mime="text/csv",key="classic_download_exposure")
+                st.dataframe(picks.groupby("lineup").agg(salary=("salary","sum"),
+                    projected_points=("projected_points","sum"),ownership_sum=("ownership_pct","sum")),use_container_width=True)
+                if ownership_data is not None:
+                    matched=picks["ownership_pct"].notna().sum()
+                    st.caption(f"Ownership coverage: {matched}/{len(picks)} lineup slots. Ownership sum is descriptive, not a calibrated duplication probability.")
+                st.subheader("DraftKings Classic entry preparation")
+                st.caption("Export only after verifying player status, starters and contest eligibility. Preserve existing filled entries.")
+                classic_entries=st.file_uploader("Optional DraftKings Classic reserved-entry CSV",type="csv",key="classic_dk_entries")
+                try:
+                    from classic_dk_export import export_classic_ids, fill_classic_reserved_entries
+                    dk_ids=export_classic_ids(picks,salary)
+                    st.download_button("Download validated Classic lineup IDs",dk_ids.to_csv(index=False),
+                        file_name="teamai2_classic_lineup_ids.csv",mime="text/csv")
+                    if classic_entries is not None:
+                        filled=fill_classic_reserved_entries(classic_entries.getvalue().decode("utf-8-sig"),dk_ids)
+                        st.download_button("Download populated Classic DKEntries",filled,
+                            file_name="teamai2_classic_dkentries.csv",mime="text/csv")
+                except Exception as exc:
+                    st.warning(f"Classic DK export unavailable: {exc}")
+                st.download_button("Download nine-player lineup CSV",
+                    picks.to_csv(index=False),file_name="teamai2_experimental_classic_lineups.csv",
+                    mime="text/csv",key="classic_download_lineups")
+        st.subheader("Team opportunity sanity audit")
+        st.dataframe(team_volume,use_container_width=True)
+        st.download_button("Download team volume audit",team_volume.to_csv(index=False),file_name="teamai2_team_volume_audit.csv",mime="text/csv",key="classic_download_volume")
+        if team_volume["volume_warning"].any():
+            st.error("Unrealistic team opportunity volume detected. Projections are NOT entry-ready.")
+        st.dataframe(projections,use_container_width=True)
+        st.download_button("Download offensive projections CSV",projections.to_csv(index=False),file_name="teamai2_classic_snap_projections.csv",mime="text/csv",key="classic_download_projections")
+        st.download_button("Download snap-level outcomes CSV",stats.to_csv(index=False),file_name="teamai2_classic_snap_outcomes.csv",mime="text/csv",key="classic_download_outcomes")
+    if "classic_usage_audit" in st.session_state:
+        st.subheader("Historical usage matching diagnostic")
+        diag=st.session_state["classic_usage_audit"]
+        st.metric("Players matched with 2+ games",int(diag["usage_verified"].sum()))
+        st.dataframe(diag,use_container_width=True)
+        st.download_button("Download usage diagnostic",diag.to_csv(index=False),file_name="teamai2_usage_diagnostic.csv",mime="text/csv")
