@@ -149,7 +149,8 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
             def add(indices,values,minimum,maximum):
                 constraints_rows.append(sparse.csr_matrix((values,([0]*len(indices),indices)),shape=(1,2*m)))
                 lo.append(minimum);hi.append(maximum)
-            add(list(range(m)),[1.]*m,balanced_count,balanced_count)\n        add([0,m],[1,1],1,1)  # The exact optimum must be in the portfolio.
+            add(list(range(m)),[1.]*m,balanced_count,balanced_count)
+            add([0,m],[1,1],1,1)  # Require exact optimum.
             add(list(range(m,2*m)),[1.]*m,upside_count,upside_count)
             for j,k in unique_rows:
                 add([j,k],[1,1],0,1)
