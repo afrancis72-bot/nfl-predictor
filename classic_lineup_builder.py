@@ -11,6 +11,11 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
     pool["Position"]=pool["Position"].astype(str).str.upper().str.strip().replace({"D":"DST"})
     pool["Salary"]=pd.to_numeric(pool["Salary"],errors="raise")
     pool["ID"]=pool["ID"].astype(str)
+    # Never offer inactive DK players to the optimizer, even when their
+    # historical projections are attractive. Q remains eligible for review.
+    if "Status" in pool.columns:
+        blocked={"OUT","O","IR","INACTIVE","SUSPENDED","PUP","NFI"}
+        pool=pool[~pool["Status"].fillna("").astype(str).str.upper().str.strip().isin(blocked)].copy()
     pool=pool[pool["Position"].isin(["QB","RB","WR","TE","DST"]) & ~pool["Name"].isin(excluded_names)].copy()
     if pool["ID"].duplicated().any(): raise ValueError("Duplicate player IDs in DK salaries")
     proj=projections[["ID","dk_points_mean","dk_points_p90"]].copy()
