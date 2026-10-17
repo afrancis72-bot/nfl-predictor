@@ -31,7 +31,7 @@ def export_classic_ids(picks, salaries):
             subset=group[group["slot"].astype(str).str.upper()==position]
             for idx,(_,p) in enumerate(subset.iterrows(),1):
                 pid=str(p["ID"]).removesuffix(".0").strip()
-                actual=str(pool.loc[pid,"Position"]).upper().replace("D","DST")
+                actual=("DST" if str(pool.loc[pid,"Position"]).upper()=="D" else str(pool.loc[pid,"Position"]).upper())
                 if actual!=position: raise ValueError(f"Lineup {number}: {pid} is not {position}")
                 row[position+str(idx) if position in ("RB","WR") else position]=pid
         flex=group[group["slot"].astype(str).str.upper()=="FLEX"].iloc[0]
