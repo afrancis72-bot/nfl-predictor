@@ -14,13 +14,17 @@ def export_showdown_ids(lineups, salary):
     s["ID"]=s["ID"].astype(str).str.replace(r"\\.0$","",regex=True)
     s["Roster Position"]=s["Roster Position"].astype(str).str.upper().str.strip()
     s["TeamAbbrev"]=s["TeamAbbrev"].astype(str).str.upper().str.strip()
+    s["Status"]=s["Status"].fillna("").astype(str).str.upper().str.strip() if "Status" in s else ""
+    blocked={"OUT","O","IR","INACTIVE","SUSPENDED","PUP","NFI"}
     lookup={}
+    statuses={}
     for _,r in s.iterrows():
         for slot in ("CPT","FLEX"):
             if slot in r["Roster Position"].split("/"):
                 key=(str(r["Name"]).strip(),str(r["TeamAbbrev"]),slot)
                 if key in lookup: raise ValueError(f"Ambiguous DK identity: {key}")
                 lookup[key]=(str(r["ID"]),int(r["Salary"]))
+                statuses[key]=str(r["Status"])
     name_teams=s.groupby("Name")["TeamAbbrev"].nunique()
     ambiguous=set(name_teams[name_teams>1].index)
     out=[]
@@ -35,9 +39,11 @@ def export_showdown_ids(lineups, salary):
             matches=[(key,v) for key,v in lookup.items() if key[0]==name and key[2]==("CPT" if slot=="CPT" else "FLEX")]
             if len(matches)!=1: raise ValueError(f"Lineup {i+1}: missing or ambiguous {slot} DK ID for {name}")
             key,(dkid,cost)=matches[0]
+            if statuses[key] in blocked: raise ValueError(f"Lineup {i+1}: {name} has blocked DK status {statuses[key]}")
             row[slot]=dkid;row[slot+" Name"]=name
             teams.add(key[1]);total+=cost
         if len(teams)!=2: raise ValueError(f"Lineup {i+1}: must use both teams")
+        if total<45000: raise ValueError(f"Lineup {i+1}: salary below $45,000 research floor")
         if total>50000: raise ValueError(f"Lineup {i+1}: exceeds $50,000")
         row["Salary"]=total
         out.append(row)
