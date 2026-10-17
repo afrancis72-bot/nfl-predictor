@@ -9,10 +9,45 @@ from snap_portfolio_research import build_research_portfolio
 from defensive_priors_research import build_defense_profiles
 from historical_replay_research import replay_game
 
+def normalize_showdown_pool(raw):
+    """Accept native DK Showdown salary exports or existing FLEX-only research pools."""
+    df=raw.copy()
+    df.columns=df.columns.astype(str).str.strip()
+    if "TeamAbbrev" not in df and "Team" in df:
+        df=df.rename(columns={"Team":"TeamAbbrev"})
+    if "Name" not in df and "Name + ID" in df:
+        df["Name"]=df["Name + ID"].astype(str).str.replace(r"\\s*\\(\\d+\\)\\s*$","",regex=True)
+    if "Name" not in df:
+        raise ValueError("Missing player Name (or Name + ID) in salary file")
+    if "Position" not in df:
+        raise ValueError("Missing Position in salary file")
+    if "TeamAbbrev" not in df:
+        raise ValueError("Missing TeamAbbrev in salary file")
+    if "Roster Position" in df:
+        roster=df["Roster Position"].astype(str).str.upper().str.strip()
+        flex=roster.str.split("/").apply(lambda slots:"FLEX" in slots)
+        df=df.loc[flex].copy()
+        if df.empty:
+            raise ValueError("No FLEX salary rows found in DK Showdown export")
+    if "FLEX Salary" not in df:
+        if "Salary" not in df:
+            raise ValueError("Missing Salary or FLEX Salary column")
+        df["FLEX Salary"]=pd.to_numeric(df["Salary"],errors="coerce")
+    df["FLEX Salary"]=pd.to_numeric(df["FLEX Salary"],errors="coerce")
+    if df["FLEX Salary"].isna().any():
+        raise ValueError("Some FLEX salaries are missing or invalid")
+    df["Name"]=df["Name"].astype(str).str.strip()
+    df["TeamAbbrev"]=df["TeamAbbrev"].astype(str).str.upper().str.strip()
+    df["Position"]=df["Position"].astype(str).str.upper().str.strip().replace({"D":"DST","DEF":"DST"})
+    df=df.drop_duplicates(["Name","TeamAbbrev"]).copy()
+    if df["TeamAbbrev"].nunique()!=2:
+        raise ValueError("Showdown pool must contain exactly two teams")
+    return df
+
 st.title("Snap-by-snap Research Lab")
 st.caption("Research build: 2026-10-14 / personnel-v1 / historical-replay-v1")
 st.warning("Experimental: uncalibrated simulation. Do not use for wagering or live entries.")
-st.caption("Historical data is restricted to weeks before the selected matchup. Upload a pre-lock salary pool with one row per player: Name, TeamAbbrev, Position, FLEX Salary. For DK showdown exports, prepare one FLEX row per player.")
+st.caption("Historical data is restricted to weeks before the selected matchup. Upload the original DraftKings Showdown salary CSV directly (CPT/FLEX rows accepted), or a FLEX-only research pool.")
 salary_file=st.file_uploader("Showdown FLEX player pool CSV",type=["csv"],key="snap_pool")
 a,b,c=st.columns(3)
 season=a.number_input("Season",2020,2030,2026,1)
@@ -25,14 +60,7 @@ if st.button("Load historical usage and audit",type="primary"):
         st.error("Upload the matchup FLEX pool first.")
     else:
         try:
-            pool=pd.read_csv(salary_file)
-            required={"Name","TeamAbbrev","Position","FLEX Salary"}
-            if not required.issubset(pool):
-                raise ValueError("Pool must contain: "+", ".join(sorted(required)))
-            pool=pool.drop_duplicates(["Name","TeamAbbrev"]).copy()
-            pool["TeamAbbrev"]=pool["TeamAbbrev"].astype(str).str.upper().str.strip()
-            pool["Position"]=pool["Position"].astype(str).str.upper().str.strip()
-            if pool["TeamAbbrev"].nunique()!=2: raise ValueError("Pool must contain exactly two teams")
+            pool=normalize_showdown_pool(pd.read_csv(salary_file))
             if weekly_file is not None:
                 weekly=pd.read_csv(weekly_file)
             else:
