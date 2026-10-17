@@ -195,7 +195,7 @@ if salary_file is not None:
                     picks=build_classic_lineups(
                         salary,projections,dst_points=dst_scores,count=int(lineup_count),
                         salary_floor=int(floor),ownership=ownership_data,leverage_weight=float(leverage_weight),max_exposure=exposure/100,
-                        upside_weight=upside,variance_penalty=variance,
+                        upside_weight=upside,variance_penalty=variance,seed=int(result['seed']),
                         locked_dst=None if dst_lock=="No DST lock" else dst_lock,
                         excluded_names=[s.strip() for s in exclusions.splitlines() if s.strip()])
                     st.session_state["classic_lineups"]=picks
