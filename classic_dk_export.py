@@ -12,13 +12,13 @@ def export_classic_ids(picks, salaries):
     if not {"ID","Position","Salary","TeamAbbrev"}.issubset(salaries.columns):
         raise ValueError("Original DraftKings Classic salaries required")
     pool=salaries.copy()
-    pool["ID"]=pool["ID"].astype(str).str.replace(r"\\.0$","",regex=True).str.strip()
+    pool["ID"]=pool["ID"].astype(str).str.replace(r"\.0$","",regex=True).str.strip()
     if pool["ID"].duplicated().any(): raise ValueError("Duplicate DK salary IDs")
     pool=pool.set_index("ID")
     result=[]
     for number, group in picks.groupby("lineup",sort=True):
         if len(group)!=9: raise ValueError(f"Lineup {number}: expected nine players")
-        ids=group["ID"].astype(str).str.replace(r"\\.0$","",regex=True).str.strip().tolist()
+        ids=group["ID"].astype(str).str.replace(r"\.0$","",regex=True).str.strip().tolist()
         if len(set(ids))!=9: raise ValueError(f"Lineup {number}: duplicate player")
         if any(i not in pool.index for i in ids): raise ValueError(f"Lineup {number}: unknown DK player ID")
         slots=group["slot"].astype(str).str.upper().tolist()
