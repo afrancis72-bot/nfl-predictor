@@ -48,3 +48,9 @@ def test_optimizer_excludes_out_and_ir_before_selection():
     picks=build_classic_lineups(salary,projection,dst_points={"DEN":7.0},count=1,salary_floor=47500)
     assert len(picks)==9
     assert "10" not in set(picks.ID.astype(str))
+
+def test_classic_export_blocks_inactive_players():
+    picks,salary=sample()
+    salary["Status"]=[""]*8+["OUT"]
+    with pytest.raises(ValueError,match="inactive"):
+        export_classic_ids(picks,salary)
