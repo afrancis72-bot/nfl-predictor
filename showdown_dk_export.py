@@ -65,7 +65,11 @@ def fill_reserved_entries(entries_csv, id_lineups):
         needed=0 if slot=="CPT" else int(slot[-1])-1
         if len(choices)<=needed: raise ValueError(f"Missing template column {slot}")
         slot_indices.append(choices[needed])
-    available=[r for r in rows[1:] if len(r)>max(slot_indices) and all(not r[k].strip() for k in slot_indices)]
+    entry_col=next((i for i,c in enumerate(header) if c.strip().lower()=="entry id"),None)
+    if entry_col is None: raise ValueError("DraftKings template missing Entry ID column")
+    available=[r for r in rows[1:] if len(r)>max(slot_indices) and len(r)>entry_col
+               and r[entry_col].strip().isdigit()
+               and all(not r[k].strip() for k in slot_indices)]
     if len(available)<len(id_lineups): raise ValueError(f"Only {len(available)} empty reserved entries for {len(id_lineups)} lineups")
     for r,(_,line) in zip(available,id_lineups.iterrows()):
         for slot,j in zip(SLOTS,slot_indices):r[j]=str(line[slot])
