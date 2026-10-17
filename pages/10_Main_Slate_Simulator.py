@@ -5,6 +5,7 @@ The page deliberately fails closed on unverified usage and unknown starters.
 import io
 import time
 import secrets
+import hashlib
 import pandas as pd
 import streamlit as st
 from classic_lineup_builder import build_classic_lineups
@@ -26,7 +27,19 @@ weekly_file=st.file_uploader("Historical weekly player stats CSV (optional)",typ
 exclusions=st.text_area("Excluded players (one full name per line)",value="Jalen Hurts\nTanner McKee\nCole Payton")
 if salary_file is not None:
     try:
-        salary=pd.read_csv(salary_file)
+        salary_bytes=salary_file.getvalue()
+        salary_fingerprint=hashlib.sha256(salary_bytes).hexdigest()
+        # Never reuse a simulation or portfolio from another salary snapshot.
+        if st.session_state.get("classic_salary_fingerprint") != salary_fingerprint:
+            for key in ("classic_last_run","classic_lineups","classic_lineups_signature","classic_usage_audit"):
+                st.session_state.pop(key,None)
+            st.session_state["classic_salary_fingerprint"]=salary_fingerprint
+        salary=pd.read_csv(io.BytesIO(salary_bytes))
+        if "Status" not in salary.columns:
+            raise ValueError("DK salary file has no Status column; availability cannot be validated. Use a status-bearing salary export.")
+        blocked_status={"OUT","O","IR","INACTIVE","SUSPENDED","PUP","NFI"}
+        inactive=salary[salary["Status"].fillna("").astype(str).str.upper().str.strip().isin(blocked_status)]
+        st.caption(f"Eligibility check: {len(inactive)} OUT/IR/inactive players excluded from lineup construction and export.")
         salary_pool,offense,audit,excluded=prepare_classic_slate(salary, ())
         st.subheader("Matchup and roster audit")
         st.dataframe(audit,use_container_width=True)
@@ -172,7 +185,7 @@ if salary_file is not None:
             exposure=st.slider("Maximum player exposure (%)",min_value=20,max_value=100,value=35,step=5,help="A locked DST is exempt. For five lineups, 40% means at most two appearances.")
             upside=st.slider("Tournament upside weight",min_value=0.0,max_value=1.0,value=0.15,step=0.05,help="Boosts 90th-percentile upside in every fourth lineup.")
             variance=st.slider("Balanced-lineup variability penalty",min_value=0.0,max_value=0.5,value=0.05,step=0.05,help="Penalizes the difference between mean and 90th-percentile points in other lineups.")
-            build_signature=(result["seed"],result["n_games"],tuple(sorted(dst_scores.items())),int(lineup_count),int(floor),int(exposure),float(upside),float(variance),str(dst_lock))
+            build_signature=(salary_fingerprint,tuple(sorted(s.strip() for s in exclusions.splitlines() if s.strip())),result["seed"],result["n_games"],tuple(sorted(dst_scores.items())),int(lineup_count),int(floor),int(exposure),float(upside),float(variance),str(dst_lock))
             if st.session_state.get("classic_lineups_signature") != build_signature:
                 st.session_state.pop("classic_lineups",None)
             st.caption("Portfolio selection: candidate bank first, then global selection of approximately 75% balanced and 25% upside lineups under exposure and overlap constraints. Building may take several minutes.")
@@ -192,6 +205,14 @@ if salary_file is not None:
                     st.error(f"Lineup builder: {exc}")
             if "classic_lineups" in st.session_state:
                 picks=st.session_state["classic_lineups"]
+                # Revalidate saved selections before showing them, not only at export.
+                from classic_dk_export import export_classic_ids
+                try:
+                    export_classic_ids(picks,salary)
+                except ValueError as validation_error:
+                    st.session_state.pop("classic_lineups",None)
+                    st.error(f"Saved lineups invalidated by current salary/status data: {validation_error}")
+                    st.stop()
                 st.caption("DST scoring mode: "+"automatic research estimates")
                 st.dataframe(picks,use_container_width=True)
                 exposures=picks.groupby(["ID","Name","team"],as_index=False).agg(lineups=("lineup","nunique"))
