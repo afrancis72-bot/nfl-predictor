@@ -11,7 +11,7 @@ def export_showdown_ids(lineups, salary):
     if not required.issubset(salary.columns):
         raise ValueError("Native DraftKings Showdown salary CSV with ID, team and CPT/FLEX rows required")
     s=salary.copy()
-    s["ID"]=s["ID"].astype(str).str.replace(r"\\.0$","",regex=True)
+    s["ID"]=s["ID"].astype(str).str.replace(r"\.0$", "", regex=True)
     s["Roster Position"]=s["Roster Position"].astype(str).str.upper().str.strip()
     s["TeamAbbrev"]=s["TeamAbbrev"].astype(str).str.upper().str.strip()
     s["Status"]=s["Status"].fillna("").astype(str).str.upper().str.strip() if "Status" in s else ""
