@@ -1982,24 +1982,29 @@ view = st.sidebar.radio("View", ["Home","Slate Setup","Player Projections","Simu
 
 if view == "Home":
     st.markdown("<div style='text-align:center;padding:1.5rem 0'><h1>Team AI²</h1><p>Sports Prediction & DFS Command Center</p></div>", unsafe_allow_html=True)
-    import base64
-    logo_file = ROOT / "assets" / "team_ai2_sports_emblem.b64"
-    if logo_file.is_file():
-        try:
-            from PIL import Image
+    # Prefer the original high-resolution sports emblem. Retain the legacy
+    # base64 thumbnail as a fallback for deployments awaiting the PNG asset.
+    logo_png = ROOT / "assets" / "team_ai2_sports_emblem.png"
+    logo_b64 = ROOT / "assets" / "team_ai2_sports_emblem.b64"
+    try:
+        from PIL import Image
+        if logo_png.is_file():
+            emblem = Image.open(logo_png)
+        elif logo_b64.is_file():
+            import base64
             from io import BytesIO
-            emblem = Image.open(BytesIO(base64.b64decode(logo_file.read_text().strip())))
+            emblem = Image.open(BytesIO(base64.b64decode(logo_b64.read_text().strip())))
+        else:
+            emblem = None
+        if emblem is not None:
             emblem.load()
-            # Center the existing image without claiming that scaling restores lost detail.
-            st.markdown("<div style='text-align:center'>", unsafe_allow_html=True)
-            left, middle, right = st.columns([1, 1, 1])
+            left, middle, right = st.columns([1, 2, 1])
             with middle:
-                st.image(emblem, width=192)
-            st.markdown("</div>", unsafe_allow_html=True)
-        except Exception:
-            st.warning("Logo image is unavailable. The rest of the NFL app is available.")
-    else:
-        st.caption("Team AI² sports emblem is not yet available.")
+                st.image(emblem, width="stretch")
+        else:
+            st.caption("Team AI² sports emblem is not yet available.")
+    except Exception:
+        st.warning("Logo image is unavailable. The rest of the NFL app is available.")
     st.markdown("### Choose your workflow from the sidebar")
     st.write("Main Slate · Showdown · Game Simulation · Player Props · Diagnostics")
     st.stop()
