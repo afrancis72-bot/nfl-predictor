@@ -30,6 +30,12 @@ def normalize_showdown_pool(raw):
         df=df.loc[flex].copy()
         if df.empty:
             raise ValueError("No FLEX salary rows found in DK Showdown export")
+    if "Status" in df:
+        status=df["Status"].fillna("").astype(str).str.upper().str.strip()
+        blocked=status.isin({"OUT","O","IR","INACTIVE","SUSPENDED","PUP","NFI"})
+        if blocked.any():
+            st.warning(f"{int(blocked.sum())} players marked OUT/IR/inactive in DK salaries are excluded from simulation.")
+            df=df.loc[~blocked].copy()
     if "FLEX Salary" not in df:
         if "Salary" not in df:
             raise ValueError("Missing Salary or FLEX Salary column")
@@ -40,6 +46,8 @@ def normalize_showdown_pool(raw):
     df["Name"]=df["Name"].astype(str).str.strip()
     df["TeamAbbrev"]=df["TeamAbbrev"].astype(str).str.upper().str.strip()
     df["Position"]=df["Position"].astype(str).str.upper().str.strip().replace({"D":"DST","DEF":"DST"})
+    if df.duplicated(["Name","TeamAbbrev"]).any():
+        raise ValueError("Duplicate player/team FLEX rows; resolve salary identity before simulation")
     df=df.drop_duplicates(["Name","TeamAbbrev"]).copy()
     if df["TeamAbbrev"].nunique()!=2:
         raise ValueError("Showdown pool must contain exactly two teams")
