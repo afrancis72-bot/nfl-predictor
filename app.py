@@ -1987,7 +1987,10 @@ if view == "Home":
     if logo_file.is_file():
         _, center, _ = st.columns([1, 2, 1])
         with center:
-            st.image(base64.b64decode(logo_file.read_text().strip()), width=160)
+            try:
+                st.image(base64.b64decode(logo_file.read_text().strip()), width=160)
+            except Exception:
+                st.warning("Logo image is being repaired. The rest of the NFL app is available.")
     else:
         st.caption("Team AI² sports emblem is not yet available.")
     st.markdown("### Choose your workflow from the sidebar")
