@@ -14,12 +14,10 @@ def export_classic_ids(picks, salaries):
     pool=salaries.copy()
     pool["ID"]=pool["ID"].astype(str).str.replace(r"\.0$","",regex=True).str.strip()
     if pool["ID"].duplicated().any(): raise ValueError("Duplicate DK salary IDs")
-    if "Status" in pool.columns:
-        blocked={"OUT","O","IR","INACTIVE","SUSPENDED","PUP","NFI"}
-        pool["Status"]=pool["Status"].fillna("").astype(str).str.upper().str.strip()
-    else:
-        blocked=set()
-        pool["Status"]=""
+    if "Status" not in pool.columns:
+        raise ValueError("DraftKings salary CSV is missing Status; cannot validate player eligibility for export.")
+    blocked={"OUT","O","IR","INACTIVE","SUSPENDED","PUP","NFI"}
+    pool["Status"]=pool["Status"].fillna("").astype(str).str.upper().str.strip()
     pool=pool.set_index("ID")
     result=[]
     for number, group in picks.groupby("lineup",sort=True):
