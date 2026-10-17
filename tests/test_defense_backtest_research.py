@@ -52,7 +52,7 @@ class ReplayIntegrationTests(unittest.TestCase):
             for role,rush,target in (("QB",2,0),("RB",12,2),("WR",0,8),("TE",0,4)):
                 players.append(dict(Name=team+" "+role,TeamAbbrev=team,
                     Position=role,usage_verified=True,
-                    rush_weight=rush,target_weight=target,
+                    rush_weight=rush,target_weight=target,carries_per_game=rush,
                     carries_per_game=rush,
                     **{"FLEX Salary":5000}))
         pbp=[]
