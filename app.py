@@ -1980,13 +1980,14 @@ pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_up
 
 if view == "Home":
     st.markdown("<div style='text-align:center;padding:1.5rem 0'><h1>Team AI²</h1><p>Sports Prediction & DFS Command Center</p></div>", unsafe_allow_html=True)
-    logo_file = ROOT / "assets" / "team_ai2_sports_emblem.png"
+    import base64
+    logo_file = ROOT / "assets" / "team_ai2_sports_emblem.b64"
     if logo_file.is_file():
         _, center, _ = st.columns([1, 2, 1])
         with center:
-            st.image(str(logo_file), use_container_width=True)
+            st.image(base64.b64decode(logo_file.read_text().strip()), use_container_width=True)
     else:
-        st.caption("Team AI² sports emblem asset is awaiting repository upload.")
+        st.caption("Team AI² sports emblem is not yet available.")
     st.markdown("### Choose your workflow from the sidebar")
     st.write("Main Slate · Showdown · Game Simulation · Player Props · Diagnostics")
     st.stop()
