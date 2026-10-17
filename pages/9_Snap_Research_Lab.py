@@ -17,7 +17,7 @@ def normalize_showdown_pool(raw):
     if "TeamAbbrev" not in df and "Team" in df:
         df=df.rename(columns={"Team":"TeamAbbrev"})
     if "Name" not in df and "Name + ID" in df:
-        df["Name"]=df["Name + ID"].astype(str).str.replace(r"\\s*\\(\\d+\\)\\s*$","",regex=True)
+        df["Name"]=df["Name + ID"].astype(str).str.replace(r"\s*\(\d+\)\s*$", "", regex=True)
     if "Name" not in df:
         raise ValueError("Missing player Name (or Name + ID) in salary file")
     if "Position" not in df:
