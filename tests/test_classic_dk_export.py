@@ -34,3 +34,17 @@ def test_missing_reserved_rows_rejected():
     ids=export_classic_ids(picks,salary)
     with pytest.raises(ValueError,match="Insufficient"):
         fill_classic_reserved_entries("Entry ID,QB,RB,RB,WR,WR,WR,TE,FLEX,DST\n",ids)
+
+def test_optimizer_excludes_out_and_ir_before_selection():
+    from classic_lineup_builder import build_classic_lineups
+    positions=["QB","RB","RB","WR","WR","WR","WR","TE","DST","WR"]
+    names=[f"Player {i}" for i in range(10)]
+    salary=pd.DataFrame({"ID":[str(i+1) for i in range(10)],
+        "Name":names,"Position":positions,"TeamAbbrev":["SEA","SEA","DEN","SEA","DEN","SEA","DEN","SEA","DEN","DEN"],
+        "Salary":[5500]*10,"Status":[""]*9+["IR"]})
+    projection=pd.DataFrame({"ID":[str(i+1) for i in range(10)],
+        "dk_points_mean":[15.0]*9+[100.0],
+        "dk_points_p90":[20.0]*9+[110.0]})
+    picks=build_classic_lineups(salary,projection,dst_points={"DEN":7.0},count=1,salary_floor=47500)
+    assert len(picks)==9
+    assert "10" not in set(picks.ID.astype(str))
