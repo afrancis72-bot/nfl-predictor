@@ -109,5 +109,6 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
         if len(flex)!=1: raise ValueError("Invalid FLEX allocation")
         r=flex.iloc[0]
         output.append({"lineup":i,"slot":"FLEX","Name":r["Name"],"ID":r.ID,
-                       "team":r.TeamAbbrev,"salary":int(r.Salary),"projected_points":float(r.score)})
+                       "team":r.TeamAbbrev,"salary":int(r.Salary),"projected_points":float(r.score),
+                       "ownership_pct":float(r.ownership_pct) if pd.notna(r.ownership_pct) else float("nan")})
     return pd.DataFrame(output)
