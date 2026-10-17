@@ -86,7 +86,7 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
     recent=[]
     best_mean=None
     target=max(180,int(count)*16)
-    for attempt in range(target):
+    for attempt in range(0 if results is not None else target):
         upside_candidate=attempt%4==3
         # Small perturbations diversify credible alternatives; ownership
         # never replaces fantasy-point projection as the primary signal.
