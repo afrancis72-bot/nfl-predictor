@@ -11,7 +11,7 @@ class SnapEngineTests(unittest.TestCase):
             for name,pos,rush,target in (("QB","QB",2,0),("RB","RB",12,3),("WR","WR",0,9),("TE","TE",0,5)):
                 rows.append(dict(Name=t+" "+name,TeamAbbrev=t,Position=pos,
                                  **{"FLEX Salary":5000},usage_verified=True,
-                                 rush_weight=rush,target_weight=target,
+                                 rush_weight=rush,target_weight=target,carries_per_game=rush,
                                  carries_per_game=rush,
                                  attempts_per_game=32 if pos=="QB" else 0,
                                  qb_completion_rate=.65 if pos=="QB" else 0,
