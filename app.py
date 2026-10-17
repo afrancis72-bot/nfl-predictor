@@ -63,7 +63,7 @@ from scipy.sparse import lil_matrix, vstack, csr_matrix
 st.set_page_config(page_title="NFL Predictor Pro", page_icon="🏈", layout="wide")
 
 # Experimental unified navigation; existing production controls remain unchanged.
-st.info("Team AI² unified NFL workflow is available in the sidebar: **Team AI2 NFL Command Center**. The original predictor remains available here.")
+# The Team AI² home screen is selected from the sidebar below.
 
 ROOT = Path(__file__).parent
 DATA = ROOT / "data"
@@ -1978,11 +1978,25 @@ if _cached is not None:
             st.session_state["classic_uploaded_pool"] = _cached
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
 
+if view == "Home":
+    st.markdown("<div style='text-align:center;padding:1.5rem 0'><h1>Team AI²</h1><p>Sports Prediction & DFS Command Center</p></div>", unsafe_allow_html=True)
+    import base64
+    logo_file = ROOT / "assets" / "team_ai2_sports_emblem.b64"
+    if logo_file.is_file():
+        _, center, _ = st.columns([1, 2, 1])
+        with center:
+            st.image(base64.b64decode(logo_file.read_text().strip()), width=160)
+    else:
+        st.caption("Team AI² sports emblem is not yet available.")
+    st.markdown("### Choose your workflow from the sidebar")
+    st.write("Main Slate · Showdown · Game Simulation · Player Props · Diagnostics")
+    st.stop()
+
 st.title("🏈 NFL Predictor Pro — DFS Engine V2.0.12")
 st.caption("DraftKings NFL DFS • correlated game scripts • variance + uncertainty • scenario portfolios • calibration")
 st.warning("V2.0.12 RB portfolio controls + V2.0.11 injury safety: OUT and DOUBTFUL (plus IR/inactive/suspended/PUP/NFI) are hard-blocked before simulation/optimization; QUESTIONABLE remains eligible but flagged. Slate re-activation invalidates prior portfolios. Classic V3.1.6b adds DraftKings injury-status eligibility gating. Classic V3.1.6 recalibrates tournament tails and adds bounded game-environment/correlation scoring. Uploaded DK slates are the roster/salary source of truth; current-week projection integrity is required for optimizer eligibility; DK PPG alone never qualifies as a weekly projection. Re-check final injury news and ownership before contest entry.")
 
-view = st.sidebar.radio("View", ["Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis","Winning Lineup Replay","Player Props Lab"])
+view = st.sidebar.radio("View", ["Home","Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis","Winning Lineup Replay","Player Props Lab"])
 
 if view == "Player Props Lab":
     st.subheader("Player Props Lab — matchup-adjusted statistical predictions")
