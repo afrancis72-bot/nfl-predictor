@@ -18,7 +18,7 @@ def test_export_and_preserve_existing_entry():
     header="Entry ID,Contest Name,QB,RB,RB,WR,WR,WR,TE,FLEX,DST"
     original="555,Contest,901,902,903,904,905,906,907,908,909"
     blank="556,Contest,,,,,,,,,"
-    csv=header+"\\n"+original+"\\n"+blank+"\\n"
+    csv=header+"\n"+original+"\n"+blank+"\n"
     result=fill_classic_reserved_entries(csv,ids)
     assert original in result
     assert "556,Contest,101,102,103,104,105,106,107,108,109" in result
@@ -33,4 +33,4 @@ def test_missing_reserved_rows_rejected():
     picks,salary=sample()
     ids=export_classic_ids(picks,salary)
     with pytest.raises(ValueError,match="Insufficient"):
-        fill_classic_reserved_entries("Entry ID,QB,RB,RB,WR,WR,WR,TE,FLEX,DST\\n",ids)
+        fill_classic_reserved_entries("Entry ID,QB,RB,RB,WR,WR,WR,TE,FLEX,DST\n",ids)
