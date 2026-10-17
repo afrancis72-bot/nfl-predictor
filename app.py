@@ -62,6 +62,9 @@ from scipy.sparse import lil_matrix, vstack, csr_matrix
 
 st.set_page_config(page_title="NFL Predictor Pro", page_icon="🏈", layout="wide")
 
+# Experimental unified navigation; existing production controls remain unchanged.
+st.info("Team AI² unified NFL workflow is available in the sidebar: **Team AI2 NFL Command Center**. The original predictor remains available here.")
+
 ROOT = Path(__file__).parent
 DATA = ROOT / "data"
 MC_FILE = DATA / "nfl_week4_2026_correlated_monte_carlo_50000_v8_airyards_redzone.csv"
