@@ -249,7 +249,13 @@ if salary_file is not None:
             st.error("Unrealistic team opportunity volume detected. Projections are NOT entry-ready.")
         st.dataframe(projections,use_container_width=True)
         st.download_button("Download offensive projections CSV",projections.to_csv(index=False),file_name="teamai2_classic_snap_projections.csv",mime="text/csv",key="classic_download_projections")
-        st.download_button("Download snap-level outcomes CSV",stats.to_csv(index=False),file_name="teamai2_classic_snap_outcomes.csv",mime="text/csv",key="classic_download_outcomes")
+        # Avoid serializing a potentially huge outcomes CSV on every page rerun.
+        with st.expander("Detailed simulated outcomes (large export)", expanded=False):
+            st.caption(f"{len(stats):,} player-game rows. Exporting can use substantial memory.")
+            if st.checkbox("Prepare detailed outcomes CSV", value=False, key="classic_prepare_outcomes"):
+                st.download_button("Download snap-level outcomes CSV",
+                    stats.to_csv(index=False),file_name="teamai2_classic_snap_outcomes.csv",
+                    mime="text/csv",key="classic_download_outcomes")
     if "classic_usage_audit" in st.session_state:
         st.subheader("Historical usage matching diagnostic")
         diag=st.session_state["classic_usage_audit"]
