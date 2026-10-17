@@ -1985,7 +1985,7 @@ if view == "Home":
     if logo_file.is_file():
         _, center, _ = st.columns([1, 2, 1])
         with center:
-            st.image(base64.b64decode(logo_file.read_text().strip()), use_container_width=True)
+            st.image(base64.b64decode(logo_file.read_text().strip()), width=160)
     else:
         st.caption("Team AI² sports emblem is not yet available.")
     st.markdown("### Choose your workflow from the sidebar")
