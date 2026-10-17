@@ -60,12 +60,6 @@ def fill_classic_reserved_entries(entries_csv, lineups):
                and all(not r[i].strip() for i in slot_idxs)]
     if len(available)<len(lineups): raise ValueError("Insufficient empty reserved entries")
     for row,(_,line) in zip(available,lineups.iterrows()):
-        for slot,idx in zip(SLOTS,slot_idxs):
-            key=slot
-            if slot in ("RB","WR"):
-                key=slot+str(SLOTS[:SLOTS.index(slot)+1].count(slot))
-            # Distinguish repeated positions using the current occurrence.
-            row[idx]=""
         for slot,idx in zip(("QB","RB1","RB2","WR1","WR2","WR3","TE","FLEX","DST"),slot_idxs):
             row[idx]=str(line[slot])
     out=io.StringIO(newline="")
