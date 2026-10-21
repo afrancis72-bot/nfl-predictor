@@ -31,6 +31,21 @@ def get_injuries(season,week,fetcher=None):
           "season":int(season),"week":int(week),"ok":False,"error":None}
     try:
         frame=(_get_csv if fetcher is None else fetcher)(int(season))
+        # nflverse releases have used different public column labels.
+        # Only map a GAME designation to report_status, never practice_status.
+        frame=frame.copy()
+        variants={
+            "full_name":("player_name","player_display_name","name"),
+            "team":("recent_team","team_abbr","team_abbreviation"),
+            "report_status":("game_status","game_designation","game_report_status"),
+            "date_modified":("report_date","date","updated_at"),
+        }
+        for canonical,alternatives in variants.items():
+            if canonical not in frame.columns:
+                for alternative in alternatives:
+                    if alternative in frame.columns:
+                        frame[canonical]=frame[alternative]
+                        break
         required={"season","week","team","full_name","report_status","date_modified"}
         if not required.issubset(frame.columns):
             raise ValueError("Missing injury-feed columns: "+str(sorted(required-set(frame.columns))))
@@ -58,6 +73,7 @@ def get_injuries(season,week,fetcher=None):
         x=x.drop(columns=["_has_designation","_report_day"])
         meta["ok"]=True
         meta["rows"]=len(x)
+        meta["schema_columns"]=sorted(map(str,frame.columns))
         meta["latest_report"]=x["date_modified"].max().isoformat()
         meta["stale"]=((pd.Timestamp.now(tz="UTC")-x["date_modified"].max()).total_seconds()>60*60*72)
         return x,meta
