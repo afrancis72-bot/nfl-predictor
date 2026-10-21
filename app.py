@@ -1997,8 +1997,10 @@ auto_news_audit = pd.DataFrame()
 auto_news_out_players=[]
 if st.session_state.get("auto_injury_enabled",True):
     # Never infer week from an old hardcoded sample slate. User selects season/week.
-    _season=int(st.session_state.get("auto_injury_season",2026))
-    _week=int(st.session_state.get("auto_injury_week",7))
+    # Use the same season/week as the statistical simulator; never mix
+    # injury Week 7 with a different selected props/simulation week.
+    _season=int(st.session_state.get("props_season",2026))
+    _week=int(st.session_state.get("props_week",7))
     _injuries,auto_news_meta=_load_live_injuries(_season,_week)
     if auto_news_meta.get("ok") and not auto_news_meta.get("stale"):
         pool,auto_news_audit=apply_injury_feed(pool,_injuries,auto_news_meta)
@@ -2039,8 +2041,9 @@ if view == "News Optimizer":
 
     st.checkbox("Automatically apply confirmed OUT / IR / INACTIVE exclusions",value=True,key="auto_injury_enabled")
     _aa,_bb=st.columns(2)
-    _aa.number_input("NFL season",min_value=2024,max_value=2100,value=2026,step=1,key="auto_injury_season")
-    _bb.number_input("NFL week",min_value=1,max_value=22,value=7,step=1,key="auto_injury_week")
+    _aa.metric("Selected season",str(st.session_state.get("props_season",2026)))
+    _bb.metric("Selected week",str(st.session_state.get("props_week",7)))
+    st.caption("The injury engine follows the season/week on the Player Props/Simulation setup; it does not use a separate injury week.")
     if st.button("Refresh injury feed now"):
         _load_live_injuries.clear()
         st.rerun()
