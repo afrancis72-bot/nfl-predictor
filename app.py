@@ -1981,6 +1981,7 @@ pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_up
 # They never overwrite the original projections or silently ingest unverified rumors.
 from news_optimizer import apply_news, validate_news
 from auto_injury_feed import get_injuries, apply_injury_feed
+from news_injury_context import merge_confirmed_out
 from news_opportunity import redistribute
 @st.cache_data(ttl=21600,show_spinner=False)
 def _load_news_usage(season):
@@ -2547,13 +2548,8 @@ elif view == "Simulation":
             staged=list(by_key.values()) if injury_mode else []
             st.session_state['v314_staged_out_players']=[{'team':p['team'],'player':p['player']} for p in staged]
             out_players=list(st.session_state['v314_staged_out_players'])
-            # Pass structured-feed exclusions to the existing stat-level
-            # injury redistribution, deduplicated against NFL/DK/manual statuses.
-            _out_map={(norm_team(p['team']),norm_name(p['player'])):p for p in out_players}
-            if injury_mode:
-                for _p in auto_news_out_players:
-                    _out_map.setdefault((norm_team(_p['team']),norm_name(_p['player'])),_p)
-            out_players=list(_out_map.values())
+            # One canonical OUT context for simulator, audit, and replay.
+            out_players=merge_confirmed_out(out_players,auto_news_out_players,enabled=injury_mode)
             st.session_state['v314_staged_out_players']=[
                 {'team':p['team'],'player':p['player']} for p in out_players]
             if injury_mode:
