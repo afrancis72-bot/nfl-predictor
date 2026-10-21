@@ -1994,6 +1994,7 @@ def _load_live_injuries(season,week):
     return get_injuries(season,week)
 auto_news_meta = None
 auto_news_audit = pd.DataFrame()
+auto_news_out_players=[]
 if st.session_state.get("auto_injury_enabled",True):
     # Never infer week from an old hardcoded sample slate. User selects season/week.
     _season=int(st.session_state.get("auto_injury_season",2026))
@@ -2001,6 +2002,11 @@ if st.session_state.get("auto_injury_enabled",True):
     _injuries,auto_news_meta=_load_live_injuries(_season,_week)
     if auto_news_meta.get("ok") and not auto_news_meta.get("stale"):
         pool,auto_news_audit=apply_injury_feed(pool,_injuries,auto_news_meta)
+        if not auto_news_audit.empty:
+            auto_news_out_players=[
+                {"team":str(r.TeamAbbrev),"player":str(r.Name)}
+                for r in auto_news_audit.itertuples(index=False) if bool(r.excluded)
+            ]
         if st.session_state.get("auto_opportunity_enabled",True):
             try:
                 _usage=_load_news_usage(_season)
@@ -2538,6 +2544,14 @@ elif view == "Simulation":
             staged=list(by_key.values()) if injury_mode else []
             st.session_state['v314_staged_out_players']=[{'team':p['team'],'player':p['player']} for p in staged]
             out_players=list(st.session_state['v314_staged_out_players'])
+            # Pass structured-feed exclusions to the existing stat-level
+            # injury redistribution, deduplicated against NFL/DK/manual statuses.
+            _out_map={(norm_team(p['team']),norm_name(p['player'])):p for p in out_players}
+            for _p in auto_news_out_players:
+                _out_map.setdefault((norm_team(_p['team']),norm_name(_p['player'])),_p)
+            out_players=list(_out_map.values())
+            st.session_state['v314_staged_out_players']=[
+                {'team':p['team'],'player':p['player']} for p in out_players]
             if injury_mode:
                 st.success(f"{len(out_players)} unique OUT players staged: {len(auto_out)} NFL matches, {len(dk_out)} DK statuses, {len(parsed_out)} manual entries (sources may overlap)")
                 if staged:
