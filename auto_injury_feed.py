@@ -49,11 +49,12 @@ def get_injuries(season,week,fetcher=None):
         # A player can have multiple practice updates; the newest explicit
         # game designation must not be erased by a later blank practice row.
         x["_has_designation"]=x["report_status"].isin(VALID)
-        x=x.sort_values(["date_modified","_has_designation"])
-        # Prefer the latest explicit designation if it is from the same
-        # reporting day; otherwise do not carry an old designation forward.
+        # Game designation can be absent from a later practice-only update.
+        # Prefer the latest explicit game designation from the most recent
+        # report day; otherwise retain the latest row as informational only.
         x["_report_day"]=x["date_modified"].dt.date
-        x=x.sort_values(["_report_day","_has_designation","date_modified"]).drop_duplicates(["team_key","name_key"],keep="last")
+        x=x.sort_values(["team_key","name_key","_report_day","_has_designation","date_modified"])
+        x=x.drop_duplicates(["team_key","name_key"],keep="last")
         x=x.drop(columns=["_has_designation","_report_day"])
         meta["ok"]=True
         meta["rows"]=len(x)
