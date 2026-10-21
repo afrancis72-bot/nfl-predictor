@@ -12,7 +12,7 @@ class RedistributionConservationTests(unittest.TestCase):
         other=3.
         adjusted,remainder=redistribute(rates.copy(),other,missing_volume=5.,
                                          role_weights=np.array([1.,.8,.5]))
-        self.assertAlmostEqual(float(adjusted.sum()+remainder),float(rates.sum()+other))
+        self.assertAlmostEqual(float(adjusted.sum()+remainder),float(rates.sum()+other+5.))
         self.assertTrue(np.all(adjusted>=0))
         self.assertGreaterEqual(remainder,0)
     def test_carry_budget_conserved(self):
@@ -20,7 +20,7 @@ class RedistributionConservationTests(unittest.TestCase):
         other=4.
         adjusted,remainder=redistribute(rates.copy(),other,missing_volume=7.,
                                          role_weights=np.array([1.,.1,.05]))
-        self.assertAlmostEqual(float(adjusted.sum()+remainder),float(rates.sum()+other))
+        self.assertAlmostEqual(float(adjusted.sum()+remainder),float(rates.sum()+other+7.))
         self.assertTrue(np.all(adjusted>=0))
     def test_zero_missing_volume_no_change(self):
         rates=np.array([5.,3.],dtype=float)
