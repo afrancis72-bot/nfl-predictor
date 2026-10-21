@@ -2550,15 +2550,16 @@ elif view == "Simulation":
             # Pass structured-feed exclusions to the existing stat-level
             # injury redistribution, deduplicated against NFL/DK/manual statuses.
             _out_map={(norm_team(p['team']),norm_name(p['player'])):p for p in out_players}
-            for _p in auto_news_out_players:
-                _out_map.setdefault((norm_team(_p['team']),norm_name(_p['player'])),_p)
+            if injury_mode:
+                for _p in auto_news_out_players:
+                    _out_map.setdefault((norm_team(_p['team']),norm_name(_p['player'])),_p)
             out_players=list(_out_map.values())
             st.session_state['v314_staged_out_players']=[
                 {'team':p['team'],'player':p['player']} for p in out_players]
             if injury_mode:
                 st.success(f"{len(out_players)} unique OUT players staged: {len(auto_out)} NFL matches, {len(dk_out)} DK statuses, {len(parsed_out)} manual entries (sources may overlap)")
-                if staged:
-                    st.dataframe(pd.DataFrame(staged),hide_index=True,use_container_width=True)
+                if out_players:
+                    st.dataframe(pd.DataFrame(out_players),hide_index=True,use_container_width=True)
                 if auto_injury and not feed_ok:
                     st.warning('Automatic injury feed FAILED. Review DK statuses and manual entries; this is not a complete injury check.')
                 if feed_ok and not feed_matches.empty and (feed_matches.status=='QUESTIONABLE').any():
@@ -2567,7 +2568,7 @@ elif view == "Simulation":
             injury_signature=hashlib.sha256(str(sorted((p['team'],p['player'].lower()) for p in out_players)).encode()).hexdigest()[:12]
             if st.button("Run active-slate simulation",type="primary"):
                 run_out_players=list(st.session_state.get('v314_staged_out_players',[]))
-                if injury_mode and auto_injury and not feed_ok and not run_out_players:
+                if injury_mode and auto_injury and not feed_ok and not auto_news_out_players and not run_out_players:
                     st.error("Live injury feed failed and no verified/manual exclusions are staged. Review injuries before simulating.")
                     st.stop()
                 # Snapshot exactly what this click will send to the engine.
