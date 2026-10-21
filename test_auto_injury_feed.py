@@ -38,6 +38,25 @@ class FeedTests(unittest.TestCase):
                      report_status="",practice_status="DNP",date_modified="2026-10-21T14:00:00Z")])
         reports,meta=get_injuries(2026,7,fetcher=reader)
         self.assertEqual(reports.iloc[0].report_status,"OUT")
+    def test_game_status_alias_not_practice_status(self):
+        def reader(season):
+            return pd.DataFrame([dict(season=2026,week=7,team="LA",
+                player_name="Example Receiver",game_status="OUT",
+                practice_status="DNP",report_date="2026-10-21T15:00:00Z")])
+        reports,meta=get_injuries(2026,7,fetcher=reader)
+        self.assertTrue(meta["ok"])
+        self.assertEqual(reports.iloc[0].report_status,"OUT")
+    def test_practice_dnp_is_not_confirmed_out(self):
+        def reader(season):
+            return pd.DataFrame([dict(season=2026,week=7,team="LA",
+                player_name="Example Receiver",game_status="",
+                practice_status="DNP",report_date="2026-10-21T15:00:00Z")])
+        reports,meta=get_injuries(2026,7,fetcher=reader)
+        meta["stale"]=False
+        pool=pd.DataFrame([dict(Name="Example Receiver",TeamAbbrev="LAR",optimizer_eligible=True)])
+        changed,audit=apply_injury_feed(pool,reports,meta)
+        self.assertTrue(bool(changed.iloc[0].optimizer_eligible))
+        self.assertFalse(bool(audit.iloc[0].excluded))
     def test_missing_week_fails_closed(self):
         reports,meta=get_injuries(2026,8,fetcher=self.sample)
         self.assertFalse(meta["ok"])
