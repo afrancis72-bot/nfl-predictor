@@ -17,4 +17,4 @@ jobs:
       - name: Compile integrated modules
         run: python -m py_compile app.py auto_injury_feed.py news_opportunity.py news_injury_context.py dfs_stats_engine.py
       - name: Run isolated injury and opportunity tests
-        run: python -m unittest -v test_auto_injury_feed test_news_opportunity test_news_injury_context
+        run: python -m unittest -v test_auto_injury_feed test_news_opportunity test_news_injury_context test_injury_conservation
