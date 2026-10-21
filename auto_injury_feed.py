@@ -9,7 +9,7 @@ import pandas as pd
 import urllib.request
 
 URL = "https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_{season}.csv"
-ALIASES = {"JAX":"JAC","WSH":"WAS","LAR":"LA","STL":"LA","OAK":"LV","SD":"LAC"}
+ALIASES = {"JAC":"JAX","WSH":"WAS","LA":"LAR","STL":"LAR","OAK":"LV","SD":"LAC"}
 EXCLUDE = {"OUT","IR","INACTIVE","SUSPENDED"}
 VALID = {"OUT","IR","INACTIVE","SUSPENDED","DOUBTFUL","QUESTIONABLE","PROBABLE"}
 def norm_team(s):
@@ -46,7 +46,16 @@ def get_injuries(season,week,fetcher=None):
         x["practice_status"]=x.get("practice_status",pd.Series("",index=x.index)).fillna("").astype(str)
         x["team_key"]=x["team"].map(norm_team)
         x["name_key"]=x["full_name"].map(norm_name)
-        x=x.sort_values("date_modified").drop_duplicates(["team_key","name_key"],keep="last")
+        # A player can have multiple practice updates; the newest explicit
+        # game designation must not be erased by a later blank practice row.
+        x["_has_designation"]=x["report_status"].isin(VALID)
+        x=x.sort_values(["date_modified","_has_designation"])
+        latest=x.groupby(["team_key","name_key"],sort=False)["date_modified"].transform("max")
+        # Prefer the latest explicit designation if it is from the same
+        # reporting day; otherwise do not carry an old designation forward.
+        x["_report_day"]=x["date_modified"].dt.date
+        x=x.sort_values(["_report_day","_has_designation","date_modified"]).drop_duplicates(["team_key","name_key"],keep="last")
+        x=x.drop(columns=["_has_designation","_report_day"])
         meta["ok"]=True
         meta["rows"]=len(x)
         meta["latest_report"]=x["date_modified"].max().isoformat()
