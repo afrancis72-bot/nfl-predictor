@@ -391,8 +391,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             missing_c=float(pd.to_numeric(out_hist.get('carries_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
             leftover=max(pass_pg*.10, pass_pg-target_rates.sum()-missing_t, .5)
             carry_other=max(team_rush*.06,.5)
-            pre_target_budget=float(target_rates.sum()+leftover)
-            pre_carry_budget=float(carry_rates.sum()+carry_other)
+            pre_target_budget=float(target_rates.sum()+leftover+missing_t)
+            pre_carry_budget=float(carry_rates.sum()+carry_other+missing_c)
             if missing_t>0 or missing_c>0:
                 # Positional suitability matters: an unavailable RB's carries
                 # predominantly move to available RBs, not to WRs/TEs.
