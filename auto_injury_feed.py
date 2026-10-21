@@ -50,7 +50,6 @@ def get_injuries(season,week,fetcher=None):
         # game designation must not be erased by a later blank practice row.
         x["_has_designation"]=x["report_status"].isin(VALID)
         x=x.sort_values(["date_modified","_has_designation"])
-        latest=x.groupby(["team_key","name_key"],sort=False)["date_modified"].transform("max")
         # Prefer the latest explicit designation if it is from the same
         # reporting day; otherwise do not carry an old designation forward.
         x["_report_day"]=x["date_modified"].dt.date
