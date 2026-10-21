@@ -1980,6 +1980,20 @@ pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_up
 # News adjustments are applied only to the current view of the player pool.
 # They never overwrite the original projections or silently ingest unverified rumors.
 from news_optimizer import apply_news, validate_news
+from auto_injury_feed import get_injuries, apply_injury_feed
+@st.cache_data(ttl=3600,show_spinner=False)
+def _load_live_injuries(season,week):
+    return get_injuries(season,week)
+auto_news_meta = None
+auto_news_audit = pd.DataFrame()
+if st.session_state.get("auto_injury_enabled",True):
+    # Never infer week from an old hardcoded sample slate. User selects season/week.
+    _season=int(st.session_state.get("auto_injury_season",2026))
+    _week=int(st.session_state.get("auto_injury_week",7))
+    _injuries,auto_news_meta=_load_live_injuries(_season,_week)
+    if auto_news_meta.get("ok") and not auto_news_meta.get("stale"):
+        pool,auto_news_audit=apply_injury_feed(pool,_injuries,auto_news_meta)
+
 if st.session_state.get("news_optimizer_active") and st.session_state.get("news_optimizer_rows") is not None:
     pool, news_audit_active, news_errors_active = apply_news(pool, st.session_state["news_optimizer_rows"])
 else:
@@ -1990,6 +2004,26 @@ view = st.sidebar.radio("View", ["Home","Slate Setup","Player Projections","Simu
 
 if view == "News Optimizer":
     st.subheader("News Optimizer — verified evidence only")
+    st.markdown("#### Automatic NFL injury reports")
+    st.checkbox("Automatically apply confirmed OUT / IR / INACTIVE exclusions",value=True,key="auto_injury_enabled")
+    _aa,_bb=st.columns(2)
+    _aa.number_input("NFL season",min_value=2024,max_value=2100,value=2026,step=1,key="auto_injury_season")
+    _bb.number_input("NFL week",min_value=1,max_value=22,value=7,step=1,key="auto_injury_week")
+    if st.button("Refresh injury feed now"):
+        _load_live_injuries.clear()
+        st.rerun()
+    if auto_news_meta is None:
+        st.info("Automatic injury feed is disabled.")
+    elif not auto_news_meta.get("ok"):
+        st.error("Injury feed unavailable; no automatic changes applied. "+str(auto_news_meta.get("error")))
+    elif auto_news_meta.get("stale"):
+        st.warning("Injury feed older than 72 hours; no automatic changes applied. Last report: "+str(auto_news_meta.get("latest_report")))
+    else:
+        st.success("Current-week injury feed loaded: "+str(auto_news_meta.get("rows"))+" reports. Latest: "+str(auto_news_meta.get("latest_report")))
+        st.caption("Only confirmed OUT/IR/INACTIVE exclusions are automatic. Questionable, limited practice and coach comments do not automatically change projections.")
+        st.dataframe(auto_news_audit,use_container_width=True,hide_index=True)
+        st.download_button("Download automatic injury audit",auto_news_audit.to_csv(index=False),"nfl_automatic_injury_audit.csv","text/csv")
+
     st.caption("Upload sourced Week 7 events and explicitly reviewed projection adjustments. This is not an automatic live-news scraper. It will not infer target redistribution or defensive-matchup boosts without reviewed numbers.")
     st.warning("Review team, name, date and source for every event. A status report alone does not justify an arbitrary fantasy-point boost.")
     example = pd.DataFrame([{"player":"Example Player","team":"NYJ","position":"WR","event_type":"player_status","status":"QUESTIONABLE","confidence":"medium","source_url":"https://example.org/source","published_at":"2026-10-20T18:00:00Z","notes":"Replace with real verified report","delta_pct":0.0,"verified":False}])
