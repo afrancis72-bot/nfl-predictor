@@ -1977,8 +1977,51 @@ if _cached is not None:
             _cached["weekly_projection_source"] = "UNVERIFIED: current market environment missing after app upgrade"
             st.session_state["classic_uploaded_pool"] = _cached
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
+# News adjustments are applied only to the current view of the player pool.
+# They never overwrite the original projections or silently ingest unverified rumors.
+from news_optimizer import apply_news, validate_news
+if st.session_state.get("news_optimizer_active") and st.session_state.get("news_optimizer_rows") is not None:
+    pool, news_audit_active, news_errors_active = apply_news(pool, st.session_state["news_optimizer_rows"])
+else:
+    news_audit_active, news_errors_active = pd.DataFrame(), []
 
-view = st.sidebar.radio("View", ["Home","Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis","Winning Lineup Replay","Player Props Lab"])
+
+view = st.sidebar.radio("View", ["Home","Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis","Winning Lineup Replay","Player Props Lab","News Optimizer"])
+
+if view == "News Optimizer":
+    st.subheader("News Optimizer — verified evidence only")
+    st.caption("Upload sourced Week 7 events and explicitly reviewed projection adjustments. This is not an automatic live-news scraper. It will not infer target redistribution or defensive-matchup boosts without reviewed numbers.")
+    st.warning("Review team, name, date and source for every event. A status report alone does not justify an arbitrary fantasy-point boost.")
+    example = pd.DataFrame([{"player":"Example Player","team":"NYJ","position":"WR","event_type":"player_status","status":"QUESTIONABLE","confidence":"medium","source_url":"https://example.org/source","published_at":"2026-10-20T18:00:00Z","notes":"Replace with real verified report","delta_pct":0.0,"verified":False}])
+    st.download_button("Download event CSV template", example.to_csv(index=False), "nfl_news_event_template.csv", "text/csv")
+    news_file=st.file_uploader("Upload verified news events CSV",type=["csv"],key="news_optimizer_csv")
+    if news_file is not None:
+        try:
+            news_input=pd.read_csv(news_file)
+            parsed, issues=validate_news(news_input)
+            if issues:
+                st.error("; ".join(issues))
+            else:
+                st.dataframe(parsed[[c for c in ["player","team","event_type","status","delta_pct","verified","usable","reason","source_url"] if c in parsed.columns]],use_container_width=True,hide_index=True)
+                st.caption("Only verified, source-linked, dated, bounded rows are eligible. Verified OUT/IR/INACTIVE/SUSPENDED status removes a player from optimizer eligibility.")
+                if st.button("Stage reviewed news events"):
+                    st.session_state["news_optimizer_rows"]=news_input.copy()
+                    st.session_state["news_optimizer_active"]=False
+                    st.success("Events staged. Activate separately after reviewing the audit.")
+        except Exception as exc:
+            st.error(f"Unable to read news CSV: {exc}")
+    staged=st.session_state.get("news_optimizer_rows")
+    if staged is not None:
+        preview, audit, issues=apply_news(pool if not st.session_state.get("news_optimizer_active") else (st.session_state.get("classic_uploaded_pool") if st.session_state.get("classic_uploaded_pool") is not None else base_pool),staged)
+        if issues:
+            st.error("; ".join(issues))
+        else:
+            st.markdown("#### Adjustment audit")
+            st.dataframe(audit,use_container_width=True,hide_index=True)
+            st.download_button("Download audit CSV",audit.to_csv(index=False),"nfl_news_adjustment_audit.csv","text/csv")
+            st.checkbox("Apply reviewed events to Classic projections and lineup builder",key="news_optimizer_active")
+            st.caption("Turn off this checkbox to restore the original baseline; original uploaded projections are not modified.")
+    st.stop()
 
 if view == "Home":
     st.markdown("<div style='text-align:center;padding:1.5rem 0'><h1>Team AI²</h1><p>Sports Prediction & DFS Command Center</p></div>", unsafe_allow_html=True)
