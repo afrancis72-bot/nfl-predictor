@@ -1,0 +1,20 @@
+name: News Intelligence Tests
+on:
+  pull_request:
+  push:
+    branches:
+      - feature/week7-news-optimizer
+jobs:
+  news-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: python -m pip install numpy pandas
+      - name: Compile integrated modules
+        run: python -m py_compile app.py auto_injury_feed.py news_opportunity.py dfs_stats_engine.py
+      - name: Run isolated injury and opportunity tests
+        run: python -m unittest -v test_auto_injury_feed test_news_opportunity
