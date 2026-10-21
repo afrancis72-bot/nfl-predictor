@@ -22,6 +22,22 @@ class FeedTests(unittest.TestCase):
         self.assertTrue(bool(changed.iloc[1].optimizer_eligible))
         self.assertEqual(changed.iloc[1]["proj"],13.0)
         self.assertEqual(len(audit),2)
+    def test_alias_team_matches_slate(self):
+        reports,meta=get_injuries(2026,7,fetcher=self.sample)
+        meta["stale"]=False
+        pool=pd.DataFrame([dict(Name="Example Receiver",TeamAbbrev="LAR",optimizer_eligible=True)])
+        changed,audit=apply_injury_feed(pool,reports,meta)
+        self.assertFalse(bool(changed.iloc[0].optimizer_eligible))
+        self.assertEqual(len(audit),1)
+    def test_latest_same_day_designation_survives_blank_practice(self):
+        def reader(season):
+            return pd.DataFrame([
+                dict(season=2026,week=7,team="LA",full_name="Example Receiver",
+                     report_status="Out",practice_status="DNP",date_modified="2026-10-21T12:00:00Z"),
+                dict(season=2026,week=7,team="LA",full_name="Example Receiver",
+                     report_status="",practice_status="DNP",date_modified="2026-10-21T14:00:00Z")])
+        reports,meta=get_injuries(2026,7,fetcher=reader)
+        self.assertEqual(reports.iloc[0].report_status,"OUT")
     def test_missing_week_fails_closed(self):
         reports,meta=get_injuries(2026,8,fetcher=self.sample)
         self.assertFalse(meta["ok"])
