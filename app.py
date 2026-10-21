@@ -1981,6 +1981,14 @@ pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_up
 # They never overwrite the original projections or silently ingest unverified rumors.
 from news_optimizer import apply_news, validate_news
 from auto_injury_feed import get_injuries, apply_injury_feed
+from news_opportunity import redistribute
+@st.cache_data(ttl=21600,show_spinner=False)
+def _load_news_usage(season):
+    # Current and prior year; the redistribution engine filters all future weeks.
+    return props_fetch_weekly([season-1,season])
+news_usage_audit=pd.DataFrame()
+news_usage_status={"ok":False,"reason":"Not attempted"}
+
 @st.cache_data(ttl=3600,show_spinner=False)
 def _load_live_injuries(season,week):
     return get_injuries(season,week)
@@ -1993,6 +2001,14 @@ if st.session_state.get("auto_injury_enabled",True):
     _injuries,auto_news_meta=_load_live_injuries(_season,_week)
     if auto_news_meta.get("ok") and not auto_news_meta.get("stale"):
         pool,auto_news_audit=apply_injury_feed(pool,_injuries,auto_news_meta)
+        if st.session_state.get("auto_opportunity_enabled",True):
+            try:
+                _usage=_load_news_usage(_season)
+                pool,news_usage_audit,news_usage_status=redistribute(
+                    pool,_injuries,auto_news_meta,_usage,_season,_week)
+            except Exception as _news_exc:
+                news_usage_status={"ok":False,"reason":str(_news_exc)}
+
 
 if st.session_state.get("news_optimizer_active") and st.session_state.get("news_optimizer_rows") is not None:
     pool, news_audit_active, news_errors_active = apply_news(pool, st.session_state["news_optimizer_rows"])
@@ -2005,6 +2021,16 @@ view = st.sidebar.radio("View", ["Home","Slate Setup","Player Projections","Simu
 if view == "News Optimizer":
     st.subheader("News Optimizer — verified evidence only")
     st.markdown("#### Automatic NFL injury reports")
+    st.checkbox("Automatically redistribute verified vacated targets and carries",value=True,key="auto_opportunity_enabled")
+    st.caption("Historical evidence required; conservative capped changes. The adjustment currently rescales projection distributions, not the underlying snap-by-snap stat simulation.")
+    if news_usage_status.get("ok"):
+        st.success("Opportunity engine: "+news_usage_status.get("reason",""))
+    else:
+        st.info("Opportunity engine: "+news_usage_status.get("reason",""))
+    if not news_usage_audit.empty:
+        st.dataframe(news_usage_audit,use_container_width=True,hide_index=True)
+        st.download_button("Download opportunity audit",news_usage_audit.to_csv(index=False),"nfl_news_opportunity_audit.csv","text/csv")
+
     st.checkbox("Automatically apply confirmed OUT / IR / INACTIVE exclusions",value=True,key="auto_injury_enabled")
     _aa,_bb=st.columns(2)
     _aa.number_input("NFL season",min_value=2024,max_value=2100,value=2026,step=1,key="auto_injury_season")
