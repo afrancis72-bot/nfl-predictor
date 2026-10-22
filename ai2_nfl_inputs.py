@@ -56,6 +56,8 @@ def inspect_saved_nfl_inputs(salaries, projections):
         issues.append(f"{len(unknown)} projection IDs are absent from saved salary slate")
     if issues:
         return [], issues
+    if len(salary_ids) != len([r for r in salary_rows if str(r.get("ID", "")).strip()]):
+        return [], ["Salary CSV has duplicated DraftKings IDs"]
     by_id = {str(r["ID"]).strip(): r for r in salary_rows}
     merged = []
     for row in projection_rows:
