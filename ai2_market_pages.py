@@ -31,6 +31,8 @@ def fetch_complete_props(sport_key, markets, api_key, *, transport=None,
         headers = {str(k).lower(): str(v).lower() for k, v in raw_headers.items()}
         if not isinstance(page, list):
             raise ValueError("Unexpected provider response shape")
+        if len(page) > page_size:
+            raise ValueError("Provider returned more rows than requested")
         if "x-result-has-more" not in headers:
             raise ValueError("Missing provider completeness header")
         rows.extend(page)
@@ -39,6 +41,8 @@ def fetch_complete_props(sport_key, markets, api_key, *, transport=None,
             raise ValueError("Invalid completeness header")
         if not has_more:
             return rows
+        if not page:
+            raise ValueError("Provider reports more results but returned an empty page")
         try:
             next_offset = int(headers["x-next-offset"])
         except (KeyError, ValueError) as exc:
