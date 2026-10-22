@@ -13,6 +13,7 @@ from pathlib import Path
 import streamlit as st
 from ai2_settings import load_setting, save_setting
 from ai2_nfl_preflight import validate_pool
+from ai2_nfl_inputs import inspect_saved_nfl_inputs
 
 SPORTS = {
     "PGA": {"icon": "⛳", "description": "Classic · Showdown · 3-ball matchups"},
@@ -152,7 +153,14 @@ else:
                 st.info("A salary slate is saved, but salaries alone do not establish current-week projections or opportunity.")
             else:
                 st.warning("No NFL salary slate saved.")
-            check = validate_pool([], source_fresh=False, historical_validation_passed=False)
+            saved_projections = get_upload("NFL", "Projections")
+            try:
+                rows, issues = inspect_saved_nfl_inputs(saved_salaries, saved_projections)
+            except ValueError as exc:
+                rows, issues = [], [str(exc)]
+            for issue in issues:
+                st.warning(issue)
+            check = validate_pool(rows, source_fresh=False, historical_validation_passed=False)
             st.write(f"Verified eligible players: {check.eligible_count}")
             for reason in check.reasons:
                 st.write("• " + reason)
