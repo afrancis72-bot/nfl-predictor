@@ -2,6 +2,7 @@
 
 These checks are intentionally stricter than legacy eligibility flags.
 """
+from collections import Counter
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
@@ -25,6 +26,8 @@ def validate_pool(rows: Sequence[Mapping], *, source_fresh: bool,
     if not lineup_feasibility_passed:
         reasons.append('Legal lineup feasibility not independently verified')
     eligible = 0
+    positions = Counter()
+    ids = set()
     for i, row in enumerate(rows):
         missing = [k for k in REQUIRED if k not in row or row[k] is None]
         if missing:
@@ -46,6 +49,11 @@ def validate_pool(rows: Sequence[Mapping], *, source_fresh: bool,
         import math
         if salary <= 0 or not math.isfinite(projection) or projection <= 0:
             continue
+        player_id = str(row.get('ID', '')).strip()
+        if not player_id or player_id in ids:
+            continue
+        ids.add(player_id)
+        positions[str(row['Position']).upper()] += 1
         eligible += 1
     if eligible < 9:
         reasons.append(f"Only {eligible} verified players; minimum 9 required for NFL Classic")
