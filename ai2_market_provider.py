@@ -48,14 +48,16 @@ def retrieve_market_props(frozen, *, sport, api_key, identity_map,
     if len(data) >= max_rows:
         raise ValueError("Prop board may be truncated; narrow query or paginate")
     fetched_at = datetime.now(timezone.utc).isoformat()
-    allowed = {key for _, key, _ in frozen.observations}
+    if datetime.fromisoformat(fetched_at) < datetime.fromisoformat(frozen.frozen_at.replace("Z", "+00:00")):
+        raise ValueError("Simulation freeze timestamp is in the future")
+    allowed = {(pid, key) for pid, key, _ in frozen.observations}
     normalized = []
     for item in data:
         if not isinstance(item, dict):
             continue
         player_id = identity_map.get((str(item.get("event_id", "")),
                                       str(item.get("player_name", ""))))
-        if not player_id or item.get("market_key") not in allowed:
+        if not player_id or (str(player_id), item.get("market_key")) not in allowed:
             continue
         if str(item.get("period", "")).upper() != "FULL":
             continue
