@@ -2,6 +2,7 @@
 import csv
 import io
 from ai2_nfl_flags import verified_flag
+from ai2_nfl_matchups import opponent_from_game_info
 from datetime import datetime, timezone, timedelta
 
 MAX_BYTES = 8 * 1024 * 1024
