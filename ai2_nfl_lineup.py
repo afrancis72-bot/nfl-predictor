@@ -31,6 +31,8 @@ def check_classic_lineup(players, *, salary_cap=50000, salary_floor=47500):
         issues.append("Multiple running backs from same team")
     qbs = [p for p in players if str(p.get("Position", "")).upper() == "QB"]
     dsts = [p for p in players if str(p.get("Position", "")).upper() == "DST"]
+    if qbs and not str(qbs[0].get("opponent") or "").strip():
+        issues.append("Quarterback opponent is missing")
     if qbs and dsts and str(qbs[0].get("opponent", "")).upper() == str(dsts[0].get("TeamAbbrev", "")).upper() and qbs[0].get("opponent"):
         issues.append("Quarterback against opposing defense")
     return issues
