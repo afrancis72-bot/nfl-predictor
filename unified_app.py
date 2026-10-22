@@ -18,6 +18,7 @@ from ai2_nfl_inputs import inspect_saved_nfl_inputs
 from ai2_nfl_eligibility import eligible_nfl_rows
 from ai2_nfl_feasibility import find_classic_lineup
 from ai2_market_challenge import freeze_simulation, compare_frozen_to_props
+from ai2_market_identity import parse_identity_csv
 
 SPORTS = {
     "PGA": {"icon": "⛳", "description": "Classic · Showdown · 3-ball matchups"},
@@ -154,6 +155,14 @@ else:
             st.info("Research preview: load frozen simulation JSON and a separate post-freeze props JSON. Live provider integration is not yet certified.")
             frozen_upload = st.file_uploader("Frozen simulation JSON", type=["json"], key=f"market_frozen_{sport}")
             props_upload = st.file_uploader("Post-freeze market props JSON", type=["json"], key=f"market_props_{sport}")
+            identity_upload = st.file_uploader("Verified athlete identity map (optional CSV)", type=["csv"], key=f"market_ids_{sport}")
+            if identity_upload:
+                try:
+                    mapping = parse_identity_csv(identity_upload.getvalue())
+                    st.success(f"Loaded {len(mapping)} explicit event-scoped athlete mappings.")
+                    st.caption("Mappings are for provider matching only. This preview still requires normalized prop JSON.")
+                except ValueError as exc:
+                    st.error(f"Identity mapping rejected: {exc}")
             threshold = st.slider("Flag probability difference (percentage points)", 5, 50, 15, 5, key=f"market_gap_{sport}")
             if st.button("Compare frozen simulation to props", disabled=not (frozen_upload and props_upload), key=f"market_compare_{sport}"):
                 try:
