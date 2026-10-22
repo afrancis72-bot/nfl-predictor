@@ -81,12 +81,15 @@ def compare_frozen_to_props(frozen, props, *, min_gap=0.15):
             continue
         try:
             observed_at = _utc(prop["last_update"])
+            fetched_at = _utc(prop["fetched_at"])
             line = float(prop["line"])
             over = _american_implied(prop["over_price"])
             under = _american_implied(prop["under_price"])
         except (KeyError, TypeError, ValueError, OverflowError):
             continue
-        if observed_at < _utc(frozen.frozen_at) or not isfinite(line) or line < 0:
+        if (fetched_at < _utc(frozen.frozen_at) or observed_at > fetched_at
+                or (fetched_at - observed_at).total_seconds() > 900
+                or not isfinite(line) or line < 0):
             continue
         fair_over = over / (over + under)
         model_over = sum(v > line for v in samples) / len(samples)
