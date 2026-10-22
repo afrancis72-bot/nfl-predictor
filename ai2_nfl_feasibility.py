@@ -44,7 +44,7 @@ def find_classic_lineup(rows, *, salary_floor=47500, salary_cap=50000, max_check
             if not qb.get("opponent") or canonical_team(qb["opponent"]) == canonical_team(dst["TeamAbbrev"]):
                 continue
             for rbs in combinations(pools["RB"], 2):
-                if str(rbs[0]["TeamAbbrev"]).upper() == str(rbs[1]["TeamAbbrev"]).upper():
+                if canonical_team(rbs[0]["TeamAbbrev"]) == canonical_team(rbs[1]["TeamAbbrev"]):
                     continue
                 for wrs in combinations(pools["WR"], 3):
                     for te in pools["TE"]:
