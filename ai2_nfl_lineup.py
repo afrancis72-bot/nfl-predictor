@@ -27,7 +27,7 @@ def check_classic_lineup(players, *, salary_cap=50000, salary_floor=47500):
             issues.append("Salary outside configured floor/cap or nonpositive salary")
     except (KeyError, ValueError, TypeError):
         issues.append("Salary missing or invalid")
-    rb_teams = [str(p.get("TeamAbbrev", "")).upper() for p in players if str(p.get("Position", "")).upper() == "RB"]
+    rb_teams = [canonical_team(p.get("TeamAbbrev", "")) for p in players if str(p.get("Position", "")).upper() == "RB"]
     if len(rb_teams) != len(set(rb_teams)):
         issues.append("Multiple running backs from same team")
     qbs = [p for p in players if str(p.get("Position", "")).upper() == "QB"]
