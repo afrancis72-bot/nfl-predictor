@@ -391,6 +391,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             missing_c=float(pd.to_numeric(out_hist.get('carries_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
             leftover=max(pass_pg*.10, pass_pg-target_rates.sum()-missing_t, .5)
             carry_other=max(team_rush*.06,.5)
+            pre_target_budget=float(target_rates.sum()+leftover+missing_t)
+            pre_carry_budget=float(carry_rates.sum()+carry_other+missing_c)
             if missing_t>0 or missing_c>0:
                 # Positional suitability matters: an unavailable RB's carries
                 # predominantly move to available RBs, not to WRs/TEs.
@@ -399,7 +401,20 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 target_role=np.where(positions=='WR',1.0,np.where(positions=='TE',.85,.75))
                 target_rates,leftover=redistribute(target_rates,leftover,missing_volume=missing_t,role_weights=target_role)
                 carry_rates,carry_other=redistribute(carry_rates,carry_other,missing_volume=missing_c,role_weights=carry_role)
+            # Redistribution moves shares within each team budget; it must
+            # never create extra attempts/carries or allocate negative volume.
+            post_target_budget=float(target_rates.sum()+leftover)
+            post_carry_budget=float(carry_rates.sum()+carry_other)
+            if (not np.isclose(pre_target_budget,post_target_budget,rtol=0,atol=1e-7)
+                or not np.isclose(pre_carry_budget,post_carry_budget,rtol=0,atol=1e-7)
+                or np.any(target_rates<0) or np.any(carry_rates<0)
+                or leftover<0 or carry_other<0):
+                raise ValueError(f"Opportunity conservation failed for {team}; refusing simulated lineup output")
             stat_draws[f'__OPPORTUNITY__|{team}']={
+                'target_budget_before':pre_target_budget,
+                'target_budget_after':post_target_budget,
+                'carry_budget_before':pre_carry_budget,
+                'carry_budget_after':post_carry_budget,
                 'removed_targets_pg':missing_t,'removed_carries_pg':missing_c,
                 'active_target_rates_pg':dict(zip(skill['Name'].astype(str),target_rates.tolist())),
                 'active_carry_rates_pg':dict(zip(skill['Name'].astype(str),carry_rates.tolist()))}

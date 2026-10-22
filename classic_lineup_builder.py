@@ -6,7 +6,7 @@ from scipy.optimize import milp, Bounds, LinearConstraint
 
 def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_floor=47500,
                           locked_dst=None, excluded_names=(), max_overlap=6,
-                          max_exposure=1.0, upside_weight=0.15, variance_penalty=0.0, ownership=None, leverage_weight=0.0, seed=5100):
+                          max_exposure=1.0, upside_weight=0.15, variance_penalty=0.0, ownership=None, leverage_weight=0.0, seed=5100, minimum_role_confidence=0.60, minimum_projected_points=3.0, minimum_qb_stack=1, balanced_floor_ratio=0.88, upside_floor_ratio=0.81):
     pool=salaries.copy()
     pool["Position"]=pool["Position"].astype(str).str.upper().str.strip().replace({"D":"DST"})
     pool["Salary"]=pd.to_numeric(pool["Salary"],errors="raise")
@@ -19,10 +19,21 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
     pool=pool[~pool["Status"].isin(blocked)].copy()
     pool=pool[pool["Position"].isin(["QB","RB","WR","TE","DST"]) & ~pool["Name"].isin(excluded_names)].copy()
     if pool["ID"].duplicated().any(): raise ValueError("Duplicate player IDs in DK salaries")
-    proj=projections[["ID","dk_points_mean","dk_points_p90"]].copy()
+    # Require upstream, evidence-based role confidence. Missing evidence is not a pass.
+    required={"ID","dk_points_mean","dk_points_p90","role_confidence"}
+    missing=required-set(projections.columns)
+    if missing: raise ValueError(f"Projection feed lacks mandatory role evidence: {sorted(missing)}")
+    proj=projections[["ID","dk_points_mean","dk_points_p90","role_confidence"]].copy()
+    proj["role_confidence"]=pd.to_numeric(proj["role_confidence"],errors="coerce")
+    if not 0 <= minimum_role_confidence <= 1: raise ValueError("Invalid role-confidence floor")
+    if minimum_projected_points < 0: raise ValueError("Invalid projection floor")
     proj["ID"]=proj["ID"].astype(str)
     pool=pool.merge(proj,on="ID",how="left",validate="one_to_one")
-    pool=pool[(pool["Position"]=="DST") | pool["dk_points_mean"].notna()].copy()
+    pool=pool[(pool["Position"]=="DST") | (
+        pool["dk_points_mean"].notna() &
+        (pool["dk_points_mean"] >= minimum_projected_points) &
+        (pool["role_confidence"] >= minimum_role_confidence)
+    )].copy()
     pool["score"]=np.where(pool["Position"]=="DST",pool["TeamAbbrev"].map(dst_points),pool["dk_points_mean"])
     pool=pool[pool["score"].notna()].reset_index(drop=True)
     if ownership is not None:
@@ -52,6 +63,13 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
     for t in sorted(set(teams)):
         constraint((pos=="RB")&(teams==t),0,1)
     if locked_dst: constraint((pos=="DST")&(teams==locked_dst),1,1)
+    # A selected QB must have at least one WR/TE teammate in the lineup.
+    if minimum_qb_stack not in (0,1,2): raise ValueError("minimum_qb_stack must be 0, 1 or 2")
+    if minimum_qb_stack:
+        for t in sorted(set(teams[pos=="QB"])):
+            qb=((pos=="QB")&(teams==t)).astype(float)
+            passcatcher=((np.isin(pos,["WR","TE"]))&(teams==t)).astype(float)
+            constraint(minimum_qb_stack*qb-passcatcher,-np.inf,0)
     # Avoid QB versus opposing DST using the DK matchup string.
     if "Game Info" in pool:
         matchup=pool["Game Info"].astype(str).str.extract(r"^([A-Z]{2,3})@([A-Z]{2,3})")
@@ -140,7 +158,7 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
         means=np.array([candidate_bank[c][0] for c in candidates])
         highs=np.array([candidate_bank[c][1] for c in candidates])
         # Reject extremely weak pivots relative to the best candidate.
-        # Thresholds relax only if no legal portfolio exists.
+        # Quality floors are fixed; never relax to manufacture a portfolio.
         from scipy.sparse import vstack,hstack
         unique_rows=[]
         for j in range(m):
@@ -166,8 +184,8 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
             exp=sparse.hstack([incidence,incidence],format="csr")
             constraints_rows.append(exp)
             lo.extend([0.]*n);hi.extend(cap_vec.tolist())
-            permitted_balanced=means>=max(means)*floor_ratio
-            permitted_upside=means>=max(means)*max(0.70,floor_ratio-0.07)
+            permitted_balanced=means>=max(means)*balanced_floor_ratio
+            permitted_upside=means>=max(means)*upside_floor_ratio
             upper_bounds=np.concatenate([permitted_balanced,permitted_upside]).astype(float)
             utility=np.concatenate([means,highs])
             res=milp(c=-utility,integrality=np.ones(2*m),
@@ -177,13 +195,11 @@ def build_classic_lineups(salaries, projections, *, dst_points, count=5, salary_
                      options={"time_limit":35,"mip_rel_gap":0.04})
             return res
         selected=None
-        for threshold in (0.88,0.84,0.80,0.75,0.0):
-            solution=portfolio_select(threshold)
-            if solution.x is not None and np.count_nonzero(solution.x>0.5)==int(count):
-                selected=solution
-                break
+        solution=portfolio_select(balanced_floor_ratio)
+        if solution.x is not None and np.count_nonzero(solution.x>0.5)==int(count):
+            selected=solution
         if selected is None:
-            raise ValueError(f"Could not select {count} diverse lineups under {max_exposure:.0%} exposure from {m} candidates. Try reducing lineup count or salary floor.")
+            raise ValueError(f"Quality-gated optimizer refused to manufacture {count} entries. Could not select {count} diverse lineups under {max_exposure:.0%} exposure from {m} candidates. Try reducing lineup count or salary floor.")
         selected_balanced=np.flatnonzero(selected.x[:m]>0.5)
         selected_upside=np.flatnonzero(selected.x[m:]>0.5)
         chosen_indices=[0]+[j for j in list(selected_balanced)+list(selected_upside) if j!=0]

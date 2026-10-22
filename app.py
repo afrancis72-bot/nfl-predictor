@@ -1977,8 +1977,121 @@ if _cached is not None:
             _cached["weekly_projection_source"] = "UNVERIFIED: current market environment missing after app upgrade"
             st.session_state["classic_uploaded_pool"] = _cached
 pool = st.session_state["classic_uploaded_pool"] if st.session_state["classic_uploaded_pool"] is not None else base_pool
+# News adjustments are applied only to the current view of the player pool.
+# They never overwrite the original projections or silently ingest unverified rumors.
+from news_optimizer import apply_news, validate_news
+from auto_injury_feed import get_injuries, apply_injury_feed
+from news_injury_context import merge_confirmed_out
+from news_opportunity import redistribute
+@st.cache_data(ttl=21600,show_spinner=False)
+def _load_news_usage(season):
+    # Current and prior year; the redistribution engine filters all future weeks.
+    return props_fetch_weekly([season-1,season])
+news_usage_audit=pd.DataFrame()
+news_usage_status={"ok":False,"reason":"Not attempted"}
 
-view = st.sidebar.radio("View", ["Home","Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis","Winning Lineup Replay","Player Props Lab"])
+@st.cache_data(ttl=3600,show_spinner=False)
+def _load_live_injuries(season,week):
+    return get_injuries(season,week)
+auto_news_meta = None
+auto_news_audit = pd.DataFrame()
+auto_news_out_players=[]
+if st.session_state.get("auto_injury_enabled",True):
+    # Never infer week from an old hardcoded sample slate. User selects season/week.
+    # Use the same season/week as the statistical simulator; never mix
+    # injury Week 7 with a different selected props/simulation week.
+    _season=int(st.session_state.get("props_season",2026))
+    _week=int(st.session_state.get("props_week",7))
+    _injuries,auto_news_meta=_load_live_injuries(_season,_week)
+    if auto_news_meta.get("ok") and not auto_news_meta.get("stale"):
+        pool,auto_news_audit=apply_injury_feed(pool,_injuries,auto_news_meta)
+        if not auto_news_audit.empty:
+            auto_news_out_players=[
+                {"team":str(r.TeamAbbrev),"player":str(r.Name)}
+                for r in auto_news_audit.itertuples(index=False) if bool(r.excluded)
+            ]
+        if st.session_state.get("auto_opportunity_enabled",True):
+            try:
+                _usage=_load_news_usage(_season)
+                pool,news_usage_audit,news_usage_status=redistribute(
+                    pool,_injuries,auto_news_meta,_usage,_season,_week)
+            except Exception as _news_exc:
+                news_usage_status={"ok":False,"reason":str(_news_exc)}
+
+
+if st.session_state.get("news_optimizer_active") and st.session_state.get("news_optimizer_rows") is not None:
+    pool, news_audit_active, news_errors_active = apply_news(pool, st.session_state["news_optimizer_rows"])
+else:
+    news_audit_active, news_errors_active = pd.DataFrame(), []
+
+
+view = st.sidebar.radio("View", ["Home","Slate Setup","Player Projections","Simulation","Lineup Builder","Single Game Showdown","Simulation Validation","Portfolio Analysis","Winning Lineup Replay","Player Props Lab","News Optimizer"])
+
+if view == "News Optimizer":
+    st.subheader("News Optimizer — verified evidence only")
+    st.markdown("#### Automatic NFL injury reports")
+    st.checkbox("Automatically redistribute verified vacated targets and carries",value=True,key="auto_opportunity_enabled")
+    st.caption("Historical evidence required; conservative capped changes. The adjustment currently rescales projection distributions, not the underlying snap-by-snap stat simulation.")
+    if news_usage_status.get("ok"):
+        st.success("Opportunity engine: "+news_usage_status.get("reason",""))
+    else:
+        st.info("Opportunity engine: "+news_usage_status.get("reason",""))
+    if not news_usage_audit.empty:
+        st.dataframe(news_usage_audit,use_container_width=True,hide_index=True)
+        st.download_button("Download opportunity audit",news_usage_audit.to_csv(index=False),"nfl_news_opportunity_audit.csv","text/csv")
+
+    st.checkbox("Automatically apply confirmed OUT / IR / INACTIVE exclusions",value=True,key="auto_injury_enabled")
+    _aa,_bb=st.columns(2)
+    _aa.metric("Selected season",str(st.session_state.get("props_season",2026)))
+    _bb.metric("Selected week",str(st.session_state.get("props_week",7)))
+    st.caption("The injury engine follows the season/week on the Player Props/Simulation setup; it does not use a separate injury week.")
+    if st.button("Refresh injury feed now"):
+        _load_live_injuries.clear()
+        st.rerun()
+    if auto_news_meta is None:
+        st.info("Automatic injury feed is disabled.")
+    elif not auto_news_meta.get("ok"):
+        st.error("Injury feed unavailable; no automatic changes applied. "+str(auto_news_meta.get("error")))
+    elif auto_news_meta.get("stale"):
+        st.warning("Injury feed older than 72 hours; no automatic changes applied. Last report: "+str(auto_news_meta.get("latest_report")))
+    else:
+        st.success("Current-week injury feed loaded: "+str(auto_news_meta.get("rows"))+" reports. Latest: "+str(auto_news_meta.get("latest_report")))
+        st.caption("Only confirmed OUT/IR/INACTIVE exclusions are automatic. Questionable, limited practice and coach comments do not automatically change projections.")
+        st.dataframe(auto_news_audit,use_container_width=True,hide_index=True)
+        st.download_button("Download automatic injury audit",auto_news_audit.to_csv(index=False),"nfl_automatic_injury_audit.csv","text/csv")
+
+    st.caption("Upload sourced Week 7 events and explicitly reviewed projection adjustments. This is not an automatic live-news scraper. It will not infer target redistribution or defensive-matchup boosts without reviewed numbers.")
+    st.warning("Review team, name, date and source for every event. A status report alone does not justify an arbitrary fantasy-point boost.")
+    example = pd.DataFrame([{"player":"Example Player","team":"NYJ","position":"WR","event_type":"player_status","status":"QUESTIONABLE","confidence":"medium","source_url":"https://example.org/source","published_at":"2026-10-20T18:00:00Z","notes":"Replace with real verified report","delta_pct":0.0,"verified":False}])
+    st.download_button("Download event CSV template", example.to_csv(index=False), "nfl_news_event_template.csv", "text/csv")
+    news_file=st.file_uploader("Upload verified news events CSV",type=["csv"],key="news_optimizer_csv")
+    if news_file is not None:
+        try:
+            news_input=pd.read_csv(news_file)
+            parsed, issues=validate_news(news_input)
+            if issues:
+                st.error("; ".join(issues))
+            else:
+                st.dataframe(parsed[[c for c in ["player","team","event_type","status","delta_pct","verified","usable","reason","source_url"] if c in parsed.columns]],use_container_width=True,hide_index=True)
+                st.caption("Only verified, source-linked, dated, bounded rows are eligible. Verified OUT/IR/INACTIVE/SUSPENDED status removes a player from optimizer eligibility.")
+                if st.button("Stage reviewed news events"):
+                    st.session_state["news_optimizer_rows"]=news_input.copy()
+                    st.session_state["news_optimizer_active"]=False
+                    st.success("Events staged. Activate separately after reviewing the audit.")
+        except Exception as exc:
+            st.error(f"Unable to read news CSV: {exc}")
+    staged=st.session_state.get("news_optimizer_rows")
+    if staged is not None:
+        preview, audit, issues=apply_news(pool if not st.session_state.get("news_optimizer_active") else (st.session_state.get("classic_uploaded_pool") if st.session_state.get("classic_uploaded_pool") is not None else base_pool),staged)
+        if issues:
+            st.error("; ".join(issues))
+        else:
+            st.markdown("#### Adjustment audit")
+            st.dataframe(audit,use_container_width=True,hide_index=True)
+            st.download_button("Download audit CSV",audit.to_csv(index=False),"nfl_news_adjustment_audit.csv","text/csv")
+            st.checkbox("Apply reviewed events to Classic projections and lineup builder",key="news_optimizer_active")
+            st.caption("Turn off this checkbox to restore the original baseline; original uploaded projections are not modified.")
+    st.stop()
 
 if view == "Home":
     st.markdown("<div style='text-align:center;padding:1.5rem 0'><h1>Team AI²</h1><p>Sports Prediction & DFS Command Center</p></div>", unsafe_allow_html=True)
@@ -2435,10 +2548,14 @@ elif view == "Simulation":
             staged=list(by_key.values()) if injury_mode else []
             st.session_state['v314_staged_out_players']=[{'team':p['team'],'player':p['player']} for p in staged]
             out_players=list(st.session_state['v314_staged_out_players'])
+            # One canonical OUT context for simulator, audit, and replay.
+            out_players=merge_confirmed_out(out_players,auto_news_out_players,enabled=injury_mode)
+            st.session_state['v314_staged_out_players']=[
+                {'team':p['team'],'player':p['player']} for p in out_players]
             if injury_mode:
                 st.success(f"{len(out_players)} unique OUT players staged: {len(auto_out)} NFL matches, {len(dk_out)} DK statuses, {len(parsed_out)} manual entries (sources may overlap)")
-                if staged:
-                    st.dataframe(pd.DataFrame(staged),hide_index=True,use_container_width=True)
+                if out_players:
+                    st.dataframe(pd.DataFrame(out_players),hide_index=True,use_container_width=True)
                 if auto_injury and not feed_ok:
                     st.warning('Automatic injury feed FAILED. Review DK statuses and manual entries; this is not a complete injury check.')
                 if feed_ok and not feed_matches.empty and (feed_matches.status=='QUESTIONABLE').any():
@@ -2447,7 +2564,7 @@ elif view == "Simulation":
             injury_signature=hashlib.sha256(str(sorted((p['team'],p['player'].lower()) for p in out_players)).encode()).hexdigest()[:12]
             if st.button("Run active-slate simulation",type="primary"):
                 run_out_players=list(st.session_state.get('v314_staged_out_players',[]))
-                if injury_mode and auto_injury and not feed_ok and not run_out_players:
+                if injury_mode and auto_injury and not feed_ok and not auto_news_out_players and not run_out_players:
                     st.error("Live injury feed failed and no verified/manual exclusions are staged. Review injuries before simulating.")
                     st.stop()
                 # Snapshot exactly what this click will send to the engine.
