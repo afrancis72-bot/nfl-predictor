@@ -16,12 +16,14 @@ class Preflight:
     eligible_count: int
 
 def validate_pool(rows: Sequence[Mapping], *, source_fresh: bool,
-                  historical_validation_passed: bool) -> Preflight:
+                  historical_validation_passed: bool, lineup_feasibility_passed: bool = False) -> Preflight:
     reasons = []
     if not source_fresh:
         reasons.append("Current-week data freshness not verified")
     if not historical_validation_passed:
         reasons.append("Historical engine validation not passed")
+    if not lineup_feasibility_passed:
+        reasons.append('Legal lineup feasibility not independently verified')
     eligible = 0
     for i, row in enumerate(rows):
         missing = [k for k in REQUIRED if k not in row or row[k] is None]
