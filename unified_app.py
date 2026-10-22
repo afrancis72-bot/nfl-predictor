@@ -8,6 +8,7 @@ import os
 import base64
 import html
 import sqlite3
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 import streamlit as st
@@ -16,6 +17,7 @@ from ai2_nfl_preflight import validate_pool
 from ai2_nfl_inputs import inspect_saved_nfl_inputs
 from ai2_nfl_eligibility import eligible_nfl_rows
 from ai2_nfl_feasibility import find_classic_lineup
+from ai2_market_challenge import freeze_simulation, compare_frozen_to_props
 
 SPORTS = {
     "PGA": {"icon": "⛳", "description": "Classic · Showdown · 3-ball matchups"},
@@ -109,8 +111,8 @@ else:
         st.rerun()
     st.title(f"{SPORTS[sport]['icon']} {sport}")
     st.caption("Unified platform prototype · No sport engine connected or certified yet.")
-    tab_data,tab_build,tab_results,tab_health = st.tabs(
-        ["My Slate", "Build / Simulate", "My Results", "Engine Health"]
+    tab_data,tab_build,tab_market,tab_results,tab_health = st.tabs(
+        ["My Slate", "Build / Simulate", "Market Intelligence", "My Results", "Engine Health"]
     )
     with tab_data:
         st.subheader("Persistent slate files")
@@ -143,6 +145,34 @@ else:
             st.success("Preferences saved on the configured data volume.")
     with tab_build:
         st.warning("Not ready: lineup generation is disabled until the sport engine and its data checks are integrated.")
+    with tab_market:
+        st.subheader("Market Intelligence · post-simulation only")
+        st.caption("Independent simulation first. This screen never changes projections, reruns the model, or authorizes betting.")
+        if sport not in ("NFL", "NBA"):
+            st.info("Player-prop comparisons are currently planned for NFL and NBA.")
+        else:
+            st.info("Research preview: load frozen simulation JSON and a separate post-freeze props JSON. Live provider integration is not yet certified.")
+            frozen_upload = st.file_uploader("Frozen simulation JSON", type=["json"], key=f"market_frozen_{sport}")
+            props_upload = st.file_uploader("Post-freeze market props JSON", type=["json"], key=f"market_props_{sport}")
+            threshold = st.slider("Flag probability difference (percentage points)", 5, 50, 15, 5, key=f"market_gap_{sport}")
+            if st.button("Compare frozen simulation to props", disabled=not (frozen_upload and props_upload), key=f"market_compare_{sport}"):
+                try:
+                    frozen_data = json.loads(frozen_upload.getvalue().decode("utf-8"))
+                    props_data = json.loads(props_upload.getvalue().decode("utf-8"))
+                    if not isinstance(frozen_data, dict) or not isinstance(props_data, list):
+                        raise ValueError("Expected a simulation object and a list of prop records")
+                    frozen = freeze_simulation(frozen_data["run_id"], frozen_data["observations"], frozen_data["frozen_at"])
+                    findings = compare_frozen_to_props(frozen, props_data, min_gap=threshold / 100)
+                    st.success(f"Compared frozen run {frozen.run_id} · {len(findings)} review flags")
+                    st.caption(f"Simulation fingerprint: {frozen.digest}")
+                    if findings:
+                        st.dataframe(findings, use_container_width=True)
+                        st.download_button("Download review flags (JSON)", json.dumps(findings, indent=2),
+                                           file_name=f"{sport.lower()}_market_review.json", mime="application/json")
+                    else:
+                        st.info("No qualifying discrepancies. Confirm player IDs, periods, timestamps and quote freshness if matches were expected.")
+                except (ValueError, KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    st.error(f"Comparison blocked: {exc}")
     with tab_results:
         st.info("Saved portfolios, bets and post-event audits will appear here.")
     with tab_health:
