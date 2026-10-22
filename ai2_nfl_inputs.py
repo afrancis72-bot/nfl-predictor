@@ -1,6 +1,7 @@
 """Read saved NFL CSV inputs without executing the legacy optimizer."""
 import csv
 import io
+from ai2_nfl_flags import verified_flag
 from datetime import datetime, timezone, timedelta
 
 MAX_BYTES = 8 * 1024 * 1024
