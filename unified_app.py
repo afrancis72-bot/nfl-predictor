@@ -11,6 +11,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 import streamlit as st
+from ai2_settings import load_setting, save_setting
 
 SPORTS = {
     "PGA": {"icon": "⛳", "description": "Classic · Showdown · 3-ball matchups"},
@@ -126,6 +127,16 @@ else:
                 st.rerun()
             except (OSError,sqlite3.Error,ValueError) as exc:
                 st.error(f"Could not save file: {exc}")
+        st.divider()
+        st.subheader("Saved build preferences")
+        current_mode = load_setting(DB, sport, "portfolio_mode", "Balanced")
+        mode = st.selectbox("Portfolio approach", ["Balanced", "Tournament upside", "Cash-oriented"],
+                            index=["Balanced", "Tournament upside", "Cash-oriented"].index(current_mode)
+                            if current_mode in ["Balanced", "Tournament upside", "Cash-oriented"] else 0,
+                            key=f"mode_{sport}")
+        if st.button("Save preferences", key=f"prefs_{sport}"):
+            save_setting(DB, sport, "portfolio_mode", mode)
+            st.success("Preferences saved on the configured data volume.")
     with tab_build:
         st.warning("Not ready: lineup generation is disabled until the sport engine and its data checks are integrated.")
     with tab_results:
