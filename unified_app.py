@@ -17,6 +17,7 @@ from ai2_nfl_preflight import validate_pool
 from ai2_nfl_inputs import inspect_saved_nfl_inputs
 from ai2_nfl_eligibility import eligible_nfl_rows
 from ai2_nfl_feasibility import find_classic_lineup
+from ai2_nfl_candidate_builder import build_classic_candidates
 from ai2_market_challenge import freeze_simulation, compare_frozen_to_props
 from ai2_market_identity import parse_identity_csv
 from ai2_market_provider import retrieve_market_props
@@ -146,7 +147,44 @@ else:
             save_setting(DB, sport, "portfolio_mode", mode)
             st.success("Preferences saved on the configured data volume.")
     with tab_build:
-        st.warning("Not ready: lineup generation is disabled until the sport engine and its data checks are integrated.")
+        if sport != "NFL":
+            st.info("Coming next: this sport's simulation engine is not connected.")
+        else:
+            st.subheader("NFL Classic · Sunday candidate builder")
+            st.caption("Projection-ranked legal candidates, NOT correlated simulations or validated contest-ROI predictions. No sportsbook inputs.")
+            st.info("First save DraftKings salaries and an independent weekly projection CSV under My Slate. Projections must contain ID, proj, projection_source, weekly_projection_valid and opportunity_verified. The two verification flags must be true and must reflect independently checked data.")
+            lineup_count = st.slider("Candidate lineups", 1, 20, 5, key="nfl_candidate_count")
+            exposure_limit = st.slider("Maximum player exposure", 20, 100, 60, 5, key="nfl_candidate_exposure")
+            if st.button("Build NFL Classic candidates", key="nfl_build_candidates"):
+                try:
+                    salaries = get_upload("NFL", "DraftKings salaries")
+                    projections = get_upload("NFL", "Projections")
+                    rows, issues = inspect_saved_nfl_inputs(salaries, projections)
+                    if issues:
+                        raise ValueError("; ".join(issues))
+                    eligible = eligible_nfl_rows(rows)
+                    if len(eligible) < 9:
+                        raise ValueError("Insufficient verified eligible players. Check weekly projections, opportunity flags, and injuries.")
+                    candidates = build_classic_candidates(eligible, count=lineup_count,
+                                                          max_exposure=exposure_limit / 100)
+                    if not candidates:
+                        st.warning("No legal candidates found within the search budget. This does not prove the slate is infeasible.")
+                    else:
+                        st.session_state["nfl_candidates"] = candidates
+                        st.success(f"Built {len(candidates)} legal projection-ranked candidates.")
+                except (ValueError, KeyError, TypeError) as exc:
+                    st.error(f"Build blocked: {exc}")
+            candidates = st.session_state.get("nfl_candidates", [])
+            if candidates:
+                summary = [{"Lineup": i + 1, "Projected DK points": x["projected_points"],
+                            "Salary": x["salary"],
+                            "Players": ", ".join(str(p.get("Name", p["ID"])) for p in x["players"])}
+                           for i, x in enumerate(candidates)]
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+                st.download_button("Download candidate review JSON",
+                                   json.dumps(summary, indent=2), file_name="nfl_candidate_review.json",
+                                   mime="application/json")
+                st.warning("Review only: DraftKings CSV export and real-money readiness remain disabled pending slate verification, source freshness and historical backtesting.")
     with tab_market:
         st.subheader("Market Intelligence · post-simulation only")
         st.caption("Independent simulation first. This screen never changes projections, reruns the model, or authorizes betting.")
