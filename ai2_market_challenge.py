@@ -94,7 +94,13 @@ def compare_frozen_to_props(frozen, props, *, min_gap=0.15):
         fair_over = over / (over + under)
         model_over = sum(v > line for v in samples) / len(samples)
         model_push = sum(v == line for v in samples) / len(samples)
-        gap = model_over - fair_over
+        # Whole-number props can push; compare conditional win probability
+        # with two-way no-vig odds, and retain unconditional probabilities.
+        nonpush = 1.0 - model_push
+        if nonpush <= 0:
+            continue
+        conditional_over = model_over / nonpush
+        gap = conditional_over - fair_over
         if abs(gap) < min_gap:
             continue
         findings.append({"run_id": frozen.run_id, "simulation_digest": frozen.digest,
@@ -103,6 +109,7 @@ def compare_frozen_to_props(frozen, props, *, min_gap=0.15):
                          "line": line, "simulation_median": median(samples),
                          "model_over_probability": model_over,
                          "model_push_probability": model_push,
+                         "model_conditional_over_probability": conditional_over,
                          "market_no_vig_over_probability": fair_over,
                          "probability_gap": gap, "status": "REVIEW_ONLY",
                          "market_observed_at": observed_at.isoformat()})
