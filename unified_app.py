@@ -162,7 +162,12 @@ else:
                 rows, issues = [], [str(exc)]
             for issue in issues:
                 st.warning(issue)
-            check = validate_pool(rows, source_fresh=False, historical_validation_passed=False)
+            eligible_rows = eligible_nfl_rows(rows)
+            feasibility = find_classic_lineup(eligible_rows)
+            st.write(f"Lineup feasibility: {feasibility.reason} ({feasibility.examined:,} checked)")
+            check = validate_pool(rows, source_fresh=False,
+                                  historical_validation_passed=False,
+                                  lineup_feasibility_passed=feasibility.feasible is True)
             st.write(f"Verified eligible players: {check.eligible_count}")
             for reason in check.reasons:
                 st.write("• " + reason)
