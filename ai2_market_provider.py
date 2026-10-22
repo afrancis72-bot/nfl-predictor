@@ -34,6 +34,8 @@ def retrieve_market_props(frozen, *, sport, api_key, identity_map,
         raise TypeError("Explicit identity map required")
     if not isinstance(max_rows, int) or not 1 <= max_rows <= 10000:
         raise ValueError("Invalid row limit")
+    if datetime.fromisoformat(frozen.frozen_at.replace("Z", "+00:00")) > datetime.now(timezone.utc):
+        raise ValueError("Simulation freeze timestamp is in the future")
     query = urlencode({"markets": ",".join(MARKETS[sport]),
                        "limit": max_rows, "maxAgeSec": 900})
     url = f"{BASE_URL}/v1/sports/{SPORT_KEYS[sport]}/props?{query}"
@@ -56,7 +58,7 @@ def retrieve_market_props(frozen, *, sport, api_key, identity_map,
         if not isinstance(item, dict):
             continue
         player_id = identity_map.get((str(item.get("event_id", "")),
-                                      str(item.get("player_name", ""))))
+                                      str(item.get("player_name", item.get("player", "")))))
         if not player_id or (str(player_id), item.get("market_key")) not in allowed:
             continue
         if str(item.get("period", "")).upper() != "FULL":
