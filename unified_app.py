@@ -19,6 +19,7 @@ from ai2_nfl_eligibility import eligible_nfl_rows
 from ai2_nfl_feasibility import find_classic_lineup
 from ai2_market_challenge import freeze_simulation, compare_frozen_to_props
 from ai2_market_identity import parse_identity_csv
+from ai2_market_provider import retrieve_market_props
 
 SPORTS = {
     "PGA": {"icon": "⛳", "description": "Classic · Showdown · 3-ball matchups"},
@@ -163,16 +164,29 @@ else:
                     st.caption("Mappings are for provider matching only. This preview still requires normalized prop JSON.")
                 except ValueError as exc:
                     st.error(f"Identity mapping rejected: {exc}")
+            st.caption("Live retrieval requires PARLAY_API_KEY in Streamlit secrets or the server environment. Credentials are never entered in the app.")
+            live_mode = st.checkbox("Retrieve provider props after freeze (experimental)", key=f"market_live_{sport}")
+            if live_mode:
+                st.warning("Experimental: the provider response schema has not been validated against a live authenticated response. Missing or invalid data will block comparison.")
             threshold = st.slider("Flag probability difference (percentage points)", 5, 50, 15, 5, key=f"market_gap_{sport}")
-            if st.button("Compare frozen simulation to props", disabled=not (frozen_upload and props_upload), key=f"market_compare_{sport}"):
+            if st.button("Compare frozen simulation to props", disabled=not (frozen_upload and (live_mode or props_upload) and (not live_mode or identity_upload)), key=f"market_compare_{sport}"):
                 try:
                     frozen_data = json.loads(frozen_upload.getvalue().decode("utf-8"))
-                    props_data = json.loads(props_upload.getvalue().decode("utf-8"))
-                    if not isinstance(frozen_data, dict) or not isinstance(props_data, list):
-                        raise ValueError("Expected a simulation object and a list of prop records")
+                    if not isinstance(frozen_data, dict):
+                        raise ValueError("Expected a simulation object")
                     frozen = freeze_simulation(frozen_data["run_id"], frozen_data["observations"], frozen_data["frozen_at"])
+                    if live_mode:
+                        mapping = parse_identity_csv(identity_upload.getvalue())
+                        api_key = st.secrets.get("PARLAY_API_KEY", os.environ.get("PARLAY_API_KEY", ""))
+                        if not api_key:
+                            raise ValueError("PARLAY_API_KEY is not configured on the server")
+                        props_data = retrieve_market_props(frozen, sport=sport, api_key=api_key, identity_map=mapping)
+                    else:
+                        props_data = json.loads(props_upload.getvalue().decode("utf-8"))
+                    if not isinstance(props_data, list):
+                        raise ValueError("Expected a list of prop records")
                     findings = compare_frozen_to_props(frozen, props_data, min_gap=threshold / 100)
-                    st.success(f"Compared frozen run {frozen.run_id} · {len(findings)} review flags")
+                    st.success(f"Compared frozen run {frozen.run_id} · {len(props_data)} matched prop records · {len(findings)} review flags")
                     st.caption(f"Simulation fingerprint: {frozen.digest}")
                     if findings:
                         st.dataframe(findings, use_container_width=True)
