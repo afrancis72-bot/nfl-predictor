@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from itertools import combinations
 from math import isfinite
 from ai2_nfl_lineup import check_classic_lineup
+from ai2_nfl_matchups import canonical_team
 
 @dataclass(frozen=True)
 class Feasibility:
@@ -40,7 +41,7 @@ def find_classic_lineup(rows, *, salary_floor=47500, salary_cap=50000, max_check
     examined = 0
     for qb in pools["QB"]:
         for dst in pools["DST"]:
-            if qb.get("opponent") and str(qb["opponent"]).upper() == str(dst["TeamAbbrev"]).upper():
+            if not qb.get("opponent") or canonical_team(qb["opponent"]) == canonical_team(dst["TeamAbbrev"]):
                 continue
             for rbs in combinations(pools["RB"], 2):
                 if str(rbs[0]["TeamAbbrev"]).upper() == str(rbs[1]["TeamAbbrev"]).upper():
