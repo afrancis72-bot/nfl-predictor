@@ -30,6 +30,8 @@ def eligible_nfl_rows(rows):
             continue
         if not str(row.get("TeamAbbrev", "")).strip():
             continue
+        if str(row.get("Position", "")).upper() == "QB" and not row.get("opponent"):
+            continue
         seen.add(identifier)
         result.append(row)
     return result
