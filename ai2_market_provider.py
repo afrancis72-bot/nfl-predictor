@@ -8,6 +8,7 @@ import json
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from ai2_market_challenge import FrozenSimulation, SPORT_KEYS
+from ai2_market_pages import fetch_complete_props
 
 BASE_URL = "https://parlay-api.com"
 MARKETS = {
@@ -41,14 +42,17 @@ def retrieve_market_props(frozen, *, sport, api_key, identity_map,
     url = f"{BASE_URL}/v1/sports/{SPORT_KEYS[sport]}/props?{query}"
     headers = {"X-API-Key": str(api_key), "Accept": "application/json"}
     if fetcher is None:
-        def fetcher(url, headers):
-            with urlopen(Request(url, headers=headers), timeout=12) as response:
-                return json.loads(response.read(5_000_001).decode("utf-8"))
-    data = fetcher(url, headers)
-    if not isinstance(data, list):
-        raise ValueError("Unexpected props response; cannot establish completeness")
-    if len(data) >= max_rows:
-        raise ValueError("Prop board may be truncated; narrow query or paginate")
+        data = fetch_complete_props(SPORT_KEYS[sport], MARKETS[sport], str(api_key),
+                                    page_size=min(max_rows, 1000), max_pages=10)
+        if len(data) > max_rows:
+            raise ValueError("Complete prop board exceeds configured row limit")
+    else:
+        # Legacy injected fixtures are bounded, not proof of provider completeness.
+        data = fetcher(url, headers)
+        if not isinstance(data, list):
+            raise ValueError("Unexpected props response; cannot establish completeness")
+        if len(data) >= max_rows:
+            raise ValueError("Prop board may be truncated; narrow query or paginate")
     fetched_at = datetime.now(timezone.utc).isoformat()
     if datetime.fromisoformat(fetched_at) < datetime.fromisoformat(frozen.frozen_at.replace("Z", "+00:00")):
         raise ValueError("Simulation freeze timestamp is in the future")
