@@ -57,4 +57,9 @@ def validate_pool(rows: Sequence[Mapping], *, source_fresh: bool,
         eligible += 1
     if eligible < 9:
         reasons.append(f"Only {eligible} verified players; minimum 9 required for NFL Classic")
+    for position, minimum in (("QB", 1), ("RB", 2), ("WR", 3), ("TE", 1), ("DST", 1)):
+        if positions[position] < minimum:
+            reasons.append(f"Insufficient verified {position} players")
+    if sum(positions[p] for p in ("RB", "WR", "TE")) < 7:
+        reasons.append("Insufficient verified RB/WR/TE players for FLEX")
     return Preflight(not reasons, tuple(reasons), eligible)
