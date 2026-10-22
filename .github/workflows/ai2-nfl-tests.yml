@@ -1,0 +1,24 @@
+name: AI2 NFL safety tests
+
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'ai2_nfl_*.py'
+      - 'tests/test_ai2_nfl*.py'
+      - '.github/workflows/ai2-nfl-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  nfl-safety:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run isolated NFL safety tests
+        run: python -m unittest discover -s tests -p 'test_ai2_nfl*.py' -v
