@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import streamlit as st
 from ai2_settings import load_setting, save_setting
+from ai2_nfl_preflight import validate_pool
 
 SPORTS = {
     "PGA": {"icon": "⛳", "description": "Classic · Showdown · 3-ball matchups"},
@@ -143,4 +144,16 @@ else:
         st.info("Saved portfolios, bets and post-event audits will appear here.")
     with tab_health:
         st.error("Engine status: NOT CONNECTED")
+        if sport == "NFL":
+            st.subheader("NFL quality gate (diagnostic only)")
+            st.caption("Fail-closed policy: legacy DK PPG fallbacks and unverified roles cannot pass. No simulation or export is enabled.")
+            saved_salaries = get_upload("NFL", "DraftKings salaries")
+            if saved_salaries:
+                st.info("A salary slate is saved, but salaries alone do not establish current-week projections or opportunity.")
+            else:
+                st.warning("No NFL salary slate saved.")
+            check = validate_pool([], source_fresh=False, historical_validation_passed=False)
+            st.write(f"Verified eligible players: {check.eligible_count}")
+            for reason in check.reasons:
+                st.write("• " + reason)
         st.write("Release policy: no real-money export until data freshness, role/opportunity checks, lineup legality, and historical validation pass.")
