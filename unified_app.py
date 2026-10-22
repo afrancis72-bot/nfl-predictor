@@ -14,6 +14,8 @@ import streamlit as st
 from ai2_settings import load_setting, save_setting
 from ai2_nfl_preflight import validate_pool
 from ai2_nfl_inputs import inspect_saved_nfl_inputs
+from ai2_nfl_eligibility import eligible_nfl_rows
+from ai2_nfl_feasibility import find_classic_lineup
 
 SPORTS = {
     "PGA": {"icon": "⛳", "description": "Classic · Showdown · 3-ball matchups"},
