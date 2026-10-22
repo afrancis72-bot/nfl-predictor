@@ -153,7 +153,7 @@ else:
         if sport not in ("NFL", "NBA"):
             st.info("Player-prop comparisons are currently planned for NFL and NBA.")
         else:
-            st.info("Research preview: load frozen simulation JSON and a separate post-freeze props JSON. Live provider integration is not yet certified.")
+            st.info("Research preview: load a frozen simulation JSON with its SHA-256 digest, then compare post-freeze props. Live provider integration is not yet certified.")
             frozen_upload = st.file_uploader("Frozen simulation JSON", type=["json"], key=f"market_frozen_{sport}")
             props_upload = st.file_uploader("Post-freeze market props JSON", type=["json"], key=f"market_props_{sport}")
             identity_upload = st.file_uploader("Verified athlete identity map (optional CSV)", type=["csv"], key=f"market_ids_{sport}")
@@ -175,6 +175,9 @@ else:
                     if not isinstance(frozen_data, dict):
                         raise ValueError("Expected a simulation object")
                     frozen = freeze_simulation(frozen_data["run_id"], frozen_data["observations"], frozen_data["frozen_at"])
+                    supplied_digest = frozen_data.get("digest")
+                    if not supplied_digest or supplied_digest != frozen.digest:
+                        raise ValueError("A matching frozen simulation digest is required; arbitrary uploaded samples cannot be treated as a verified freeze")
                     if live_mode:
                         mapping = parse_identity_csv(identity_upload.getvalue())
                         api_key = os.environ.get("PARLAY_API_KEY", "")
