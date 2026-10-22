@@ -5,6 +5,8 @@ Persistent uploads use SQLite on a durable volume configured by AI2_DATA_DIR.
 This prototype does not claim any of the sport engines are validated.
 """
 import os
+import base64
+import html
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,18 +57,34 @@ st.markdown("""<style>
 div[data-testid="stButton"] button {min-height: 3rem;}
 </style>""", unsafe_allow_html=True)
 if "sport" not in st.session_state:
-    st.session_state.sport = None
+    requested = str(st.query_params.get("sport", "")).upper()
+    st.session_state.sport = requested if requested in SPORTS else None
 
 def go_home():
     st.session_state.sport = None
+    if "sport" in st.query_params:
+        del st.query_params["sport"]
 
 if st.session_state.sport is None:
     st.title("TEAM AI² PRO")
     logo = Path(__file__).parent / "assets" / "team_ai2_sports_emblem.png"
     if logo.exists():
-        a,b,c = st.columns([1,2,1])
-        with b:
-            st.image(str(logo), use_container_width=True)
+        encoded = base64.b64encode(logo.read_bytes()).decode("ascii")
+        # The links cover the actual four sport quadrants, while retaining
+        # the original logo artwork untouched. The buttons below remain an
+        # accessible, mobile-friendly alternative.
+        st.markdown(f"""<div style="position:relative;max-width:640px;margin:auto">
+          <img src="data:image/png;base64,{encoded}" alt="TEAM AI² Pro four-sport emblem"
+               style="width:100%;height:auto;display:block">
+          <a href="?sport=PGA" target="_self" aria-label="Open PGA"
+             title="PGA" style="position:absolute;left:0;top:0;width:50%;height:50%"></a>
+          <a href="?sport=NFL" target="_self" aria-label="Open NFL"
+             title="NFL" style="position:absolute;left:50%;top:0;width:50%;height:50%"></a>
+          <a href="?sport=NASCAR" target="_self" aria-label="Open NASCAR"
+             title="NASCAR" style="position:absolute;left:0;top:50%;width:50%;height:50%"></a>
+          <a href="?sport=NBA" target="_self" aria-label="Open NBA"
+             title="NBA" style="position:absolute;left:50%;top:50%;width:50%;height:50%"></a>
+        </div>""", unsafe_allow_html=True)
     else:
         st.warning("The existing TEAM AI² logo asset is missing.")
     st.caption("Select a sport. Your saved slate remains until you replace it.")
@@ -76,6 +94,7 @@ if st.session_state.sport is None:
         with col:
             if st.button(f"{meta['icon']} {sport}", key=f"open_{sport}", use_container_width=True):
                 st.session_state.sport = sport
+                st.query_params["sport"] = sport
                 st.rerun()
             st.caption(meta["description"])
 else:
