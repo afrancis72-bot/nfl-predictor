@@ -60,9 +60,10 @@ def inspect_saved_nfl_inputs(salaries, projections):
     merged = []
     for row in projection_rows:
         base = by_id[str(row["ID"]).strip()]
-        merged.append({**row, **{k: base.get(k) for k in ("Name", "Position", "TeamAbbrev", "Salary", "Status")},
+        merged.append({**row, **{k: base.get(k) for k in ("Name", "Position", "TeamAbbrev", "Salary", "Status", "Game Info")},
                        "dk_status": base.get("Status", "")})
     for row in merged:
+        row["opponent"] = opponent_from_game_info(row.get("TeamAbbrev"), row.get("Game Info"))
         row['weekly_projection_valid'] = verified_flag(row.get('weekly_projection_valid'))
         row['opportunity_verified'] = verified_flag(row.get('opportunity_verified'))
     return merged, []
