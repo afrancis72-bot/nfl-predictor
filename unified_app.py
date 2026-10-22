@@ -177,7 +177,12 @@ else:
                     frozen = freeze_simulation(frozen_data["run_id"], frozen_data["observations"], frozen_data["frozen_at"])
                     if live_mode:
                         mapping = parse_identity_csv(identity_upload.getvalue())
-                        api_key = st.secrets.get("PARLAY_API_KEY", os.environ.get("PARLAY_API_KEY", ""))
+                        api_key = os.environ.get("PARLAY_API_KEY", "")
+                        if not api_key:
+                            try:
+                                api_key = st.secrets.get("PARLAY_API_KEY", "")
+                            except FileNotFoundError:
+                                api_key = ""
                         if not api_key:
                             raise ValueError("PARLAY_API_KEY is not configured on the server")
                         props_data = retrieve_market_props(frozen, sport=sport, api_key=api_key, identity_map=mapping)
@@ -194,7 +199,7 @@ else:
                                            file_name=f"{sport.lower()}_market_review.json", mime="application/json")
                     else:
                         st.info("No qualifying discrepancies. Confirm player IDs, periods, timestamps and quote freshness if matches were expected.")
-                except (ValueError, KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                except (ValueError, KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError, OSError) as exc:
                     st.error(f"Comparison blocked: {exc}")
     with tab_results:
         st.info("Saved portfolios, bets and post-event audits will appear here.")
