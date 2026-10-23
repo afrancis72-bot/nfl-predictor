@@ -142,6 +142,73 @@ def make_rates(history, target_season, target_week, window=8, prior_seasons=1):
         rows.append(row)
     return pd.DataFrame(rows)
 
+def dk_classic_points(stats):
+    """DraftKings NFL Classic offensive scoring from observed box-score stats.
+
+    No DST, fumbles lost or return TD scoring: those fields are not part of
+    the canonical weekly input mapping and must not be silently assumed zero.
+    This is a partial offensive score, not a certified total DK score.
+    """
+    def num(field):
+        value = stats.get(field, np.nan)
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return np.nan
+        return value if np.isfinite(value) else np.nan
+
+    fields = ('passing_yards', 'passing_tds', 'interceptions',
+              'rushing_yards', 'rushing_tds', 'receiving_yards',
+              'receptions', 'receiving_tds')
+    vals = {field: num(field) for field in fields}
+    # Zero only if the underlying provider explicitly reports a zero.
+    if any(not np.isfinite(value) for value in vals.values()):
+        return np.nan
+    v = vals
+    return (0.04 * v['passing_yards'] + 4 * v['passing_tds']
+            - v['interceptions'] + 0.1 * v['rushing_yards']
+            + 6 * v['rushing_tds'] + 0.1 * v['receiving_yards']
+            + v['receptions'] + 6 * v['receiving_tds']
+            + (3 if v['passing_yards'] >= 300 else 0)
+            + (3 if v['rushing_yards'] >= 100 else 0)
+            + (3 if v['receiving_yards'] >= 100 else 0))
+
+
+def walkforward_dk_offense(history, season, first_week=4, last_week=18, window=8):
+    """Pregame partial-DK-point baseline vs subsequent observed offensive stats.
+
+    Bonus thresholds are applied to mean-stat predictions as a naive baseline,
+    not as expected-value probabilities. Missing score inputs are skipped.
+    """
+    h = clean_weekly(history)
+    out = []
+    for week in range(int(first_week), int(last_week) + 1):
+        actual = h[(h.season == int(season)) & (h.week == week)]
+        if actual.empty:
+            continue
+        try:
+            rates = make_rates(h, season, week, window=window)
+        except ValueError:
+            continue
+        for _, row in rates.iterrows():
+            observed = actual[(actual.player_name == row.player)
+                              & (actual.recent_team == row.team)]
+            if len(observed) != 1:
+                continue
+            predicted_stats = {src: row[dest] for dest, src in COUNT_COLS.items()}
+            pred = dk_classic_points(predicted_stats)
+            truth = dk_classic_points(observed.iloc[0])
+            if np.isfinite(pred) and np.isfinite(truth):
+                out.append({'season': int(season), 'week': week,
+                            'player': row.player, 'team': row.team,
+                            'position': row.position,
+                            'predicted_partial_dk': float(pred),
+                            'actual_partial_dk': float(truth),
+                            'error': float(pred - truth),
+                            'absolute_error': float(abs(pred - truth))})
+    return pd.DataFrame(out)
+
+
 def walkforward(history, season, first_week=4, last_week=18, window=8):
     """Baseline backtest, not simulation calibration: pregame weighted means vs actual stats."""
     h=clean_weekly(history)
