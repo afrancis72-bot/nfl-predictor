@@ -225,6 +225,11 @@ else:
                 with st.expander("Fetch public NFL historical rates", expanded=False):
                     history_season = st.number_input("Target season", min_value=2020, max_value=2030, value=2026, step=1, key="nfl_history_season")
                     history_week = st.number_input("Target week", min_value=1, max_value=22, value=7, step=1, key="nfl_history_week")
+                    # Never silently reuse an earlier week when the controls change.
+                    requested_history_key = (int(history_season), int(history_week))
+                    if st.session_state.get("nfl_public_rates_key") != requested_history_key:
+                        st.session_state.pop("nfl_public_rates", None)
+                        st.session_state.pop("nfl_public_rates_meta", None)
                     if st.button("Fetch and build historical rates", key="nfl_fetch_rates"):
                         try:
                             from props_data import fetch_weekly, make_rates
@@ -235,6 +240,7 @@ else:
                             if rate_frame.empty:
                                 raise ValueError("No observed player histories returned")
                             st.session_state["nfl_public_rates"] = rate_frame
+                            st.session_state["nfl_public_rates_key"] = requested_history_key
                             st.session_state["nfl_public_rates_meta"] = {
                                 "target": f"{history_season} Week {history_week}",
                                 "fetched_utc": datetime.now(timezone.utc).isoformat(),
@@ -242,11 +248,13 @@ else:
                             }
                         except (ValueError, KeyError, OSError, ImportError, pd.errors.ParserError) as exc:
                             st.session_state.pop("nfl_public_rates", None)
+                            st.session_state.pop("nfl_public_rates_meta", None)
                             st.error(f"Public data retrieval failed: {exc}")
                     if "nfl_public_rates" in st.session_state:
                         meta = st.session_state["nfl_public_rates_meta"]
                         st.success(f"Fetched {meta['players']} player baselines for {meta['target']} at {meta['fetched_utc']}")
                         st.caption("Source: nflverse stats_player public release; excludes target week and later. This is historical data, not certified projections.")
+                        st.caption("Changing the target season or week invalidates previously fetched rates.")
                         st.download_button("Download observed rates CSV",
                                            st.session_state["nfl_public_rates"].to_csv(index=False).encode("utf-8"),
                                            file_name="nfl_observed_rates.csv", mime="text/csv")
