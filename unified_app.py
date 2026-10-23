@@ -181,7 +181,10 @@ else:
                 save_upload(sport,kind,upload)
                 if sport == "NFL" and kind in ("DraftKings salaries", "Projections"):
                     st.session_state.pop("nfl_candidates", None)
-                st.success("File saved. Previous NFL candidate results were cleared if the slate changed.")
+                    st.session_state.pop("nfl_sim_ranked_candidates", None)
+                    st.session_state.pop("nfl_research_draws", None)
+                    st.session_state.pop("nfl_research_players", None)
+                    st.success("File saved. Previous NFL candidate results were cleared if the slate changed.")
                 st.rerun()
             except (OSError,sqlite3.Error,ValueError) as exc:
                 st.error(f"Could not save file: {exc}")
