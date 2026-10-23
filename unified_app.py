@@ -144,16 +144,7 @@ if st.session_state.sport is None:
         </div>""", unsafe_allow_html=True)
     else:
         st.warning("The existing TEAM AI² logo asset is missing.")
-    st.caption("Select a sport. Your saved slate remains until you replace it.")
-    # Accessible navigation buttons; clickable image quadrants can be added later.
-    cols = st.columns(4)
-    for col,(sport,meta) in zip(cols,SPORTS.items()):
-        with col:
-            if st.button(f"{meta['icon']} {sport}", key=f"open_{sport}", use_container_width=True):
-                st.session_state.sport = sport
-                st.query_params["sport"] = sport
-                st.rerun()
-            st.caption(meta["description"])
+    st.caption("Click a sport panel above to enter. Your saved slate remains until you replace it.")
 else:
     sport = st.session_state.sport
     if st.button("← All sports"):
