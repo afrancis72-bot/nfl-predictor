@@ -142,29 +142,42 @@ def make_rates(history, target_season, target_week, window=8, prior_seasons=1):
         rows.append(row)
     return pd.DataFrame(rows)
 
-def dk_classic_points(stats):
-    """DraftKings NFL Classic offensive scoring from observed box-score stats.
+def dk_classic_points(stats, position=None):
+    """Partial DraftKings Classic offensive score with position-aware data.
 
-    No DST, fumbles lost or return TD scoring: those fields are not part of
-    the canonical weekly input mapping and must not be silently assumed zero.
-    This is a partial offensive score, not a certified total DK score.
+    NFL weekly feeds may omit non-applicable stats entirely. Required stats
+    are position-specific; missing applicable data must not become zero.
+    Does not include fumbles lost or return touchdowns.
     """
-    def num(field):
-        value = stats.get(field, np.nan)
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            return np.nan
-        return value if np.isfinite(value) else np.nan
-
+    pos = str(position or stats.get('position', '')).upper()
+    applicable = {
+        'QB': ('passing_yards', 'passing_tds', 'interceptions',
+               'rushing_yards', 'rushing_tds'),
+        'RB': ('rushing_yards', 'rushing_tds', 'receiving_yards',
+               'receptions', 'receiving_tds'),
+        'WR': ('rushing_yards', 'rushing_tds', 'receiving_yards',
+               'receptions', 'receiving_tds'),
+        'TE': ('rushing_yards', 'rushing_tds', 'receiving_yards',
+               'receptions', 'receiving_tds'),
+    }
+    if pos not in applicable:
+        return np.nan
     fields = ('passing_yards', 'passing_tds', 'interceptions',
               'rushing_yards', 'rushing_tds', 'receiving_yards',
               'receptions', 'receiving_tds')
-    vals = {field: num(field) for field in fields}
-    # Zero only if the underlying provider explicitly reports a zero.
-    if any(not np.isfinite(value) for value in vals.values()):
-        return np.nan
-    v = vals
+    values = {}
+    for field in fields:
+        if field not in applicable[pos]:
+            values[field] = 0.
+            continue
+        try:
+            value = float(stats.get(field, np.nan))
+        except (TypeError, ValueError):
+            return np.nan
+        if not np.isfinite(value):
+            return np.nan
+        values[field] = value
+    v = values
     return (0.04 * v['passing_yards'] + 4 * v['passing_tds']
             - v['interceptions'] + 0.1 * v['rushing_yards']
             + 6 * v['rushing_tds'] + 0.1 * v['receiving_yards']
@@ -196,8 +209,8 @@ def walkforward_dk_offense(history, season, first_week=4, last_week=18, window=8
             if len(observed) != 1:
                 continue
             predicted_stats = {src: row[dest] for dest, src in COUNT_COLS.items()}
-            pred = dk_classic_points(predicted_stats)
-            truth = dk_classic_points(observed.iloc[0])
+            pred = dk_classic_points(predicted_stats, row.position)
+            truth = dk_classic_points(observed.iloc[0], row.position)
             if np.isfinite(pred) and np.isfinite(truth):
                 out.append({'season': int(season), 'week': week,
                             'player': row.player, 'team': row.team,
