@@ -42,8 +42,26 @@ def prepare_real_slate_preview(salary_rows, history, season=2026, week=7):
             continue
         # Remove near-zero-volume historical skill players BEFORE the engine
         # allocates team touchdowns. These are not credible DFS candidates.
-        if pos in {"RB", "WR", "TE"} and historical < 1.0:
-            continue
+        if pos in {"RB", "WR", "TE"}:
+            # A positive partial fantasy score can still come almost entirely
+            # from rare touchdowns. Require observed non-TD football volume.
+            observed = rates[
+                rates["player"].astype(str).str.lower().str.replace(r"[^a-z0-9]", "", regex=True)
+                .eq(str(row["Name"]).lower().replace(" ", "").replace(".", "").replace("'", "").replace("-", ""))
+                & rates["team"].map(canonical_team).eq(team)
+                & rates["position"].astype(str).str.upper().eq(pos)
+            ]
+            if len(observed) != 1:
+                continue
+            obs = observed.iloc[0]
+            carries = float(pd.to_numeric(obs.get("carries_pg"), errors="coerce") or 0)
+            targets = float(pd.to_numeric(obs.get("targets_pg"), errors="coerce") or 0)
+            if not np.isfinite(carries):
+                carries = 0.0
+            if not np.isfinite(targets):
+                targets = 0.0
+            if historical < 1.0 or (carries + targets) < 1.0:
+                continue
         pool.append(dict(ID=str(row["ID"]), Name=str(row["Name"]), Position=pos,
                          TeamAbbrev=team, Salary=salary, game=game,
                          opponent=opponent, proj=historical,
