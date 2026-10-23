@@ -27,7 +27,10 @@ def audit_historical_slates(slates):
         seen.add(key)
         if item.get("frozen_before_kickoff") is not True:
             raise ValueError(f"Slate {key} lacks explicit pregame freeze attestation")
-        diagnostics = distribution_diagnostics(item["players"], item["draws"], item["actuals"])
+        try:
+            diagnostics = distribution_diagnostics(item["players"], item["draws"], item["actuals"])
+        except KeyError as exc:
+            raise ValueError(f"Slate {key} missing required simulation data: {exc}") from exc
         diagnostics.insert(0, "slate_id", key)
         all_rows.append(diagnostics)
     combined = pd.concat(all_rows, ignore_index=True)
