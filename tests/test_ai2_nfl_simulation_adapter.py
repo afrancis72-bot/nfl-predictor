@@ -65,6 +65,24 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "integer"):
             run_verified_stat_simulation(pool(), rates(), n_sims=10000.5)
 
+    def test_non_numeric_historical_rate_blocks(self):
+        r = rates()
+        r.loc[0, "pass_attempts_pg"] = "unknown"
+        with self.assertRaisesRegex(ValueError, "Invalid historical opportunity"):
+            run_verified_stat_simulation(pool(), r)
+
+    def test_missing_historical_games_blocks(self):
+        r = rates()
+        r.loc[0, "games_played"] = 0
+        with self.assertRaisesRegex(ValueError, "games_played"):
+            run_verified_stat_simulation(pool(), r)
+
+    def test_blank_source_blocks(self):
+        r = rates()
+        r.loc[0, "source"] = ""
+        with self.assertRaisesRegex(ValueError, "nonempty"):
+            run_verified_stat_simulation(pool(), r)
+
     def test_missing_matchup_blocks(self):
         p = pool()
         p.loc[0, "game"] = ""
