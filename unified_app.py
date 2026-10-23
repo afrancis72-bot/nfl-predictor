@@ -255,6 +255,7 @@ else:
                     matched = int(result["match_status"].eq("matched").sum())
                     st.session_state["nfl_auto_baselines_csv"] = result.to_csv(index=False)
                     st.session_state["nfl_auto_baselines_summary"] = (matched, len(result))
+                    st.session_state["nfl_auto_baselines_reasons"] = result["readiness_reason"].value_counts().to_dict()
                     st.session_state["nfl_public_history"] = history
                     from props_data import make_rates
                     st.session_state["nfl_public_rates"] = make_rates(history, 2026, 7)
@@ -274,7 +275,10 @@ else:
                     st.session_state["nfl_auto_baselines_csv"],
                     file_name="nfl_week7_historical_baselines_review.csv",
                     mime="text/csv", key="nfl_auto_baselines_download")
-                st.warning("These are historical partial-score baselines, not verified weekly projections. No player is automatically certified for lineup export.")
+                st.caption("Unresolved reasons across the complete DraftKings salary pool:")
+                for reason, count in st.session_state.get("nfl_auto_baselines_reasons", {}).items():
+                    st.write(f"• {count} — {reason}")
+                st.warning("Provisional projections are calculated from historical football statistics, not DK fantasy-point averages. They are NOT independently verified current-week projections; DST and player roles still require additional modeling and checks. No lineup export is authorized.")
             st.divider()
             st.subheader("Run Week 7 football-stat simulations")
             st.caption("Uses saved DraftKings salaries, independently verified weekly projections, and observed historical player rates. Simulates football statistics before DraftKings scoring; no sportsbook inputs.")
