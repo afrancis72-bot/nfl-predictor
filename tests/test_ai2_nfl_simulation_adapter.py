@@ -71,6 +71,20 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid historical opportunity"):
             run_verified_stat_simulation(pool(), r)
 
+    def test_inapplicable_opportunity_nulls_are_allowed(self):
+        r = rates()
+        r.loc[1, "pass_attempts_pg"] = float("nan")
+        with patch("ai2_nfl_simulation_adapter.simulate_stat_driven_dfs",
+                   return_value=("players", "points", "stats")) as engine:
+            run_verified_stat_simulation(pool(), r)
+        engine.assert_called_once()
+
+    def test_missing_applicable_targets_blocks(self):
+        r = rates()
+        r.loc[1, "targets_pg"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "targets_pg"):
+            run_verified_stat_simulation(pool(), r)
+
     def test_missing_historical_games_blocks(self):
         r = rates()
         r.loc[0, "games_played"] = 0
