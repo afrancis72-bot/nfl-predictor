@@ -270,6 +270,15 @@ else:
                     except (ValueError, KeyError, TypeError) as injury_exc:
                         st.session_state.pop("nfl_injury_opportunity_audit_csv", None)
                         st.session_state["nfl_injury_opportunity_error"] = str(injury_exc)
+                    try:
+                        from ai2_nfl_dst_diagnostics import historical_dst_indicators, attach_dst_indicators
+                        dst_indicators = historical_dst_indicators(history, 2026, 7)
+                        result = attach_dst_indicators(result, dst_indicators)
+                        st.session_state["nfl_dst_indicators_csv"] = dst_indicators.to_csv(index=False)
+                        st.session_state.pop("nfl_dst_indicators_error", None)
+                    except (ValueError, KeyError, TypeError) as dst_exc:
+                        st.session_state.pop("nfl_dst_indicators_csv", None)
+                        st.session_state["nfl_dst_indicators_error"] = str(dst_exc)
                     matched = int(result["match_status"].eq("matched").sum())
                     st.session_state["nfl_auto_baselines_csv"] = result.to_csv(index=False)
                     st.session_state["nfl_auto_baselines_summary"] = (matched, len(result))
@@ -347,6 +356,15 @@ else:
                     st.caption("Adjusted carries and targets appear in the baseline review CSV. They reflect DraftKings OUT/IR designations, not independently confirmed official injuries; no player is certified.")
                 elif st.session_state.get("nfl_injury_opportunity_error"):
                     st.caption("Injury opportunity diagnostic unavailable: " + st.session_state["nfl_injury_opportunity_error"])
+                if st.session_state.get("nfl_dst_indicators_csv"):
+                    st.download_button(
+                        "Download historical DST opponent indicators",
+                        st.session_state["nfl_dst_indicators_csv"],
+                        file_name="nfl_week7_dst_indicators.csv",
+                        mime="text/csv", key="nfl_dst_indicators_download")
+                    st.caption("DST indicators include opponent passing interceptions and offensive TDs; sacks, fumble recoveries, return TDs, and official points allowed are not yet covered. No DST is marked verified.")
+                elif st.session_state.get("nfl_dst_indicators_error"):
+                    st.caption("DST historical indicators unavailable: " + st.session_state["nfl_dst_indicators_error"])
                 st.caption("Unresolved reasons across the complete DraftKings salary pool:")
                 for reason, count in st.session_state.get("nfl_auto_baselines_reasons", {}).items():
                     st.write(f"• {count} — {reason}")
