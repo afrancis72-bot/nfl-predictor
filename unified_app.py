@@ -104,23 +104,39 @@ def go_home():
 
 if st.session_state.sport is None:
     st.title("TEAM AI² PRO")
+    # New wide photo dashboard is preferred when installed; keep the
+    # original four-sport emblem as a safe fallback.
+    banner = Path(__file__).parent / "assets" / "team_ai2_sports_dashboard.jpg"
     logo = Path(__file__).parent / "assets" / "team_ai2_sports_emblem.png"
-    if logo.exists():
+    if banner.exists():
+        encoded = base64.b64encode(banner.read_bytes()).decode("ascii")
+        # Image order is NFL, PGA, NASCAR, NBA, left to right.
+        # The top brand masthead is not clickable; sport panels are.
+        st.markdown(f"""<div style="position:relative;max-width:1100px;margin:auto">
+          <img src="data:image/jpeg;base64,{encoded}" alt="TEAM AI² Pro photo dashboard: NFL, PGA, NASCAR and NBA"
+               style="width:100%;height:auto;display:block">
+          <a href="?sport=NFL" target="_self" aria-label="Open NFL"
+             style="position:absolute;left:0%;top:25%;width:25%;height:75%"></a>
+          <a href="?sport=PGA" target="_self" aria-label="Open PGA"
+             style="position:absolute;left:25%;top:25%;width:25%;height:75%"></a>
+          <a href="?sport=NASCAR" target="_self" aria-label="Open NASCAR"
+             style="position:absolute;left:50%;top:25%;width:25%;height:75%"></a>
+          <a href="?sport=NBA" target="_self" aria-label="Open NBA"
+             style="position:absolute;left:75%;top:25%;width:25%;height:75%"></a>
+        </div>""", unsafe_allow_html=True)
+    elif logo.exists():
         encoded = base64.b64encode(logo.read_bytes()).decode("ascii")
-        # The links cover the actual four sport quadrants, while retaining
-        # the original logo artwork untouched. The buttons below remain an
-        # accessible, mobile-friendly alternative.
         st.markdown(f"""<div style="position:relative;max-width:640px;margin:auto">
           <img src="data:image/png;base64,{encoded}" alt="TEAM AI² Pro four-sport emblem"
                style="width:100%;height:auto;display:block">
           <a href="?sport=PGA" target="_self" aria-label="Open PGA"
-             title="PGA" style="position:absolute;left:0;top:0;width:50%;height:50%"></a>
+             style="position:absolute;left:0;top:0;width:50%;height:50%"></a>
           <a href="?sport=NFL" target="_self" aria-label="Open NFL"
-             title="NFL" style="position:absolute;left:50%;top:0;width:50%;height:50%"></a>
+             style="position:absolute;left:50%;top:0;width:50%;height:50%"></a>
           <a href="?sport=NASCAR" target="_self" aria-label="Open NASCAR"
-             title="NASCAR" style="position:absolute;left:0;top:50%;width:50%;height:50%"></a>
+             style="position:absolute;left:0;top:50%;width:50%;height:50%"></a>
           <a href="?sport=NBA" target="_self" aria-label="Open NBA"
-             title="NBA" style="position:absolute;left:50%;top:50%;width:50%;height:50%"></a>
+             style="position:absolute;left:50%;top:50%;width:50%;height:50%"></a>
         </div>""", unsafe_allow_html=True)
     else:
         st.warning("The existing TEAM AI² logo asset is missing.")
