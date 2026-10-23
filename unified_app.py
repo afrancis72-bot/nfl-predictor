@@ -256,6 +256,19 @@ else:
                     st.session_state["nfl_auto_baselines_csv"] = result.to_csv(index=False)
                     st.session_state["nfl_auto_baselines_summary"] = (matched, len(result))
                     st.session_state["nfl_auto_baselines_reasons"] = result["readiness_reason"].value_counts().to_dict()
+                    # Walk-forward uses only games before each evaluated week;
+                    # never treat these diagnostics as future-week certification.
+                    from props_data import walkforward_dk_offense
+                    backtest = walkforward_dk_offense(history, 2026, first_week=4, last_week=6)
+                    st.session_state["nfl_auto_baselines_backtest_csv"] = backtest.to_csv(index=False)
+                    if backtest.empty:
+                        st.session_state["nfl_auto_baselines_backtest_summary"] = None
+                    else:
+                        st.session_state["nfl_auto_baselines_backtest_summary"] = {
+                            "observations": len(backtest),
+                            "mae": float(backtest["absolute_error"].mean()),
+                            "bias": float(backtest["error"].mean()),
+                        }
                     st.session_state["nfl_public_history"] = history
                     from props_data import make_rates
                     st.session_state["nfl_public_rates"] = make_rates(history, 2026, 7)
@@ -275,6 +288,22 @@ else:
                     st.session_state["nfl_auto_baselines_csv"],
                     file_name="nfl_week7_historical_baselines_review.csv",
                     mime="text/csv", key="nfl_auto_baselines_download")
+                diagnostics = st.session_state.get("nfl_auto_baselines_backtest_summary")
+                if diagnostics:
+                    st.info(
+                        f"Historical walk-forward check (2026 Weeks 4–6): "
+                        f"{diagnostics['observations']} player-week comparisons · "
+                        f"mean absolute error {diagnostics['mae']:.2f} partial DK points · "
+                        f"average prediction minus actual {diagnostics['bias']:+.2f}. "
+                        "This evaluates the naive historical baseline, not the full weekly simulator."
+                    )
+                    st.download_button(
+                        "Download historical backtest audit CSV",
+                        st.session_state["nfl_auto_baselines_backtest_csv"],
+                        file_name="nfl_week7_historical_walkforward_audit.csv",
+                        mime="text/csv", key="nfl_auto_baselines_backtest_download")
+                else:
+                    st.caption("Historical walk-forward validation has no complete observations for Weeks 4–6.")
                 st.caption("Unresolved reasons across the complete DraftKings salary pool:")
                 for reason, count in st.session_state.get("nfl_auto_baselines_reasons", {}).items():
                     st.write(f"• {count} — {reason}")
