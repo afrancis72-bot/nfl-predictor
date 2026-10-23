@@ -385,7 +385,26 @@ else:
                         raise ValueError("Save both DraftKings salaries and independently verified weekly projections in My Slate first.")
                     rates = st.session_state.get("nfl_public_rates")
                     if rates is None or rates.empty:
-                        raise ValueError("Fetch observed historical rates in Advanced research tools below first. Historical rates alone do not verify current-week opportunity.")
+                        # A Streamlit reboot clears session state. Restore historical
+                        # rates from the public source when a verified slate is run,
+                        # rather than forcing a separate research-button click.
+                        from props_data import fetch_weekly, make_rates
+                        history = fetch_weekly([2025, 2026])
+                        rates = make_rates(history, 2026, 7)
+                        if rates.empty:
+                            raise ValueError("No pregame historical player rates were available.")
+                        st.session_state["nfl_public_rates"] = rates
+                        st.session_state["nfl_public_rates_key"] = (2026, 7)
+                        st.session_state["nfl_public_rates_meta"] = {
+                            "source": "nflverse weekly stats",
+                            "target_season": 2026,
+                            "target_week": 7,
+                            "latest_observed_season": int(rates["latest_observed_season"].max()),
+                            "latest_observed_week": int(rates.loc[
+                                rates["latest_observed_season"].eq(2026),
+                                "latest_observed_week"].max()) if rates["latest_observed_season"].eq(2026).any() else None,
+                        }
+
                     rows, issues = inspect_saved_nfl_inputs(salaries, projections)
                     if issues:
                         raise ValueError("; ".join(issues))
