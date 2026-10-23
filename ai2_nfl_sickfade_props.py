@@ -17,7 +17,7 @@ STAT_NAMES = {
     "rush yards": "rushing_yards", "rush attempts": "carries",
     "receiving yards": "receiving_yards", "receptions": "receptions",
 }
-OVER = re.compile(r"\\bo\\s*(\\d+(?:\\.\\d+)?)\\s*[+\\-]\\d+", re.I)
+OVER = re.compile(r"\bo\s*(\d+(?:\.\d+)?)\s*[+\-]\d+", re.I)
 
 def parse_sickfade_html(html, *, prefer="Hard Rock"):
     soup = BeautifulSoup(html, "html.parser")
