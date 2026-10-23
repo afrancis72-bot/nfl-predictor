@@ -343,6 +343,12 @@ else:
                             st.caption("Partial DraftKings offensive scoring only: no fumbles lost, return TDs or DST. Mean-stat bonus thresholds are a baseline, not simulation expectations.")
                             st.metric("Partial DK offensive mean absolute error",
                                       f"{dk_rows['absolute_error'].mean():.2f} points")
+                            by_position = (dk_rows.groupby("position", as_index=False)
+                                           .agg(player_games=("absolute_error", "size"),
+                                                mean_absolute_error=("absolute_error", "mean"),
+                                                signed_bias=("error", "mean")))
+                            st.caption("Error by position; signed bias above zero means the baseline overpredicted.")
+                            st.dataframe(by_position, use_container_width=True, hide_index=True)
                             st.caption(f"Evaluated {len(dk_rows):,} historical player-games")
                             st.download_button("Download partial DK scoring audit",
                                                dk_rows.to_csv(index=False).encode("utf-8"),
