@@ -262,6 +262,7 @@ else:
                     requested_history_key = (int(history_season), int(history_week))
                     if st.session_state.get("nfl_public_rates_key") != requested_history_key:
                         st.session_state.pop("nfl_public_rates", None)
+                        st.session_state.pop("nfl_public_history", None)
                         st.session_state.pop("nfl_public_rates_meta", None)
                     if st.button("Fetch and build historical rates", key="nfl_fetch_rates"):
                         # Import pandas before the guarded fetch: the exception
@@ -275,6 +276,7 @@ else:
                             rate_frame = make_rates(history, int(history_season), int(history_week))
                             if rate_frame.empty:
                                 raise ValueError("No observed player histories returned")
+                            st.session_state["nfl_public_history"] = history.copy()
                             st.session_state["nfl_public_rates"] = rate_frame
                             st.session_state["nfl_public_rates_key"] = requested_history_key
                             st.session_state["nfl_public_rates_meta"] = {
@@ -284,6 +286,7 @@ else:
                             }
                         except (ValueError, KeyError, OSError, ImportError, pd.errors.ParserError) as exc:
                             st.session_state.pop("nfl_public_rates", None)
+                        st.session_state.pop("nfl_public_history", None)
                             st.session_state.pop("nfl_public_rates_meta", None)
                             st.error(f"Public data retrieval failed: {exc}")
                     if "nfl_public_rates" in st.session_state:
@@ -294,6 +297,38 @@ else:
                         st.download_button("Download observed rates CSV",
                                            st.session_state["nfl_public_rates"].to_csv(index=False).encode("utf-8"),
                                            file_name="nfl_observed_rates.csv", mime="text/csv")
+                with st.expander("Historical walk-forward accuracy · observed statistics", expanded=False):
+                    st.caption("Evaluate pregame weighted stat baselines against later observed games. This is NOT a DFS simulation backtest or proof of lineup profitability.")
+                    if "nfl_public_history" not in st.session_state:
+                        st.info("Fetch public historical rates above to enable this audit.")
+                    elif st.button("Run historical baseline backtest", key="nfl_backtest_baselines"):
+                        try:
+                            from props_data import walkforward
+                            import pandas as pd
+                            results = walkforward(
+                                st.session_state["nfl_public_history"],
+                                season=int(history_season),
+                                first_week=4,
+                                last_week=max(4, int(history_week) - 1),
+                                window=8,
+                            )
+                            if results.empty:
+                                st.warning("No eligible observed comparisons were available.")
+                            else:
+                                metrics = (results.groupby("stat", as_index=False)
+                                           .agg(observations=("absolute_error", "size"),
+                                                mean_absolute_error=("absolute_error", "mean"),
+                                                mean_signed_error=("error", "mean")))
+                                st.session_state["nfl_baseline_audit"] = metrics
+                                st.session_state["nfl_baseline_audit_rows"] = results
+                        except (ValueError, KeyError, TypeError) as exc:
+                            st.error(f"Historical audit unavailable: {exc}")
+                    if "nfl_baseline_audit" in st.session_state:
+                        st.dataframe(st.session_state["nfl_baseline_audit"], use_container_width=True, hide_index=True)
+                        st.download_button("Download historical comparison rows",
+                                           st.session_state["nfl_baseline_audit_rows"].to_csv(index=False).encode("utf-8"),
+                                           file_name="nfl_baseline_walkforward.csv", mime="text/csv",
+                                           key="nfl_download_baseline_audit")
                 lab_rates = st.file_uploader("Observed player-rate CSV (optional when public rates fetched)", type=["csv"], key="nfl_lab_rates")
                 lab_sims = st.selectbox("Simulation draws", [100, 1000, 10000], index=1, key="nfl_lab_sims")
                 if st.button("Run research simulation", disabled=not (lab_pool and (lab_rates or "nfl_public_rates" in st.session_state)), key="nfl_lab_run"):
