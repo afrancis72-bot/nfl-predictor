@@ -85,6 +85,24 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "targets_pg"):
             run_verified_stat_simulation(pool(), r)
 
+    def test_nonfinite_projection_blocks(self):
+        p = pool()
+        p.loc[0, "proj"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "positive finite independent projection"):
+            run_verified_stat_simulation(p, rates())
+
+    def test_invalid_salary_blocks(self):
+        p = pool()
+        p.loc[0, "Salary"] = 0
+        with self.assertRaisesRegex(ValueError, "positive finite DraftKings salary"):
+            run_verified_stat_simulation(p, rates())
+
+    def test_unsupported_position_blocks(self):
+        p = pool()
+        p.loc[0, "Position"] = "K"
+        with self.assertRaisesRegex(ValueError, "Unsupported NFL roster position"):
+            run_verified_stat_simulation(p, rates())
+
     def test_missing_historical_games_blocks(self):
         r = rates()
         r.loc[0, "games_played"] = 0
