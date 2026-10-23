@@ -60,4 +60,6 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             exposures.update(keys)
             used.add(i)
             selected_role += 1
+    if len(chosen) != count:
+        raise ValueError(f"Only {len(chosen)} of {count} lineups satisfy the exposure and roster constraints; no partial portfolio exported")
     return chosen
