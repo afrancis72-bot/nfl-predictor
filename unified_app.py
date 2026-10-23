@@ -132,7 +132,9 @@ else:
         if st.button("Save / replace file",disabled=upload is None,key=f"save_{sport}_{kind}"):
             try:
                 save_upload(sport,kind,upload)
-                st.success("File saved.")
+                if sport == "NFL" and kind in ("DraftKings salaries", "Projections"):
+                    st.session_state.pop("nfl_candidates", None)
+                st.success("File saved. Previous NFL candidate results were cleared if the slate changed.")
                 st.rerun()
             except (OSError,sqlite3.Error,ValueError) as exc:
                 st.error(f"Could not save file: {exc}")
@@ -153,8 +155,8 @@ else:
             st.subheader("NFL Classic · Sunday candidate builder")
             st.caption("Projection-ranked legal candidates, NOT correlated simulations or validated contest-ROI predictions. No sportsbook inputs.")
             st.info("First save DraftKings salaries and an independent weekly projection CSV under My Slate. Projections must contain ID, proj, projection_source, weekly_projection_valid and opportunity_verified. The two verification flags must be true and must reflect independently checked data.")
-            lineup_count = st.slider("Candidate lineups", 1, 20, 5, key="nfl_candidate_count")
-            exposure_limit = st.slider("Maximum player exposure", 20, 100, 60, 5, key="nfl_candidate_exposure")
+            lineup_count = st.slider("Candidate lineups", 1, 20, 20, key="nfl_candidate_count")
+            exposure_limit = st.slider("Maximum player exposure", 20, 100, 35, 5, key="nfl_candidate_exposure")
             if st.button("Build NFL Classic candidates", key="nfl_build_candidates"):
                 try:
                     salaries = get_upload("NFL", "DraftKings salaries")
@@ -167,12 +169,16 @@ else:
                         raise ValueError("Insufficient verified eligible players. Check weekly projections, opportunity flags, and injuries.")
                     candidates = build_classic_candidates(eligible, count=lineup_count,
                                                           max_exposure=exposure_limit / 100)
+                    st.session_state.pop("nfl_candidates", None)
                     if not candidates:
                         st.warning("No legal candidates found within the search budget. This does not prove the slate is infeasible.")
                     else:
                         st.session_state["nfl_candidates"] = candidates
                         st.success(f"Built {len(candidates)} legal projection-ranked candidates.")
+                        if len(candidates) < lineup_count:
+                            st.warning(f"Only {len(candidates)} of {lineup_count} requested lineups met the portfolio exposure constraints.")
                 except (ValueError, KeyError, TypeError) as exc:
+                    st.session_state.pop("nfl_candidates", None)
                     st.error(f"Build blocked: {exc}")
             candidates = st.session_state.get("nfl_candidates", [])
             if candidates:
