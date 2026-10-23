@@ -210,7 +210,7 @@ def walkforward_dk_offense(history, season, first_week=4, last_week=18, window=8
                 continue
             predicted_stats = {src: row[dest] for dest, src in COUNT_COLS.items()}
             pred = dk_classic_points(predicted_stats, row.position)
-            truth = dk_classic_points(observed.iloc[0], row.position)
+            truth = dk_classic_points(observed.iloc[0].to_dict(), row.position)
             if np.isfinite(pred) and np.isfinite(truth):
                 out.append({'season': int(season), 'week': week,
                             'player': row.player, 'team': row.team,
