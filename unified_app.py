@@ -370,6 +370,54 @@ else:
                     st.write(f"• {count} — {reason}")
                 st.warning("Provisional projections are calculated from historical football statistics, not DK fantasy-point averages. They are NOT independently verified current-week projections; DST and player roles still require additional modeling and checks. No lineup export is authorized.")
             st.divider()
+            st.subheader("Real-player historical simulation preview")
+            st.caption("Uses your saved DraftKings player IDs, real salaries and nflverse historical statistics. Current-week opportunity is NOT verified. This is a provisional review, not a contest-ready portfolio.")
+            if st.button("Run 10,000 football-stat scenarios with REAL players", key="nfl_real_preview"):
+                try:
+                    import pandas as pd
+                    from ai2_nfl_inputs import parse_csv_payload
+                    from ai2_nfl_real_slate_preview import prepare_real_slate_preview
+                    from props_data import fetch_weekly
+                    from dfs_stats_engine import simulate_stat_driven_dfs
+                    from ai2_nfl_sim_portfolio import select_simulated_portfolio
+                    salaries = get_upload("NFL", "DraftKings salaries")
+                    if not salaries:
+                        raise ValueError("Save your real DraftKings salary CSV in My Slate first.")
+                    history = st.session_state.get("nfl_public_history")
+                    if history is None or history.empty:
+                        history = fetch_weekly([2025, 2026])
+                    pool, rates = prepare_real_slate_preview(
+                        parse_csv_payload(salaries[1]), history, 2026, 7)
+                    st.info(f"Matched {len(pool)} real eligible historical-baseline players. Running actual football-statistics engine.")
+                    players, draws, stat_draws = simulate_stat_driven_dfs(
+                        pool, rates, n_sims=10000, allow_role_proxies=False)
+                    candidates = build_classic_candidates(
+                        pool.to_dict("records"), count=120, max_exposure=1.0)
+                    if len(candidates) < 20:
+                        raise ValueError(f"Only {len(candidates)} legal real-player candidates; need at least 20.")
+                    ranked = select_simulated_portfolio(
+                        candidates, players, draws, count=20, max_exposure=0.35,
+                        upside_share=0.25)
+                    st.session_state["nfl_real_preview_table"] = pd.DataFrame([
+                        {"Lineup": i + 1, "Type": item["portfolio_role"],
+                         "Players": ", ".join(p["Name"] for p in item["candidate"]["players"]),
+                         "Salary": item["candidate"]["salary"],
+                         "Simulated mean": round(item["simulated_mean"], 1)}
+                        for i, item in enumerate(ranked)])
+                    st.session_state["nfl_real_preview_csv"] = export_classic_candidates(
+                        [item["candidate"] for item in ranked])
+                    st.success("20 real-player lineups produced from historical-stat scenarios. NOT independently verified for current-week entry.")
+                except (ValueError, KeyError, TypeError, IndexError, ImportError, OSError) as exc:
+                    st.session_state.pop("nfl_real_preview_csv", None)
+                    st.error(f"Real-player preview could not finish: {exc}")
+            if st.session_state.get("nfl_real_preview_csv"):
+                st.dataframe(st.session_state["nfl_real_preview_table"], hide_index=True)
+                st.warning("PROVISIONAL: Historical inputs, unverified roles/injuries, incomplete DST prior. Review every player; do not enter these as finalized contest lineups.")
+                st.download_button("Download REAL-player provisional portfolio (review only)",
+                                   st.session_state["nfl_real_preview_csv"],
+                                   file_name="TEAM_AI2_REAL_PLAYERS_PROVISIONAL.csv",
+                                   mime="text/csv", key="nfl_real_preview_download")
+            st.divider()
             st.subheader("20-lineup demonstration (synthetic test slate)")
             st.caption("End-to-end interface test only. Synthetic players, salaries, and scores; not Week 7 predictions or contest-ready entries.")
             if st.button("Run 10,000-scenario demo and build 20 lineups", key="nfl_demo_20"):
