@@ -221,14 +221,43 @@ else:
             with st.expander("Research lab · observed-stat simulation (not lineup export)", expanded=False):
                 st.caption("Experimental game-level football simulation. Requires a verified pool CSV and observed historical-rate CSV. No betting-market fields are used, and this does not certify a slate.")
                 lab_pool = st.file_uploader("Verified simulation pool CSV", type=["csv"], key="nfl_lab_pool")
-                lab_rates = st.file_uploader("Observed player-rate CSV", type=["csv"], key="nfl_lab_rates")
+                st.caption("Optional public-data helper: generate historical player rates automatically from nflverse. This does not verify the current-week roster, injuries, or opportunity.")
+                with st.expander("Fetch public NFL historical rates", expanded=False):
+                    history_season = st.number_input("Target season", min_value=2020, max_value=2030, value=2026, step=1, key="nfl_history_season")
+                    history_week = st.number_input("Target week", min_value=1, max_value=22, value=7, step=1, key="nfl_history_week")
+                    if st.button("Fetch and build historical rates", key="nfl_fetch_rates"):
+                        try:
+                            from props_data import fetch_weekly, make_rates
+                            import pandas as pd
+                            from datetime import datetime, timezone
+                            history = fetch_weekly([int(history_season)-1, int(history_season)])
+                            rate_frame = make_rates(history, int(history_season), int(history_week))
+                            if rate_frame.empty:
+                                raise ValueError("No observed player histories returned")
+                            st.session_state["nfl_public_rates"] = rate_frame
+                            st.session_state["nfl_public_rates_meta"] = {
+                                "target": f"{history_season} Week {history_week}",
+                                "fetched_utc": datetime.now(timezone.utc).isoformat(),
+                                "players": len(rate_frame),
+                            }
+                        except (ValueError, KeyError, OSError, ImportError, pd.errors.ParserError) as exc:
+                            st.session_state.pop("nfl_public_rates", None)
+                            st.error(f"Public data retrieval failed: {exc}")
+                    if "nfl_public_rates" in st.session_state:
+                        meta = st.session_state["nfl_public_rates_meta"]
+                        st.success(f"Fetched {meta['players']} player baselines for {meta['target']} at {meta['fetched_utc']}")
+                        st.caption("Source: nflverse stats_player public release; excludes target week and later. This is historical data, not certified projections.")
+                        st.download_button("Download observed rates CSV",
+                                           st.session_state["nfl_public_rates"].to_csv(index=False).encode("utf-8"),
+                                           file_name="nfl_observed_rates.csv", mime="text/csv")
+                lab_rates = st.file_uploader("Observed player-rate CSV (optional when public rates fetched)", type=["csv"], key="nfl_lab_rates")
                 lab_sims = st.selectbox("Simulation draws", [100, 1000, 10000], index=1, key="nfl_lab_sims")
-                if st.button("Run research simulation", disabled=not (lab_pool and lab_rates), key="nfl_lab_run"):
+                if st.button("Run research simulation", disabled=not (lab_pool and (lab_rates or "nfl_public_rates" in st.session_state)), key="nfl_lab_run"):
                     try:
                         import pandas as pd
                         from ai2_nfl_simulation_adapter import run_verified_stat_simulation
                         sim_pool = pd.read_csv(lab_pool)
-                        sim_rates = pd.read_csv(lab_rates)
+                        sim_rates = pd.read_csv(lab_rates) if lab_rates else st.session_state["nfl_public_rates"].copy()
                         players, draws, metadata = run_verified_stat_simulation(
                             sim_pool, sim_rates, n_sims=int(lab_sims))
                         if draws.shape != (lab_sims, len(players)):
