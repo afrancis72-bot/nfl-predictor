@@ -1,0 +1,21 @@
+name: NFL pipeline regression tests
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+  workflow_dispatch:
+jobs:
+  nfl-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install focused test dependencies
+        run: python -m pip install numpy pandas
+      - name: Compile NFL modules and regression tests
+        run: python -m compileall -q props_data.py ai2_nfl_auto_baselines.py ai2_nfl_matchups.py ai2_nfl_matchup_diagnostics.py ai2_nfl_injury_diagnostics.py ai2_nfl_dst_diagnostics.py test_ai2_nfl_auto_baselines.py test_ai2_nfl_matchup_diagnostics.py test_ai2_nfl_injury_diagnostics.py
+      - name: Run focused NFL regression tests
+        run: python -m unittest -v test_ai2_nfl_auto_baselines test_ai2_nfl_matchup_diagnostics test_ai2_nfl_injury_diagnostics
