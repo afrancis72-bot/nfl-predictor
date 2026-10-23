@@ -13,12 +13,24 @@ COUNT_COLS={'pass_attempts_pg':'attempts','completions_pg':'completions','pass_y
 def fetch_weekly(seasons, reader=None):
     """Fetch weekly official-derived statistics. Caller can supply reader for testing."""
     reader=reader or pd.read_csv
-    frames=[]
-    for season in sorted(set(map(int,seasons))):
-        df=reader(BASE.format(season=season))
-        df['season']=season
+    requested = sorted(set(map(int, seasons)))
+    if not requested:
+        raise ValueError("At least one historical season is required")
+    frames = []
+    for season in requested:
+        if not 1999 <= season <= 2100:
+            raise ValueError(f"Invalid NFL season: {season}")
+        url = BASE.format(season=season)
+        df = reader(url)
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            raise ValueError(f"Empty or invalid nflverse player statistics for {season}: {url}")
+        if "week" not in df.columns:
+            raise ValueError(f"Missing week column in nflverse player statistics for {season}")
+        # Never mutate the caller's cached reader DataFrame.
+        df = df.copy()
+        df["season"] = season
         frames.append(df)
-    return pd.concat(frames,ignore_index=True)
+    return pd.concat(frames, ignore_index=True)
 
 def clean_weekly(raw):
     df=raw.copy()
