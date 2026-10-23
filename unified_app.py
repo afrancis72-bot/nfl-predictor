@@ -44,6 +44,12 @@ def get_upload(sport, kind):
     return load_file(DATA_DIR, sport, kind)
 
 st.set_page_config(page_title="TEAM AI² Pro", page_icon="🎯", layout="wide", initial_sidebar_state="collapsed")
+# Unified preview: suppress legacy multipage links without deleting their files.
+# Legacy pages remain available in the repository for migration and audit.
+st.markdown("""<style>
+[data-testid="stSidebarNav"], [data-testid="stSidebarNavItems"] {display:none !important;}
+</style>""", unsafe_allow_html=True)
+
 # Force a coherent dark palette at Streamlit's theme-token layer, rather
 # than relying only on text selectors that miss dynamically rendered widgets.
 st.markdown("""<style>
@@ -134,7 +140,7 @@ else:
         go_home()
         st.rerun()
     st.title(f"{SPORTS[sport]['icon']} {sport}")
-    st.caption("Unified platform prototype · No sport engine connected or certified yet.")
+    st.caption("Unified platform development preview · Research-only NFL engine available; no sport engine certified.")
     tab_data,tab_build,tab_market,tab_results,tab_health = st.tabs(
         ["My Slate", "Build / Simulate", "Market Intelligence", "My Results", "Engine Health"]
     )
@@ -211,6 +217,7 @@ else:
                 except (ValueError, KeyError, TypeError) as exc:
                     st.error(f"Saved slate needs attention: {exc}")
             st.divider()
+            st.caption("Research integration: 6d8dde0 · development branch")
             with st.expander("Research lab · observed-stat simulation (not lineup export)", expanded=False):
                 st.caption("Experimental game-level football simulation. Requires a verified pool CSV and observed historical-rate CSV. No betting-market fields are used, and this does not certify a slate.")
                 lab_pool = st.file_uploader("Verified simulation pool CSV", type=["csv"], key="nfl_lab_pool")
