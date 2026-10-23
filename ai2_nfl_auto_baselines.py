@@ -34,7 +34,10 @@ def build_historical_baselines(salary_rows, history, season, week):
         row = {"ID": str(s.get("ID", "")), "Name": s.get("Name", ""),
                "Team": s.get("TeamAbbrev", ""), "Position": pos,
                "Salary": s.get("Salary", ""), "DK Status": s.get("Status", ""),
-               "historical_partial_dk": np.nan, "games_observed": 0,
+               "Game Info": s.get("Game Info", ""),
+               "historical_partial_dk": np.nan, "proj": np.nan, "games_observed": 0,
+               "latest_observed_season": np.nan, "latest_observed_week": np.nan,
+               "pass_attempts_pg": np.nan, "carries_pg": np.nan, "targets_pg": np.nan,
                "match_status": "no unique historical match",
                "projection_source": "nflverse historical weighted stats (incomplete baseline)",
                "weekly_projection_valid": False, "opportunity_verified": False}
@@ -52,6 +55,24 @@ def build_historical_baselines(salary_rows, history, season, week):
             score = dk_classic_points(stats, pos)
             row["historical_partial_dk"] = float(score) if np.isfinite(score) else np.nan
             row["games_observed"] = int(r["games_played"])
+            row["latest_observed_season"] = int(r["latest_observed_season"])
+            row["latest_observed_week"] = int(r["latest_observed_week"])
+            for field in ("pass_attempts_pg", "carries_pg", "targets_pg"):
+                row[field] = r[field]
+            row["proj"] = row["historical_partial_dk"]
             row["match_status"] = "matched" if np.isfinite(score) else "incomplete historical stats"
+        status = str(s.get("Status", "")).strip().upper()
+        if status in {"IR", "OUT", "O", "D", "DOUBTFUL", "PUP", "NFI", "SUSPENDED", "INACTIVE"}:
+            row["readiness_reason"] = "blocked by DraftKings injury designation"
+        elif status in {"Q", "QUESTIONABLE"}:
+            row["readiness_reason"] = "questionable: official availability and role review required"
+        elif pos == "DST":
+            row["readiness_reason"] = "DST needs separate defensive-stat projection"
+        elif row["match_status"] != "matched":
+            row["readiness_reason"] = "insufficient or unmatched historical statistics"
+        elif row["games_observed"] < 3:
+            row["readiness_reason"] = "sparse historical sample: role review required"
+        else:
+            row["readiness_reason"] = "historical estimate only: current-week role and matchup unverified"
         out.append(row)
     return pd.DataFrame(out)
