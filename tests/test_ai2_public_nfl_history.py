@@ -1,0 +1,36 @@
+"""Regression checks for public NFL history and pregame leakage."""
+import unittest
+import pandas as pd
+from props_data import make_rates, fetch_weekly
+
+
+class PublicHistoryTests(unittest.TestCase):
+    def test_target_week_never_enters_rates(self):
+        raw = pd.DataFrame([
+            dict(season=2026, week=5, season_type="REG", player_name="Example Back",
+                 recent_team="AAA", position="RB", carries=10, targets=2),
+            dict(season=2026, week=6, season_type="REG", player_name="Example Back",
+                 recent_team="AAA", position="RB", carries=14, targets=4),
+            dict(season=2026, week=7, season_type="REG", player_name="Example Back",
+                 recent_team="AAA", position="RB", carries=99, targets=99),
+        ])
+        result = make_rates(raw, 2026, 7)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(int(result.iloc[0]["games_played"]), 2)
+        self.assertEqual(int(result.iloc[0]["latest_observed_week"]), 6)
+        self.assertLess(float(result.iloc[0]["carries_pg"]), 15)
+
+    def test_public_fetch_uses_requested_seasons(self):
+        seen = []
+        def reader(url):
+            seen.append(url)
+            return pd.DataFrame({"week": [1]})
+        result = fetch_weekly([2026, 2025, 2026], reader=reader)
+        self.assertEqual(len(seen), 2)
+        self.assertTrue(any("2025" in url for url in seen))
+        self.assertTrue(any("2026" in url for url in seen))
+        self.assertEqual(set(result["season"]), {2025, 2026})
+
+
+if __name__ == "__main__":
+    unittest.main()
