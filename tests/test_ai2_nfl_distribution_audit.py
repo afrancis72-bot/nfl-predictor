@@ -33,6 +33,20 @@ class DistributionAuditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             distribution_diagnostics(players, self.draws, actuals)
 
+    def test_mismatched_slate_date_fails_closed(self):
+        players = self.players.copy()
+        players["slate_date"] = "2026-10-25"
+        actuals = self.actuals.copy()
+        actuals["slate_date"] = "2026-10-18"
+        with self.assertRaises(ValueError):
+            distribution_diagnostics(players, self.draws, actuals)
+
+    def test_one_sided_slate_date_fails_closed(self):
+        actuals = self.actuals.copy()
+        actuals["slate_date"] = "2026-10-25"
+        with self.assertRaises(ValueError):
+            distribution_diagnostics(self.players, self.draws, actuals)
+
     def test_nonfinite_draws_fail_closed(self):
         bad = self.draws.copy()
         bad[0, 0] = np.nan
