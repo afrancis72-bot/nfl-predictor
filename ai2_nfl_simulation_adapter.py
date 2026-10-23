@@ -4,6 +4,7 @@ This adapter deliberately does not synthesize missing player rates, certify user
 flags, or use sportsbook fields. It is not a complete weekly data pipeline.
 """
 import pandas as pd
+import numpy as np
 from dfs_stats_engine import simulate_stat_driven_dfs
 
 REQUIRED_POOL = {"ID", "Name", "Position", "TeamAbbrev", "Salary", "game", "proj", "optimizer_eligible"}
@@ -38,6 +39,19 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
     if active.empty or not (active["weekly_projection_valid"].eq(True)
                            & active["opportunity_verified"].eq(True)).all():
         raise ValueError("Every eligible player must have independently verified weekly inputs")
+    # A malformed slate must never reach the statistical engine. Its QB
+    # selection and lineup ordering depend on finite, positive projections.
+    salary = pd.to_numeric(active["Salary"], errors="coerce")
+    projection = pd.to_numeric(active["proj"], errors="coerce")
+    if (not np.isfinite(salary.to_numpy(dtype=float)).all()
+            or not salary.gt(0).all()):
+        raise ValueError("Every eligible player requires a positive finite DraftKings salary")
+    if (not np.isfinite(projection.to_numpy(dtype=float)).all()
+            or not projection.gt(0).all()):
+        raise ValueError("Every eligible player requires a positive finite independent projection")
+    if not active["Position"].astype(str).str.upper().isin(
+            ("QB", "RB", "WR", "TE", "DST")).all():
+        raise ValueError("Unsupported NFL roster position")
     if active["ID"].isna().any() or active["ID"].astype(str).str.strip().eq("").any():
         raise ValueError("Every eligible player needs a nonempty DraftKings ID")
     if active["Name"].isna().any() or active["Name"].astype(str).str.strip().eq("").any():
