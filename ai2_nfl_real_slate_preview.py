@@ -71,6 +71,25 @@ def prepare_real_slate_preview(salary_rows, history, season=2026, week=7):
     if not pool:
         raise ValueError("No real DraftKings players matched observed historical statistics")
     frame = pd.DataFrame(pool)
+    # The engine simulates exactly one QB per team; allowing several DK
+    # quarterbacks creates unsimulated zero-point rows and aborts the run.
+    # Select the observed primary passer, not every historical backup.
+    quarterbacks = frame[frame["Position"].eq("QB")].copy()
+    if not quarterbacks.empty:
+        qb_rates = rates[rates["position"].astype(str).str.upper().eq("QB")].copy()
+        qb_rates["_team"] = qb_rates["team"].map(canonical_team)
+        qb_rates["_name"] = qb_rates["player"].astype(str).str.lower().str.replace(
+            r"[^a-z0-9]", "", regex=True)
+        qb_rates["_pass"] = pd.to_numeric(qb_rates["pass_attempts_pg"], errors="coerce").fillna(0)
+        qb_lookup = {(str(r["_team"]), str(r["_name"])): float(r["_pass"])
+                     for _, r in qb_rates.iterrows()}
+        quarterbacks["_pass"] = quarterbacks.apply(
+            lambda r: qb_lookup.get((r["TeamAbbrev"],
+                "".join(c for c in r["Name"].lower() if c.isalnum())), 0.0), axis=1)
+        primary = quarterbacks.sort_values(
+            ["_pass", "proj"], ascending=False).drop_duplicates("TeamAbbrev")
+        keep_ids = set(primary["ID"])
+        frame = frame[(frame["Position"].ne("QB")) | (frame["ID"].isin(keep_ids))].copy()
     # The statistical engine requires both teams in every simulated matchup.
     complete = set()
     for game, group in frame.groupby("game"):
