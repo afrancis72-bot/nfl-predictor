@@ -439,23 +439,43 @@ else:
                        "No prop line influences the simulation or lineup optimizer. "
                        "Public sportsbook feeds are not assumed to be available.")
             from ai2_nfl_prop_comparison import compare_props, read_prop_csv
-            if st.button("Check free public NFL prop lines", key="nfl_free_prop_refresh"):
+            oddize_key = os.environ.get("ODDIZE_API_KEY", "")
+            if not oddize_key:
                 try:
-                    from ai2_nfl_free_props import fetch_public_espn_props
-                    public_rows, meta = fetch_public_espn_props()
+                    oddize_key = st.secrets.get("ODDIZE_API_KEY", "")
+                except (FileNotFoundError, KeyError):
+                    oddize_key = ""
+            st.caption("Oddize documented API · estimated 2 free credits per selected market. "
+                       "Results are experimental until the API response is validated.")
+            oddize_markets = st.multiselect(
+                "Player prop markets",
+                options=["player_pass_yds", "player_rush_yds",
+                         "player_reception_yds", "player_receptions"],
+                default=["player_pass_yds", "player_rush_yds",
+                         "player_reception_yds", "player_receptions"],
+                key="nfl_oddize_markets")
+            if not oddize_key:
+                st.info("To enable Oddize, add ODDIZE_API_KEY to the Streamlit app's Secrets.")
+            if st.button("Fetch NFL props from Oddize", key="nfl_oddize_refresh",
+                         disabled=not oddize_key or not oddize_markets):
+                try:
+                    from ai2_nfl_oddize_props import fetch_oddize_props
+                    public_rows, meta = fetch_oddize_props(oddize_key, oddize_markets)
                     st.session_state["nfl_public_prop_rows"] = public_rows
                     st.session_state["nfl_public_prop_meta"] = meta
+                    if public_rows:
+                        st.success(f"Retrieved {len(public_rows)} prop records.")
+                    else:
+                        st.warning("Oddize returned zero supported props. No lines were inferred.")
                 except (OSError, ValueError, KeyError, TypeError) as exc:
                     st.session_state["nfl_public_prop_rows"] = []
-                    st.warning(f"Public prop lookup failed: {exc}. No lines were inferred.")
+                    st.session_state.pop("nfl_public_prop_meta", None)
+                    st.error(f"Oddize retrieval failed: {exc}")
             meta = st.session_state.get("nfl_public_prop_meta")
             if meta:
-                st.caption(f"Public source: {meta['source']} | Checked UTC: {meta['checked_utc']} "
-                           f"| Events: {meta['events_checked']} | Prop rows: {meta['prop_rows']}")
-                if not st.session_state.get("nfl_public_prop_rows"):
-                    st.info("No verified public player prop lines were returned. "
-                            "This free endpoint may only provide game odds; use a prop CSV "
-                            "if you have one. We will not manufacture missing market lines.")
+                st.caption(f"Source: {meta['source']} | Checked UTC: {meta['checked_utc']} "
+                           f"| Prop rows: {meta['prop_rows']} | "
+                           f"Credits remaining: {meta.get('credits_remaining') or 'not reported'}")
             prop_file = st.file_uploader(
                 "Optional sportsbook prop CSV (player, stat, line, sportsbook)",
                 type=["csv"], key="nfl_prop_compare_upload")
