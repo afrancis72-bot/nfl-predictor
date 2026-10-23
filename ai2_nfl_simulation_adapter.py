@@ -24,7 +24,11 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
     if missing_pool or missing_rates:
         raise ValueError(f"Missing pool columns: {sorted(missing_pool)}; "
                          f"missing rate columns: {sorted(missing_rates)}")
-    if not 100 <= int(n_sims) <= 100000:
+    if isinstance(n_sims, bool) or not isinstance(n_sims, int):
+        raise ValueError("Simulation count must be an integer")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError("Random seed must be an integer")
+    if not 100 <= n_sims <= 100000:
         raise ValueError("Simulation count must be 100–100,000")
     if pool.empty or rates.empty:
         raise ValueError("Verified slate and historical rates must be nonempty")
@@ -34,6 +38,12 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
     if active.empty or not (active["weekly_projection_valid"].eq(True)
                            & active["opportunity_verified"].eq(True)).all():
         raise ValueError("Every eligible player must have independently verified weekly inputs")
+    if active["ID"].isna().any() or active["ID"].astype(str).str.strip().eq("").any():
+        raise ValueError("Every eligible player needs a nonempty DraftKings ID")
+    if active["Name"].isna().any() or active["Name"].astype(str).str.strip().eq("").any():
+        raise ValueError("Every eligible player needs a nonempty name")
+    if active["TeamAbbrev"].isna().any() or active["TeamAbbrev"].astype(str).str.strip().eq("").any():
+        raise ValueError("Every eligible player needs a team")
     if active["ID"].astype(str).duplicated().any():
         raise ValueError("Duplicate DraftKings player IDs")
     if active["game"].isna().any() or not active["game"].astype(str).str.contains("@", regex=False).all():
