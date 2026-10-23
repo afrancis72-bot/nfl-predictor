@@ -398,6 +398,19 @@ else:
                     ranked = select_simulated_portfolio(
                         candidates, players, draws, count=20, max_exposure=0.35,
                         upside_share=0.25)
+                    # Injury uncertainty remains visible for human review;
+                    # questionable players are not automatically declared out.
+                    flagged = {}
+                    for item in ranked:
+                        for player in item["candidate"]["players"]:
+                            status = str(player.get("dk_status", "")).upper().strip()
+                            if status in {"Q", "QUESTIONABLE", "LIMITED"}:
+                                key = (str(player["ID"]), str(player["Name"]), status)
+                                flagged[key] = flagged.get(key, 0) + 1
+                    st.session_state["nfl_real_preview_injury_flags"] = pd.DataFrame(
+                        [{"ID": key[0], "Player": key[1], "DK status": key[2],
+                          "Lineups": n, "Exposure": f"{n * 5}%"}
+                         for key, n in sorted(flagged.items(), key=lambda entry: -entry[1])])
                     st.session_state["nfl_real_preview_table"] = pd.DataFrame([
                         {"Lineup": i + 1, "Type": item["portfolio_role"],
                          "Players": ", ".join(p["Name"] for p in item["candidate"]["players"]),
@@ -413,6 +426,11 @@ else:
             if st.session_state.get("nfl_real_preview_csv"):
                 st.dataframe(st.session_state["nfl_real_preview_table"], hide_index=True)
                 st.warning("PROVISIONAL: Historical inputs, unverified roles/injuries, incomplete DST prior. Review every player; do not enter these as finalized contest lineups.")
+                flags = st.session_state.get("nfl_real_preview_injury_flags")
+                if flags is not None and not flags.empty:
+                    st.warning(f"{len(flags)} questionable/limited players appear in this portfolio. Confirm official status before entry.")
+                    st.dataframe(flags, hide_index=True)
+
                 st.download_button("Download REAL-player provisional portfolio (review only)",
                                    st.session_state["nfl_real_preview_csv"],
                                    file_name="TEAM_AI2_REAL_PLAYERS_PROVISIONAL.csv",
