@@ -55,6 +55,16 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Incomplete matchup"):
             run_verified_stat_simulation(p, rates())
 
+    def test_missing_draftkings_id_blocks(self):
+        p = pool()
+        p.loc[0, "ID"] = ""
+        with self.assertRaisesRegex(ValueError, "nonempty DraftKings ID"):
+            run_verified_stat_simulation(p, rates())
+
+    def test_fractional_simulation_count_blocks(self):
+        with self.assertRaisesRegex(ValueError, "integer"):
+            run_verified_stat_simulation(pool(), rates(), n_sims=10000.5)
+
     def test_missing_matchup_blocks(self):
         p = pool()
         p.loc[0, "game"] = ""
