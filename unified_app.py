@@ -446,12 +446,30 @@ else:
             st.caption("Compare independent football-stat simulation distributions to market lines. "
                        "No prop line influences the simulation or lineup optimizer. "
                        "Public sportsbook feeds are not assumed to be available.")
+            from ai2_nfl_prop_comparison import compare_props, read_prop_csv
+            if st.button("Check free public NFL prop lines", key="nfl_free_prop_refresh"):
+                try:
+                    from ai2_nfl_free_props import fetch_public_espn_props
+                    public_rows, meta = fetch_public_espn_props()
+                    st.session_state["nfl_public_prop_rows"] = public_rows
+                    st.session_state["nfl_public_prop_meta"] = meta
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    st.session_state["nfl_public_prop_rows"] = []
+                    st.warning(f"Public prop lookup failed: {exc}. No lines were inferred.")
+            meta = st.session_state.get("nfl_public_prop_meta")
+            if meta:
+                st.caption(f"Public source: {meta['source']} | Checked UTC: {meta['checked_utc']} "
+                           f"| Events: {meta['events_checked']} | Prop rows: {meta['prop_rows']}")
+                if not st.session_state.get("nfl_public_prop_rows"):
+                    st.info("No verified public player prop lines were returned. "
+                            "This free endpoint may only provide game odds; use a prop CSV "
+                            "if you have one. We will not manufacture missing market lines.")
             prop_file = st.file_uploader(
                 "Optional sportsbook prop CSV (player, stat, line, sportsbook)",
                 type=["csv"], key="nfl_prop_compare_upload")
-            if prop_file is not None and st.session_state.get("nfl_real_preview_stat_draws"):
-                from ai2_nfl_prop_comparison import compare_props, read_prop_csv
-                prop_rows = read_prop_csv(prop_file.getvalue())
+            prop_rows = (read_prop_csv(prop_file.getvalue()) if prop_file is not None
+                         else st.session_state.get("nfl_public_prop_rows", []))
+            if prop_rows and st.session_state.get("nfl_real_preview_stat_draws"):
                 comparison = compare_props(
                     st.session_state["nfl_real_preview_stat_draws"], prop_rows,
                     portfolio=st.session_state.get("nfl_real_preview_ranked"))
@@ -464,7 +482,7 @@ else:
                 else:
                     st.warning("No prop rows matched simulated players and supported stats. "
                                "Check player names, column headers and stat labels.")
-            elif prop_file is not None:
+            elif prop_rows:
                 st.info("Run the real-player football-stat simulation first to compare props.")
             if st.session_state.get("nfl_real_preview_csv"):
                 st.dataframe(st.session_state["nfl_real_preview_table"], hide_index=True)
