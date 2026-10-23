@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import streamlit as st
 from ai2_settings import load_setting, save_setting
+from ai2_local_storage import open_store, save_file, load_file, list_history
 from ai2_nfl_preflight import validate_pool
 from ai2_nfl_inputs import inspect_saved_nfl_inputs
 from ai2_nfl_eligibility import eligible_nfl_rows
@@ -32,43 +33,13 @@ DATA_DIR = Path(os.environ.get("AI2_DATA_DIR", str(Path.home() / "TEAM_AI2_Pro_D
 DB = DATA_DIR / "slates.sqlite3"
 
 def connect():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB, timeout=30)
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("""CREATE TABLE IF NOT EXISTS uploads (
-        sport TEXT NOT NULL, kind TEXT NOT NULL, filename TEXT NOT NULL,
-        content BLOB NOT NULL, uploaded_at TEXT NOT NULL,
-        PRIMARY KEY (sport, kind))""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS upload_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, sport TEXT NOT NULL,
-        kind TEXT NOT NULL, filename TEXT NOT NULL, content BLOB NOT NULL,
-        uploaded_at TEXT NOT NULL, archived_at TEXT NOT NULL)""")
-    return conn
+    return open_store(DATA_DIR)
 
 def save_upload(sport, kind, file):
-    payload = file.getvalue()
-    if not payload:
-        raise ValueError("Cannot save an empty upload.")
-    with connect() as conn:
-        previous = conn.execute("SELECT filename,content,uploaded_at FROM uploads WHERE sport=? AND kind=?", (sport,kind)).fetchone()
-        if previous:
-            conn.execute("INSERT INTO upload_history(sport,kind,filename,content,uploaded_at,archived_at) VALUES(?,?,?,?,?,?)",
-                         (sport,kind,*previous,datetime.now(timezone.utc).isoformat()))
-        conn.execute(
-            """INSERT INTO uploads(sport,kind,filename,content,uploaded_at)
-            VALUES(?,?,?,?,?)
-            ON CONFLICT(sport,kind) DO UPDATE SET
-            filename=excluded.filename,content=excluded.content,
-            uploaded_at=excluded.uploaded_at""",
-            (sport,kind,file.name,payload,datetime.now(timezone.utc).isoformat()),
-        )
+    save_file(DATA_DIR, sport, kind, file.name, file.getvalue())
 
 def get_upload(sport, kind):
-    with connect() as conn:
-        return conn.execute(
-            "SELECT filename,content,uploaded_at FROM uploads WHERE sport=? AND kind=?",
-            (sport,kind),
-        ).fetchone()
+    return load_file(DATA_DIR, sport, kind)
 
 st.set_page_config(page_title="TEAM AI² Pro", page_icon="🎯", layout="wide")
 st.markdown("""<style>
@@ -150,8 +121,7 @@ else:
         st.caption(f"Local data folder: {DATA_DIR}. Files remain after app restarts as long as this folder is retained and writable.")
         if saved:
             with st.expander("Previous versions of this file"):
-                with connect() as conn:
-                    history = conn.execute("SELECT id,filename,content,uploaded_at FROM upload_history WHERE sport=? AND kind=? ORDER BY id DESC LIMIT 20", (sport,kind)).fetchall()
+                history = list_history(DATA_DIR, sport, kind)
                 if not history:
                     st.caption("No earlier versions saved.")
                 for version_id, old_name, old_bytes, old_time in history:
