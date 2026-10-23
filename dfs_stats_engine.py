@@ -41,23 +41,15 @@ def _safe(v, default):
 def _multinomial_rows(rng, totals, probs):
     return np.asarray([rng.multinomial(int(max(0,n)), probs) for n in totals],dtype=np.int16)
 
-def _team_scoring_budget(implied_points, historical_pass_tds, historical_rush_tds, expected_field_goals=1.65):
-    """Estimate team offensive TDs without treating every implied point as a TD.
+def _team_scoring_budget(historical_pass_tds, historical_rush_tds, expected_field_goals=1.65):
+    """Historical-rate-only scoring prior; no sportsbook inputs.
 
-    Assumptions: 7 points per TD (PAT included), 3 per FG. Historical
-    touchdown production is a prior, not an extra source of touchdowns.
-    This is a conservative scoring-budget heuristic pending walk-forward
-    calibration, not a fitted predictive model.
+    This is a heuristic, not a calibrated or independently validated model.
     """
-    implied = float(np.clip(_safe(implied_points, 22.0), 7.0, 42.0))
-    historical = float(np.clip(_safe(historical_pass_tds, 1.45)
-                               + _safe(historical_rush_tds, 0.85), 0.3, 5.0))
-    field_goals = float(np.clip(expected_field_goals, 0.5, 3.0))
-    market_tds = max(0.2, (implied - 3.0 * field_goals) / 7.0)
-    # Market environment receives more weight than potentially stale player rates.
-    expected_tds = float(np.clip(0.70 * market_tds + 0.30 * historical, 0.35, 4.8))
-    # Match the expected implied score as closely as possible without negative FGs.
-    field_goals = float(np.clip((implied - 7.0 * expected_tds) / 3.0, 0.0, 3.5))
+    passing = float(np.clip(_safe(historical_pass_tds, 1.45), 0.0, 5.0))
+    rushing = float(np.clip(_safe(historical_rush_tds, 0.85), 0.0, 4.0))
+    expected_tds = float(np.clip(passing + rushing, 0.35, 4.8))
+    field_goals = float(np.clip(_safe(expected_field_goals, 1.65), 0.0, 3.5))
     return expected_tds, field_goals
 
 def _td_allocation_with_capacity(rng, n_tds, weights, capacities):
@@ -457,13 +449,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
 
             # Cache each scenario's completed passes; TD catches must be actual catches.
             rec_counts=np.column_stack([player_rec[j][1] for j in player_rec] + [oth_c])
-            # Shared TD/turnover scoring. Implied points anchor scoring environment.
-            implied=_safe(pd.to_numeric(tx.get('team_implied_points'),errors='coerce').dropna().median() if 'team_implied_points' in tx else np.nan,22.0)
-            # A team's implied total includes field goals; do not convert every
-            # seven implied points into a touchdown. Keep one shared team TD/FG
-            # budget for offense and opposing DST, independent of roster size.
+            # Shared TD/turnover scoring uses historical rates only.
             rush_td_prior=max(.3,team_rush*.035)
-            expected_td,fg_mean=_team_scoring_budget(implied,pass_td_pg,rush_td_prior)
+            expected_td,fg_mean=_team_scoring_budget(pass_td_pg,rush_td_prior)
             # Tie touchdown opportunities to the *same simulated offensive plays*.
             # A binomial draw avoids the independent Poisson tail that previously
             # produced 10-11 offensive TDs while keeping a plausible high-scoring tail.
@@ -472,7 +460,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             total_td=np.minimum(rng.binomial(team_plays,td_probability),8)
             fgs=rng.poisson(fg_mean,size=ns)
             stat_draws[f'__TEAM_SCORING__|{team}']={
-                'implied_points':float(implied),
+                'scoring_source':'historical_rates_only',
                 'expected_offensive_tds':float(expected_td),
                 'td_probability_per_team_play':td_probability,
                 'expected_field_goals':float(fg_mean),
