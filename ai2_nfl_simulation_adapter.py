@@ -38,6 +38,18 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
         raise ValueError("Duplicate DraftKings player IDs")
     if active["game"].isna().any() or not active["game"].astype(str).str.contains("@", regex=False).all():
         raise ValueError("Every eligible player needs an explicit scheduled matchup")
+    # The legacy engine silently skips games unless both teams are represented.
+    # Reject such a slate before a partial zero-point matrix reaches the UI.
+    for matchup, group in active.groupby("game"):
+        sides = str(matchup).split()[0].split("@")
+        if len(sides) != 2 or not all(sides):
+            raise ValueError(f"Invalid matchup format: {matchup}")
+        from dfs_stats_engine import _team
+        expected = {_team(side) for side in sides}
+        observed = {_team(team) for team in group["TeamAbbrev"].astype(str)}
+        if observed != expected:
+            raise ValueError(f"Incomplete matchup {matchup}: expected {sorted(expected)}, "
+                             f"found {sorted(observed)}")
     # A role proxy is not observed player history; reject rather than invent
     # enough opportunity to make a depth player appear playable.
     if "source" not in rates.columns:
