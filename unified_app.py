@@ -380,13 +380,44 @@ else:
                             "Mean DK": draws.mean(axis=0).round(2),
                             "P90 DK": np.percentile(draws, 90, axis=0).round(2),
                         }).sort_values("Mean DK", ascending=False)
+                        st.session_state["nfl_research_draws"] = draws
+                        st.session_state["nfl_research_players"] = players.copy()
                         st.session_state["nfl_research_report"] = report
                         st.success(f"Completed {lab_sims:,} experimental game-level draws. Not calibrated or authorized for contest entry.")
                     except (ValueError, KeyError, TypeError, ImportError, IndexError) as exc:
                         st.session_state.pop("nfl_research_report", None)
+                        st.session_state.pop("nfl_research_draws", None)
+                        st.session_state.pop("nfl_research_players", None)
                         st.error(f"Research simulation blocked: {exc}")
                 if "nfl_research_report" in st.session_state:
                     st.dataframe(st.session_state["nfl_research_report"], use_container_width=True, hide_index=True)
+                    with st.expander("Postgame simulation distribution audit", expanded=False):
+                        st.caption("After games finish, upload observed DraftKings points for this exact slate. CSV columns: ID, actual_dk. This does not validate an independent historical holdout unless inputs were frozen before kickoff.")
+                        actual_upload = st.file_uploader("Observed DK scores CSV", type=["csv"], key="nfl_research_actuals")
+                        if st.button("Evaluate simulated distribution", disabled=actual_upload is None, key="nfl_evaluate_distribution"):
+                            try:
+                                import pandas as pd
+                                from ai2_nfl_distribution_audit import distribution_diagnostics, distribution_summary
+                                observations = pd.read_csv(actual_upload, dtype={"ID": str})
+                                diagnostics = distribution_diagnostics(
+                                    st.session_state["nfl_research_players"],
+                                    st.session_state["nfl_research_draws"], observations)
+                                summary = distribution_summary(diagnostics)
+                                st.session_state["nfl_distribution_diagnostics"] = diagnostics
+                                st.session_state["nfl_distribution_summary"] = summary
+                            except (ValueError, KeyError, TypeError, ImportError) as exc:
+                                st.session_state.pop("nfl_distribution_diagnostics", None)
+                                st.session_state.pop("nfl_distribution_summary", None)
+                                st.error(f"Distribution audit blocked: {exc}")
+                        if "nfl_distribution_summary" in st.session_state:
+                            summary = st.session_state["nfl_distribution_summary"]
+                            st.metric("Mean absolute error", f"{summary['mean_absolute_error']:.2f} DK")
+                            st.caption(f"Central 50% interval coverage: {summary['central_50_coverage']:.1%} (target ~50%); central 80% coverage: {summary['central_80_coverage']:.1%} (target ~80%); {summary['players']} players")
+                            st.dataframe(st.session_state["nfl_distribution_diagnostics"], use_container_width=True, hide_index=True)
+                            st.download_button("Download distribution audit",
+                                               st.session_state["nfl_distribution_diagnostics"].to_csv(index=False).encode("utf-8"),
+                                               file_name="nfl_distribution_audit.csv", mime="text/csv",
+                                               key="nfl_distribution_download")
                 st.warning("Research only. No lineup construction or DraftKings entry export from these draws.")
             st.divider()
             st.subheader("NFL Classic · Sunday candidate builder")
