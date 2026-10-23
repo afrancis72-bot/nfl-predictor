@@ -252,6 +252,15 @@ else:
                     history = fetch_weekly([2025, 2026])
                     result = build_historical_baselines(
                         parse_csv_payload(saved_salary[1]), history, 2026, 7)
+                    try:
+                        from ai2_nfl_matchup_diagnostics import defensive_allowance, apply_matchup_diagnostics
+                        allowance = defensive_allowance(history, 2026, 7)
+                        result = apply_matchup_diagnostics(result, allowance)
+                        st.session_state["nfl_matchup_allowance_csv"] = allowance.to_csv(index=False)
+                        st.session_state.pop("nfl_matchup_allowance_error", None)
+                    except (ValueError, KeyError, TypeError) as matchup_exc:
+                        st.session_state.pop("nfl_matchup_allowance_csv", None)
+                        st.session_state["nfl_matchup_allowance_error"] = str(matchup_exc)
                     matched = int(result["match_status"].eq("matched").sum())
                     st.session_state["nfl_auto_baselines_csv"] = result.to_csv(index=False)
                     st.session_state["nfl_auto_baselines_summary"] = (matched, len(result))
@@ -311,6 +320,15 @@ else:
                         mime="text/csv", key="nfl_auto_baselines_backtest_download")
                 else:
                     st.caption("Historical walk-forward validation has no complete observations for Weeks 4–6.")
+                if st.session_state.get("nfl_matchup_allowance_csv"):
+                    st.download_button(
+                        "Download observed opponent allowance audit CSV",
+                        st.session_state["nfl_matchup_allowance_csv"],
+                        file_name="nfl_week7_opponent_allowance_audit.csv",
+                        mime="text/csv", key="nfl_matchup_allowance_download")
+                    st.caption("Matchup-adjusted partial scores appear in the baseline review CSV. Opponent factors are shrunk toward league averages and capped to limit sparse-sample effects; they are exploratory, not verified projections.")
+                elif st.session_state.get("nfl_matchup_allowance_error"):
+                    st.caption("Matchup adjustment unavailable: " + st.session_state["nfl_matchup_allowance_error"])
                 st.caption("Unresolved reasons across the complete DraftKings salary pool:")
                 for reason, count in st.session_state.get("nfl_auto_baselines_reasons", {}).items():
                     st.write(f"• {count} — {reason}")
