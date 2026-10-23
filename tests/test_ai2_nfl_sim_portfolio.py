@@ -27,6 +27,16 @@ class SimPortfolioTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertAlmostEqual(result[0]["simulated_mean"], 445.5)
 
+    def test_partial_portfolio_is_rejected(self):
+        roster = [{"ID": str(i), "Position": p, "Salary": 5500}
+                  for i, p in enumerate(["QB", "RB", "RB", "WR", "WR", "WR", "TE", "WR", "DST"])]
+        players = pd.DataFrame({"ID": [str(i) for i in range(9)]})
+        with patch("ai2_nfl_sim_portfolio.check_classic_lineup", return_value=[]):
+            with self.assertRaisesRegex(ValueError, "no partial portfolio"):
+                select_simulated_portfolio([{"players": roster}], players,
+                                           np.ones((100, 9)), count=2,
+                                           max_exposure=0.5)
+
     def test_invalid_draws_rejected(self):
         with self.assertRaisesRegex(ValueError, "Invalid simulation"):
             select_simulated_portfolio([], pd.DataFrame({"ID": ["1"]}),
