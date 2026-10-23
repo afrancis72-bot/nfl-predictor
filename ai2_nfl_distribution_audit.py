@@ -45,6 +45,18 @@ def distribution_diagnostics(players, draws, actuals):
         if any(i in game_lookup and game_lookup[i] != g
                for i, g in zip(ids, expected_games)):
             raise ValueError("Observed and simulated matchup labels disagree")
+    # Exact historical comparison must never include an athlete from a
+    # different contest date. A single matchup label cannot establish date.
+    if "slate_date" in players.columns or "slate_date" in actuals.columns:
+        if "slate_date" not in players.columns or "slate_date" not in actuals.columns:
+            raise ValueError("Both sources must provide slate_date when either does")
+        predicted_dates = players["slate_date"].astype("string").str.strip()
+        observed_dates = actuals["slate_date"].astype("string").str.strip()
+        if predicted_dates.isna().any() or predicted_dates.eq("").any() or observed_dates.isna().any() or observed_dates.eq("").any():
+            raise ValueError("Slate dates must be present")
+        date_lookup = dict(zip(actual_ids, observed_dates))
+        if any(i in date_lookup and date_lookup[i] != d for i, d in zip(ids, predicted_dates)):
+            raise ValueError("Observed and simulated slate dates disagree")
     lookup = dict(zip(actual_ids, truth))
     if not ids.isin(lookup).all():
         raise ValueError("Missing observed scores for one or more simulated players")
