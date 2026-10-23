@@ -239,6 +239,38 @@ else:
                             st.warning("Current saved projections cannot produce a valid nine-player NFL Classic lineup.")
                 except (ValueError, KeyError, TypeError) as exc:
                     st.error(f"Saved slate needs attention: {exc}")
+            st.subheader("Auto-build historical player baselines")
+            st.caption("Fetches real NFL weekly statistics, matches them to your saved DraftKings player IDs, and estimates pregame partial fantasy-point baselines. This is NOT yet an injury-adjusted, independently verified weekly projection.")
+            if st.button("Fetch real stats and calculate baselines", key="nfl_auto_baselines"):
+                try:
+                    from ai2_nfl_inputs import parse_csv_payload
+                    from props_data import fetch_weekly
+                    from ai2_nfl_auto_baselines import build_historical_baselines
+                    saved_salary = get_upload("NFL", "DraftKings salaries")
+                    if not saved_salary:
+                        raise ValueError("Save DraftKings salaries in My Slate first.")
+                    history = fetch_weekly([2025, 2026])
+                    result = build_historical_baselines(
+                        parse_csv_payload(saved_salary[1]), history, 2026, 7)
+                    matched = int(result["match_status"].eq("matched").sum())
+                    st.session_state["nfl_auto_baselines_csv"] = result.to_csv(index=False)
+                    st.session_state["nfl_auto_baselines_summary"] = (matched, len(result))
+                    st.session_state["nfl_public_history"] = history
+                    from props_data import make_rates
+                    st.session_state["nfl_public_rates"] = make_rates(history, 2026, 7)
+                    st.session_state["nfl_public_rates_key"] = (2026, 7)
+                except (ValueError, KeyError, TypeError, ImportError, OSError) as exc:
+                    st.session_state.pop("nfl_auto_baselines_csv", None)
+                    st.error(f"Automatic historical baseline failed: {exc}")
+            if st.session_state.get("nfl_auto_baselines_csv"):
+                matched, total = st.session_state["nfl_auto_baselines_summary"]
+                st.success(f"Historical baselines prepared: {matched} of {total} salary rows matched with complete partial scoring data.")
+                st.download_button("Download historical baseline review CSV",
+                    st.session_state["nfl_auto_baselines_csv"],
+                    file_name="nfl_week7_historical_baselines_review.csv",
+                    mime="text/csv", key="nfl_auto_baselines_download")
+                st.warning("These are historical partial-score baselines, not verified weekly projections. No player is automatically certified for lineup export.")
+            st.divider()
             st.subheader("Run Week 7 football-stat simulations")
             st.caption("Uses saved DraftKings salaries, independently verified weekly projections, and observed historical player rates. Simulates football statistics before DraftKings scoring; no sportsbook inputs.")
             st.caption("Historical rates can be fetched under Advanced research tools below. They do not independently verify this week's roles or injuries.")
