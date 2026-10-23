@@ -211,6 +211,40 @@ else:
                 except (ValueError, KeyError, TypeError) as exc:
                     st.error(f"Saved slate needs attention: {exc}")
             st.divider()
+            with st.expander("Research lab · observed-stat simulation (not lineup export)", expanded=False):
+                st.caption("Experimental game-level football simulation. Requires a verified pool CSV and observed historical-rate CSV. No betting-market fields are used, and this does not certify a slate.")
+                lab_pool = st.file_uploader("Verified simulation pool CSV", type=["csv"], key="nfl_lab_pool")
+                lab_rates = st.file_uploader("Observed player-rate CSV", type=["csv"], key="nfl_lab_rates")
+                lab_sims = st.selectbox("Simulation draws", [100, 1000, 10000], index=1, key="nfl_lab_sims")
+                if st.button("Run research simulation", disabled=not (lab_pool and lab_rates), key="nfl_lab_run"):
+                    try:
+                        import pandas as pd
+                        from ai2_nfl_simulation_adapter import run_verified_stat_simulation
+                        sim_pool = pd.read_csv(lab_pool)
+                        sim_rates = pd.read_csv(lab_rates)
+                        players, draws, metadata = run_verified_stat_simulation(
+                            sim_pool, sim_rates, n_sims=int(lab_sims))
+                        if draws.shape != (lab_sims, len(players)):
+                            raise ValueError("Unexpected simulation matrix shape")
+                        import numpy as np
+                        if not np.isfinite(draws).all():
+                            raise ValueError("Simulation contains nonfinite fantasy scores")
+                        report = pd.DataFrame({
+                            "Player": players["Name"].astype(str),
+                            "Team": players["TeamAbbrev"].astype(str),
+                            "Position": players["Position"].astype(str),
+                            "Mean DK": draws.mean(axis=0).round(2),
+                            "P90 DK": np.percentile(draws, 90, axis=0).round(2),
+                        }).sort_values("Mean DK", ascending=False)
+                        st.session_state["nfl_research_report"] = report
+                        st.success(f"Completed {lab_sims:,} experimental game-level draws. Not calibrated or authorized for contest entry.")
+                    except (ValueError, KeyError, TypeError, ImportError, IndexError) as exc:
+                        st.session_state.pop("nfl_research_report", None)
+                        st.error(f"Research simulation blocked: {exc}")
+                if "nfl_research_report" in st.session_state:
+                    st.dataframe(st.session_state["nfl_research_report"], use_container_width=True, hide_index=True)
+                st.warning("Research only. No lineup construction or DraftKings entry export from these draws.")
+            st.divider()
             st.subheader("NFL Classic · Sunday candidate builder")
             st.caption("Projection-ranked legal candidates, NOT correlated simulations or validated contest-ROI predictions. No sportsbook inputs.")
             st.info("First save DraftKings salaries and an independent weekly projection CSV under My Slate. Projections must contain ID, proj, projection_source, weekly_projection_valid and opportunity_verified. The two verification flags must be true and must reflect independently checked data.")
