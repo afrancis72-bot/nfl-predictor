@@ -40,6 +40,10 @@ def prepare_real_slate_preview(salary_rows, history, season=2026, week=7):
             historical = 6.0
         if not np.isfinite(historical) or historical <= 0 or salary <= 0:
             continue
+        # Remove near-zero-volume historical skill players BEFORE the engine
+        # allocates team touchdowns. These are not credible DFS candidates.
+        if pos in {"RB", "WR", "TE"} and historical < 1.0:
+            continue
         pool.append(dict(ID=str(row["ID"]), Name=str(row["Name"]), Position=pos,
                          TeamAbbrev=team, Salary=salary, game=game,
                          opponent=opponent, proj=historical,
