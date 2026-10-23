@@ -20,6 +20,28 @@ class PublicHistoryTests(unittest.TestCase):
         self.assertEqual(int(result.iloc[0]["latest_observed_week"]), 6)
         self.assertLess(float(result.iloc[0]["carries_pg"]), 15)
 
+    def test_missing_player_ids_are_not_discarded(self):
+        raw = pd.DataFrame([
+            dict(season=2026, week=5, season_type="REG", player_id="gsis-1",
+                 player_name="Player One", recent_team="AAA", position="RB",
+                 carries=10, targets=2),
+            dict(season=2026, week=5, season_type="REG", player_id=None,
+                 player_name="Player Two", recent_team="BBB", position="WR",
+                 carries=0, targets=5),
+        ])
+        rates = make_rates(raw, 2026, 7)
+        self.assertEqual(set(rates["player"]), {"Player One", "Player Two"})
+
+    def test_same_name_without_ids_does_not_merge_teams(self):
+        raw = pd.DataFrame([
+            dict(season=2026, week=5, season_type="REG", player_name="Same Name",
+                 recent_team="AAA", position="RB", carries=10, targets=1),
+            dict(season=2026, week=5, season_type="REG", player_name="Same Name",
+                 recent_team="BBB", position="RB", carries=15, targets=2),
+        ])
+        rates = make_rates(raw, 2026, 7)
+        self.assertEqual(set(rates["team"]), {"AAA", "BBB"})
+
     def test_empty_release_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Empty or invalid"):
             fetch_weekly([2026], reader=lambda _: pd.DataFrame())
