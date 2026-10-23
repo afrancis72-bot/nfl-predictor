@@ -6,6 +6,7 @@ on:
       - feature/unified-ai2-platform
     paths:
       - 'ai2_nfl_*.py'
+      - 'tests/test_ai2_*.py'
       - 'dfs_stats_engine.py'
       - 'props_data.py'
       - 'unified_app.py'
