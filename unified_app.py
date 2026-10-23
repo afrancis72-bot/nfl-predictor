@@ -431,8 +431,9 @@ else:
                                     st.session_state["nfl_candidates"],
                                     st.session_state["nfl_research_players"],
                                     st.session_state["nfl_research_draws"],
-                                    count=min(20, len(st.session_state["nfl_candidates"])),
-                                    max_exposure=0.35, upside_share=0.25)
+                                    count=st.session_state.get("nfl_candidate_count", 20),
+                                    max_exposure=st.session_state.get("nfl_candidate_exposure", 35) / 100,
+                                    upside_share=0.25)
                                 st.session_state["nfl_sim_ranked_candidates"] = ranked
                             except (ValueError, KeyError, TypeError) as exc:
                                 st.session_state.pop("nfl_sim_ranked_candidates", None)
@@ -496,8 +497,8 @@ else:
                     eligible = eligible_nfl_rows(rows)
                     if len(eligible) < 9:
                         raise ValueError("Insufficient verified eligible players. Check weekly projections, opportunity flags, and injuries.")
-                    candidates = build_classic_candidates(eligible, count=lineup_count,
-                                                          max_exposure=exposure_limit / 100)
+                    candidates = build_classic_candidates(eligible, count=120,
+                                                          max_exposure=1.0)
                     st.session_state.pop("nfl_candidates", None)
                     if not candidates:
                         st.warning("No legal candidates found within the search budget. This does not prove the slate is infeasible.")
@@ -506,9 +507,9 @@ else:
                         st.session_state.pop("nfl_sim_ranked_candidates", None)
                         fingerprint = slate_fingerprint(salaries, projections)
                         save_portfolio(DATA_DIR, fingerprint, candidates)
-                        st.success(f"Built {len(candidates)} legal projection-ranked candidates.")
+                        st.success(f"Built {len(candidates)} legal projection-ranked candidates for portfolio selection.")
                         if len(candidates) < lineup_count:
-                            st.warning(f"Only {len(candidates)} of {lineup_count} requested lineups met the portfolio exposure constraints.")
+                            st.warning(f"Only {len(candidates)} candidate lineups found; requested portfolio size is {lineup_count}.")
                 except (ValueError, KeyError, TypeError) as exc:
                     st.session_state.pop("nfl_candidates", None)
                     st.error(f"Build blocked: {exc}")
