@@ -72,6 +72,9 @@ def build_historical_baselines(salary_rows, history, season, week):
             row["readiness_reason"] = "insufficient or unmatched historical statistics"
         elif row["games_observed"] < 3:
             row["readiness_reason"] = "sparse historical sample: role review required"
+        elif (int(row["latest_observed_season"]) < int(season)
+              or int(row["latest_observed_week"]) < int(week) - 3):
+            row["readiness_reason"] = "stale observed activity: current-week role review required"
         else:
             row["readiness_reason"] = "historical estimate only: current-week role and matchup unverified"
         out.append(row)
