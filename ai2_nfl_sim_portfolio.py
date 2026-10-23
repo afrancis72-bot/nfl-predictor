@@ -36,7 +36,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             continue
         signatures.add(signature)
         scores = matrix[:, [index[key] for key in keys]].sum(axis=1)
-        scored.append(dict(candidate, simulated_mean=float(scores.mean()),
+        scored.append(dict(candidate=candidate, simulated_mean=float(scores.mean()),
                            simulated_p90=float(np.percentile(scores, 90)),
                            simulated_p99=float(np.percentile(scores, 99))))
     limit = max(1, int(np.floor(count * max_exposure)))
