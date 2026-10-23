@@ -261,6 +261,15 @@ else:
                     except (ValueError, KeyError, TypeError) as matchup_exc:
                         st.session_state.pop("nfl_matchup_allowance_csv", None)
                         st.session_state["nfl_matchup_allowance_error"] = str(matchup_exc)
+                    try:
+                        from ai2_nfl_injury_diagnostics import opportunity_redistribution
+                        result, injury_audit = opportunity_redistribution(result)
+                        st.session_state["nfl_injury_opportunity_audit_csv"] = injury_audit.to_csv(index=False)
+                        st.session_state["nfl_injury_opportunity_audit_count"] = len(injury_audit)
+                        st.session_state.pop("nfl_injury_opportunity_error", None)
+                    except (ValueError, KeyError, TypeError) as injury_exc:
+                        st.session_state.pop("nfl_injury_opportunity_audit_csv", None)
+                        st.session_state["nfl_injury_opportunity_error"] = str(injury_exc)
                     matched = int(result["match_status"].eq("matched").sum())
                     st.session_state["nfl_auto_baselines_csv"] = result.to_csv(index=False)
                     st.session_state["nfl_auto_baselines_summary"] = (matched, len(result))
@@ -329,6 +338,15 @@ else:
                     st.caption("Matchup-adjusted partial scores appear in the baseline review CSV. Opponent factors are shrunk toward league averages and capped to limit sparse-sample effects; they are exploratory, not verified projections.")
                 elif st.session_state.get("nfl_matchup_allowance_error"):
                     st.caption("Matchup adjustment unavailable: " + st.session_state["nfl_matchup_allowance_error"])
+                if st.session_state.get("nfl_injury_opportunity_audit_count"):
+                    st.download_button(
+                        "Download provisional injury opportunity conservation audit",
+                        st.session_state["nfl_injury_opportunity_audit_csv"],
+                        file_name="nfl_week7_injury_opportunity_audit.csv",
+                        mime="text/csv", key="nfl_injury_opportunity_audit_download")
+                    st.caption("Adjusted carries and targets appear in the baseline review CSV. They reflect DraftKings OUT/IR designations, not independently confirmed official injuries; no player is certified.")
+                elif st.session_state.get("nfl_injury_opportunity_error"):
+                    st.caption("Injury opportunity diagnostic unavailable: " + st.session_state["nfl_injury_opportunity_error"])
                 st.caption("Unresolved reasons across the complete DraftKings salary pool:")
                 for reason, count in st.session_state.get("nfl_auto_baselines_reasons", {}).items():
                     st.write(f"• {count} — {reason}")
