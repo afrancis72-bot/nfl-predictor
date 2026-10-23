@@ -456,6 +456,16 @@ else:
                 key="nfl_oddize_markets")
             if not oddize_key:
                 st.info("To enable Oddize, add ODDIZE_API_KEY to the Streamlit app's Secrets.")
+            if st.button("Check Oddize account (free)", key="nfl_oddize_account_check",
+                         disabled=not oddize_key):
+                try:
+                    from ai2_nfl_oddize_props import check_oddize_account
+                    account = check_oddize_account(oddize_key)
+                    st.success(f"Oddize account connected. Plan: {account.get('plan_id') or 'unknown'}; "
+                               f"Credits remaining: {account.get('credits_remaining')}")
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    st.error(f"Oddize account check failed: {exc}. "
+                             "Confirm your Oddize account email and key permissions.")
             if st.button("Fetch NFL props from Oddize", key="nfl_oddize_refresh",
                          disabled=not oddize_key or not oddize_markets):
                 try:
