@@ -384,6 +384,8 @@ else:
                         st.session_state.pop("nfl_distribution_summary", None)
                         st.session_state["nfl_research_draws"] = draws
                         st.session_state["nfl_research_players"] = players.copy()
+                        from datetime import datetime, timezone
+                        st.session_state["nfl_research_run_utc"] = datetime.now(timezone.utc).isoformat()
                         st.session_state["nfl_research_report"] = report
                         st.success(f"Completed {lab_sims:,} experimental game-level draws. Not calibrated or authorized for contest entry.")
                     except (ValueError, KeyError, TypeError, ImportError, IndexError) as exc:
@@ -394,7 +396,8 @@ else:
                 if "nfl_research_report" in st.session_state:
                     st.dataframe(st.session_state["nfl_research_report"], use_container_width=True, hide_index=True)
                     with st.expander("Postgame simulation distribution audit", expanded=False):
-                        st.caption("After games finish, upload observed DraftKings points for this exact slate. CSV columns: ID, actual_dk. This does not validate an independent historical holdout unless inputs were frozen before kickoff.")
+                        st.caption("After games finish, upload observed DraftKings points for this exact slate. CSV columns: ID, actual_dk; optional game labels are checked when provided on both sides. This does not validate an independent historical holdout unless inputs were frozen before kickoff.")
+                        st.caption(f"Simulation generated (UTC): {st.session_state.get('nfl_research_run_utc', 'unknown')}. Record this timestamp with the slate and model version before kickoff.")
                         actual_upload = st.file_uploader("Observed DK scores CSV", type=["csv"], key="nfl_research_actuals")
                         if st.button("Evaluate simulated distribution", disabled=actual_upload is None, key="nfl_evaluate_distribution"):
                             try:
