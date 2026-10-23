@@ -40,7 +40,7 @@ def build_historical_baselines(salary_rows, history, season, week):
                "weekly_projection_valid": False, "opportunity_verified": False}
         if len(matches) == 1 and pos in {"QB", "RB", "WR", "TE"}:
             r = matches[0]
-            stats = {src: r[dest] for dest, src in (
+            stats = {stat_name: r[rate_name] for stat_name, rate_name in (
                 ("passing_yards", "pass_yards_pg"),
                 ("passing_tds", "passing_tds_pg"),
                 ("interceptions", "interceptions_pg"),
