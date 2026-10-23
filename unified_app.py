@@ -93,9 +93,13 @@ st.markdown("""<style>
 .stApp [data-testid="stButton"] button:disabled {color: #b1baca; background: #293241;}
 .stApp [data-testid="stTabs"] button[aria-selected="true"] {color: #76c8ff !important;}
 </style>""", unsafe_allow_html=True)
-if "sport" not in st.session_state:
-    requested = str(st.query_params.get("sport", "")).upper()
-    st.session_state.sport = requested if requested in SPORTS else None
+# A clickable image panel changes URL query parameters. Synchronize on
+# every rerun, not just the first load of a Streamlit session.
+requested = str(st.query_params.get("sport", "")).upper()
+if requested in SPORTS:
+    st.session_state.sport = requested
+elif "sport" not in st.session_state:
+    st.session_state.sport = None
 
 def go_home():
     st.session_state.sport = None
