@@ -265,6 +265,7 @@ else:
                         st.session_state.pop("nfl_public_history", None)
                         st.session_state.pop("nfl_baseline_audit", None)
                         st.session_state.pop("nfl_baseline_audit_rows", None)
+                        st.session_state.pop("nfl_dk_audit_rows", None)
                         st.session_state.pop("nfl_public_rates_meta", None)
                     if st.button("Fetch and build historical rates", key="nfl_fetch_rates"):
                         # Import pandas before the guarded fetch: the exception
@@ -307,7 +308,7 @@ else:
                         st.info("Select target Week 5 or later for an observed Week 4+ backtest.")
                     elif st.button("Run historical baseline backtest", key="nfl_backtest_baselines"):
                         try:
-                            from props_data import walkforward
+                            from props_data import walkforward, walkforward_dk_offense
                             import pandas as pd
                             results = walkforward(
                                 st.session_state["nfl_public_history"],
@@ -325,10 +326,28 @@ else:
                                                 mean_signed_error=("error", "mean")))
                                 st.session_state["nfl_baseline_audit"] = metrics
                                 st.session_state["nfl_baseline_audit_rows"] = results
+                                dk_rows = walkforward_dk_offense(
+                                    st.session_state["nfl_public_history"],
+                                    season=int(history_season),
+                                    first_week=4,
+                                    last_week=int(history_week) - 1,
+                                    window=8,
+                                )
+                                st.session_state["nfl_dk_audit_rows"] = dk_rows
                         except (ValueError, KeyError, TypeError) as exc:
                             st.error(f"Historical audit unavailable: {exc}")
                     if "nfl_baseline_audit" in st.session_state:
                         st.dataframe(st.session_state["nfl_baseline_audit"], use_container_width=True, hide_index=True)
+                        dk_rows = st.session_state.get("nfl_dk_audit_rows")
+                        if dk_rows is not None and not dk_rows.empty:
+                            st.caption("Partial DraftKings offensive scoring only: no fumbles lost, return TDs or DST. Mean-stat bonus thresholds are a baseline, not simulation expectations.")
+                            st.metric("Partial DK offensive mean absolute error",
+                                      f"{dk_rows['absolute_error'].mean():.2f} points")
+                            st.caption(f"Evaluated {len(dk_rows):,} historical player-games")
+                            st.download_button("Download partial DK scoring audit",
+                                               dk_rows.to_csv(index=False).encode("utf-8"),
+                                               file_name="nfl_partial_dk_walkforward.csv",
+                                               mime="text/csv", key="nfl_download_dk_audit")
                         st.download_button("Download historical comparison rows",
                                            st.session_state["nfl_baseline_audit_rows"].to_csv(index=False).encode("utf-8"),
                                            file_name="nfl_baseline_walkforward.csv", mime="text/csv",
