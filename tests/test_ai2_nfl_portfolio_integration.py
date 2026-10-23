@@ -55,7 +55,8 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertLessEqual(max(exposures.values()), 7)
         self.assertTrue(all(not check_classic_lineup(x["candidate"]["players"])
                             for x in selected))
-        exported = export_classic_candidates([x["candidate"] for x in selected])
+        exported = export_classic_candidates([entry["candidate"] for entry in selected])
+        self.assertTrue(all("candidate" in entry and "simulated_mean" in entry for entry in selected))
         rows = list(csv.reader(io.StringIO(exported)))
         self.assertEqual(rows[0], ["QB", "RB", "RB", "WR", "WR", "WR",
                                    "TE", "FLEX", "DST"])
