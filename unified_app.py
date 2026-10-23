@@ -386,8 +386,24 @@ else:
                     history = st.session_state.get("nfl_public_history")
                     if history is None or history.empty:
                         history = fetch_weekly([2025, 2026])
+                    from ai2_nfl_official_injuries import (
+                        fetch_official_injury_statuses, match_injury_statuses)
+                    salary_rows = parse_csv_payload(salaries[1])
+                    official_overrides = {}
+                    try:
+                        official_statuses, injury_meta = fetch_official_injury_statuses()
+                        official_overrides = match_injury_statuses(salary_rows, official_statuses)
+                        st.caption(
+                            f"Official NFL injury report checked {injury_meta['checked_utc']} UTC; "
+                            f"{len(official_overrides)} explicit game designations matched to DK IDs. "
+                            "Missing designation does not establish availability.")
+                    except (ValueError, OSError, TimeoutError) as injury_exc:
+                        st.warning(
+                            f"Official injury status unavailable ({injury_exc}). "
+                            "Continuing historical PREVIEW using saved DK statuses only; "
+                            "do not use as final contest entries.")
                     pool, rates = prepare_real_slate_preview(
-                        parse_csv_payload(salaries[1]), history, 2026, 7)
+                        salary_rows, history, 2026, 7, current_statuses=official_overrides)
                     st.info(f"Matched {len(pool)} real eligible historical-baseline players. Running actual football-statistics engine.")
                     players, draws, stat_draws = simulate_stat_driven_dfs(
                         pool, rates, n_sims=10000, allow_role_proxies=False)
