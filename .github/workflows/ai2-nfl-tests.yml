@@ -13,6 +13,7 @@ on:
       - 'tests/test_ai2_independent_scoring.py'
       - 'tests/test_ai2_nfl*.py'
       - 'tests/test_ai2_public_nfl_history.py'
+      - 'tests/test_ai2_dk_scoring_audit.py'
       - 'ai2_market_*.py'
       - 'tests/test_ai2_market*.py'
       - '.github/workflows/ai2-nfl-tests.yml'
