@@ -25,6 +25,14 @@ class DistributionAuditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             distribution_diagnostics(self.players, self.draws, pd.concat([self.actuals, self.actuals]))
 
+    def test_mismatched_game_fails_closed(self):
+        players = self.players.copy()
+        players["game"] = ["AAA@BBB", "CCC@DDD"]
+        actuals = self.actuals.copy()
+        actuals["game"] = ["CCC@DDD", "XXX@YYY"]
+        with self.assertRaises(ValueError):
+            distribution_diagnostics(players, self.draws, actuals)
+
     def test_nonfinite_draws_fail_closed(self):
         bad = self.draws.copy()
         bad[0, 0] = np.nan
