@@ -8,6 +8,7 @@ import os
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 from ai2_nfl_prop_comparison import SUPPORTED
 
 API_ROOT = "https://oddize.com/api/v1"
@@ -25,8 +26,16 @@ MARKETS = {
 def _request(path, key, timeout=12, params=None):
     url = API_ROOT + path + ("?" + urlencode(params) if params else "")
     req = Request(url, headers={"X-API-Key": key, "Accept": "application/json"})
-    with urlopen(req, timeout=timeout) as response:
-        return json.load(response), dict(response.headers)
+    try:
+        with urlopen(req, timeout=timeout) as response:
+            return json.load(response), dict(response.headers)
+    except HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode("utf-8", errors="replace"))
+            message = str(detail.get("message") or detail.get("status") or "Access denied")
+        except (ValueError, UnicodeDecodeError, AttributeError):
+            message = "Access denied (no readable API error body)"
+        raise ValueError(f"Oddize HTTP {exc.code}: {message}") from None
 
 def fetch_oddize_props(key, prop_types, *, timeout=12):
     """One 2-credit call per selected market; return only documented main lines.
@@ -59,3 +68,9 @@ def fetch_oddize_props(key, prop_types, *, timeout=12):
                   "checked_utc": datetime.now(timezone.utc).isoformat(),
                   "prop_rows": len(rows), "credits_remaining": remaining,
                   "markets_checked": len(prop_types)}
+
+
+def check_oddize_account(key, *, timeout=12):
+    """Free account status check; does not consume odds credits."""
+    data, _ = _request("/account/usage", key, timeout)
+    return {k: data.get(k) for k in ("plan_id", "credits_remaining", "credits_limit", "rate_limit_rpm")}
