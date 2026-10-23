@@ -221,6 +221,19 @@ else:
             with st.expander("Research lab · observed-stat simulation (not lineup export)", expanded=False):
                 st.caption("Experimental game-level football simulation. Requires a verified pool CSV and observed historical-rate CSV. No betting-market fields are used, and this does not certify a slate.")
                 lab_pool = st.file_uploader("Verified simulation pool CSV", type=["csv"], key="nfl_lab_pool")
+                if lab_pool is not None:
+                    with st.expander("Current-week availability screen · advisory only", expanded=False):
+                        try:
+                            import pandas as pd
+                            from ai2_nfl_availability import availability_report
+                            preview_pool = pd.read_csv(lab_pool)
+                            screening = availability_report(preview_pool)
+                            counts = screening["availability_reason"].value_counts()
+                            st.caption("DK statuses are not official active-roster verification. All players still require current-week participation and opportunity checks.")
+                            st.dataframe(screening[["Name", "TeamAbbrev", "Position", "availability_status", "availability_reason"]], hide_index=True)
+                            st.caption(f"Rows screened: {len(screening)} · Reported unavailable: {int(screening['availability_gate'].eq('BLOCK').sum())}")
+                        except (ValueError, KeyError, pd.errors.ParserError) as exc:
+                            st.warning(f"Availability screening unavailable: {exc}")
                 st.caption("Optional public-data helper: generate historical player rates automatically from nflverse. This does not verify the current-week roster, injuries, or opportunity.")
                 with st.expander("Fetch public NFL historical rates", expanded=False):
                     history_season = st.number_input("Target season", min_value=2020, max_value=2030, value=2026, step=1, key="nfl_history_season")
