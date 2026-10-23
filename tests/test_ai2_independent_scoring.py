@@ -16,6 +16,12 @@ class IndependentScoringBudgetTests(unittest.TestCase):
         high, _ = _team_scoring_budget(2.0, 1.0)
         self.assertGreater(high, low)
 
+    def test_scoring_budget_rejects_nan_without_propagating_it(self):
+        import math
+        td, fg = _team_scoring_budget(float("nan"), float("nan"))
+        self.assertTrue(math.isfinite(td))
+        self.assertTrue(math.isfinite(fg))
+
     def test_scoring_budget_is_deterministic_and_bounded(self):
         first = _team_scoring_budget(1.6, 0.8)
         self.assertEqual(first, _team_scoring_budget(1.6, 0.8))
