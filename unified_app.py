@@ -380,6 +380,8 @@ else:
                             "Mean DK": draws.mean(axis=0).round(2),
                             "P90 DK": np.percentile(draws, 90, axis=0).round(2),
                         }).sort_values("Mean DK", ascending=False)
+                        st.session_state.pop("nfl_distribution_diagnostics", None)
+                        st.session_state.pop("nfl_distribution_summary", None)
                         st.session_state["nfl_research_draws"] = draws
                         st.session_state["nfl_research_players"] = players.copy()
                         st.session_state["nfl_research_report"] = report
