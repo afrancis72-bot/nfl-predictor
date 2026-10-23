@@ -239,8 +239,63 @@ else:
                             st.warning("Current saved projections cannot produce a valid nine-player NFL Classic lineup.")
                 except (ValueError, KeyError, TypeError) as exc:
                     st.error(f"Saved slate needs attention: {exc}")
+            st.subheader("Run Week 7 football-stat simulations")
+            st.caption("Uses saved DraftKings salaries, independently verified weekly projections, and observed historical player rates. Simulates football statistics before DraftKings scoring; no sportsbook inputs.")
+            st.caption("Historical rates can be fetched under Advanced research tools below. They do not independently verify this week's roles or injuries.")
+            if st.button("Simulate 10,000 games and build 20 lineups", key="nfl_run_full_sim"):
+                try:
+                    import pandas as pd
+                    import numpy as np
+                    from ai2_nfl_simulation_adapter import run_verified_stat_simulation
+                    from ai2_nfl_sim_portfolio import select_simulated_portfolio
+                    salaries = get_upload("NFL", "DraftKings salaries")
+                    projections = get_upload("NFL", "Projections")
+                    if not salaries or not projections:
+                        raise ValueError("Save both DraftKings salaries and independently verified weekly projections in My Slate first.")
+                    rates = st.session_state.get("nfl_public_rates")
+                    if rates is None or rates.empty:
+                        raise ValueError("Fetch observed historical rates in Advanced research tools below first. Historical rates alone do not verify current-week opportunity.")
+                    rows, issues = inspect_saved_nfl_inputs(salaries, projections)
+                    if issues:
+                        raise ValueError("; ".join(issues))
+                    eligible = eligible_nfl_rows(rows)
+                    if len(eligible) < 9:
+                        raise ValueError("Too few independently verified, eligible players for a legal lineup.")
+                    pool = pd.DataFrame(eligible)
+                    if "optimizer_eligible" not in pool.columns:
+                        pool["optimizer_eligible"] = True
+                    players, draws, stat_draws = run_verified_stat_simulation(
+                        pool, rates, n_sims=10000)
+                    if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
+                        raise ValueError("Simulation results are incomplete or nonfinite.")
+                    candidates = build_classic_candidates(eligible, count=120, max_exposure=1.0)
+                    if len(candidates) < 20:
+                        raise ValueError(f"Only {len(candidates)} legal candidate lineups were found; 20 required.")
+                    ranked = select_simulated_portfolio(
+                        candidates, players, draws, count=20,
+                        max_exposure=0.35, upside_share=0.25)
+                    if len(ranked) != 20:
+                        raise ValueError("Simulation did not produce a complete 20-lineup portfolio.")
+                    csv_data = export_classic_candidates(ranked)
+                    st.session_state["nfl_research_players"] = players.copy()
+                    st.session_state["nfl_research_draws"] = draws
+                    st.session_state["nfl_candidates"] = candidates
+                    st.session_state["nfl_sim_ranked_candidates"] = ranked
+                    st.session_state["nfl_full_sim_export"] = csv_data
+                    st.success("Completed 10,000 correlated football-stat scenarios and selected 20 simulation-ranked lineups.")
+                except (ValueError, KeyError, TypeError, ImportError, IndexError) as exc:
+                    st.session_state.pop("nfl_full_sim_export", None)
+                    st.error(f"Simulation cannot run with current inputs: {exc}")
+            if st.session_state.get("nfl_full_sim_export"):
+                st.download_button(
+                    "Download 20-lineup DraftKings roster CSV (review required)",
+                    st.session_state["nfl_full_sim_export"],
+                    file_name="team_ai2_nfl_simulated_20_review.csv",
+                    mime="text/csv", key="nfl_full_sim_download")
+                st.warning("Review current official player statuses, projections, contest slate, and entry IDs before using this experimental portfolio. Simulated results do not establish profitability.")
             st.divider()
-            st.caption("Research integration: 6d8dde0 · development branch")
+            st.caption("Advanced research tools · historical-rate fetch, diagnostics, and manual simulations")
+
             with st.expander("Research lab · observed-stat simulation (not lineup export)", expanded=False):
                 st.caption("Experimental game-level football simulation. Requires a verified pool CSV and observed historical-rate CSV. No betting-market fields are used, and this does not certify a slate.")
                 lab_pool = st.file_uploader("Verified simulation pool CSV", type=["csv"], key="nfl_lab_pool")
