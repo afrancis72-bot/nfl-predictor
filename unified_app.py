@@ -244,9 +244,12 @@ else:
                         st.session_state.pop("nfl_public_rates", None)
                         st.session_state.pop("nfl_public_rates_meta", None)
                     if st.button("Fetch and build historical rates", key="nfl_fetch_rates"):
+                        # Import pandas before the guarded fetch: the exception
+                        # tuple references pd.errors.ParserError even if the
+                        # optional props_data import fails.
+                        import pandas as pd
                         try:
                             from props_data import fetch_weekly, make_rates
-                            import pandas as pd
                             from datetime import datetime, timezone
                             history = fetch_weekly([int(history_season)-1, int(history_season)])
                             rate_frame = make_rates(history, int(history_season), int(history_week))
