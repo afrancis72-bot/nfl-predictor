@@ -2,7 +2,7 @@
 import csv
 import io
 from ai2_nfl_flags import verified_flag
-from ai2_nfl_matchups import opponent_from_game_info
+from ai2_nfl_matchups import opponent_from_game_info, MATCHUP, canonical_team
 from datetime import datetime, timezone, timedelta
 
 MAX_BYTES = 8 * 1024 * 1024
@@ -68,7 +68,8 @@ def inspect_saved_nfl_inputs(salaries, projections):
         if str(row.get("Position", "")).upper().strip() in {"D/ST", "DEF"}:
             row["Position"] = "DST"
         game_info = str(row.get("Game Info") or "").strip()
-        row["game"] = game_info.split()[0] if game_info else ""
+        match = MATCHUP.match(game_info)
+        row["game"] = "@".join(canonical_team(team) for team in match.groups()) if match else ""
         row["opponent"] = opponent_from_game_info(row.get("TeamAbbrev"), game_info)
         if row["opponent"] is None:
             row["game"] = ""
