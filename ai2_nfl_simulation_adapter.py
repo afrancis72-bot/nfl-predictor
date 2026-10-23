@@ -64,6 +64,18 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
     # enough opportunity to make a depth player appear playable.
     if "source" not in rates.columns:
         raise ValueError("Historical rate provenance/source is required")
+    # Only explicitly observed histories can be treated as verified inputs.
+    # Arbitrary labels or missing observation counts are not proof of history.
+    source = rates["source"].astype("string").str.strip()
+    if source.isna().any() or source.eq("").any():
+        raise ValueError("Historical source provenance must be nonempty")
+    games = pd.to_numeric(rates["games_played"], errors="coerce")
+    if games.isna().any() or not games.between(1, 25).all():
+        raise ValueError("Historical games_played must be observed and between 1 and 25")
+    for field in ("pass_attempts_pg", "carries_pg", "targets_pg"):
+        values = pd.to_numeric(rates[field], errors="coerce")
+        if values.isna().any() or not values.between(0, 100).all():
+            raise ValueError(f"Invalid historical opportunity rate: {field}")
     if rates["source"].astype(str).str.contains("ROLE_PROXY", case=False).any():
         raise ValueError("Unverified role-proxy rates are not eligible for official simulation")
     return simulate_stat_driven_dfs(pool, rates, n_sims=int(n_sims),
