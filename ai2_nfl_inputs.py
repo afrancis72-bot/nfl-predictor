@@ -67,7 +67,11 @@ def inspect_saved_nfl_inputs(salaries, projections):
     for row in merged:
         if str(row.get("Position", "")).upper().strip() in {"D/ST", "DEF"}:
             row["Position"] = "DST"
-        row["opponent"] = opponent_from_game_info(row.get("TeamAbbrev"), row.get("Game Info"))
+        game_info = str(row.get("Game Info") or "").strip()
+        row["game"] = game_info.split()[0] if game_info else ""
+        row["opponent"] = opponent_from_game_info(row.get("TeamAbbrev"), game_info)
+        if row["opponent"] is None:
+            row["game"] = ""
         row['weekly_projection_valid'] = verified_flag(row.get('weekly_projection_valid'))
         row['opportunity_verified'] = verified_flag(row.get('opportunity_verified'))
     return merged, []
