@@ -11,8 +11,15 @@ from props_data import make_rates
 
 BLOCKED = {"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "D", "DOUBTFUL", "RESERVE", "PRACTICE SQUAD"}
 MIN_OFFENSIVE_BASELINE_DK = 4.0
+MIN_SKILL_OPPORTUNITIES_PG = {"RB": 3.0, "WR": 2.0, "TE": 2.0}
+MIN_QB_PASS_ATTEMPTS_PG = 15.0
 
-def prepare_real_slate_preview(salary_rows, history, season=2026, week=7):
+def prepare_real_slate_preview(salary_rows, history, season=2026, week=7, current_statuses=None):
+    """Historical preview only; optional verified status overrides keyed by DK ID.
+
+    Missing current status never means that a player is confirmed active.
+    """
+    current_statuses = current_statuses or {}
     baselines = build_historical_baselines(salary_rows, history, season, week)
     rates = make_rates(history, season, week)
     pool = []
@@ -20,7 +27,8 @@ def prepare_real_slate_preview(salary_rows, history, season=2026, week=7):
         pos = str(row["Position"]).upper()
         if pos not in {"QB", "RB", "WR", "TE", "DST"}:
             continue
-        if str(row["DK Status"]).upper().strip() in BLOCKED:
+        current_status = str(current_statuses.get(str(row["ID"]), row["DK Status"])).upper().strip()
+        if current_status in BLOCKED:
             continue
         match = MATCHUP.match(str(row["Game Info"] or ""))
         if not match:
@@ -63,12 +71,12 @@ def prepare_real_slate_preview(salary_rows, history, season=2026, week=7):
                 carries = 0.0
             if not np.isfinite(targets):
                 targets = 0.0
-            if (carries + targets) < 1.0:
+            if (carries + targets) < MIN_SKILL_OPPORTUNITIES_PG[pos]:
                 continue
         pool.append(dict(ID=str(row["ID"]), Name=str(row["Name"]), Position=pos,
                          TeamAbbrev=team, Salary=salary, game=game,
                          opponent=opponent, proj=historical,
-                         dk_status=str(row["DK Status"]).upper().strip(),
+                         dk_status=current_status,
                          optimizer_eligible=True, weekly_projection_valid=False,
                          opportunity_verified=False,
                          projection_source="PROVISIONAL historical partial DK baseline"))
@@ -90,6 +98,8 @@ def prepare_real_slate_preview(salary_rows, history, season=2026, week=7):
         quarterbacks["_pass"] = quarterbacks.apply(
             lambda r: qb_lookup.get((r["TeamAbbrev"],
                 "".join(c for c in r["Name"].lower() if c.isalnum())), 0.0), axis=1)
+        # Do not nominate a low-volume backup as the sole simulated QB.
+        quarterbacks = quarterbacks[quarterbacks["_pass"] >= MIN_QB_PASS_ATTEMPTS_PG]
         primary = quarterbacks.sort_values(
             ["_pass", "proj"], ascending=False).drop_duplicates("TeamAbbrev")
         keep_ids = set(primary["ID"])
