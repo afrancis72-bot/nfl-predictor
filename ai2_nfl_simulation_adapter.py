@@ -72,9 +72,20 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
     games = pd.to_numeric(rates["games_played"], errors="coerce")
     if games.isna().any() or not games.between(1, 25).all():
         raise ValueError("Historical games_played must be observed and between 1 and 25")
+    # nflverse leaves inapplicable opportunity columns null (for example,
+    # pass attempts for wide receivers). Do not reject legitimate observations
+    # or silently convert missing *applicable* opportunity into zero.
+    required_by_position = {
+        "QB": ("pass_attempts_pg",),
+        "RB": ("carries_pg", "targets_pg"),
+        "WR": ("targets_pg",),
+        "TE": ("targets_pg",),
+    }
+    positions = rates["position"].astype(str).str.upper().str.strip()
     for field in ("pass_attempts_pg", "carries_pg", "targets_pg"):
         values = pd.to_numeric(rates[field], errors="coerce")
-        if values.isna().any() or not values.between(0, 100).all():
+        applicable = positions.map(lambda pos: field in required_by_position.get(pos, ()))
+        if ((applicable & values.isna()) | (values.notna() & ~values.between(0, 100))).any():
             raise ValueError(f"Invalid historical opportunity rate: {field}")
     if rates["source"].astype(str).str.contains("ROLE_PROXY", case=False).any():
         raise ValueError("Unverified role-proxy rates are not eligible for official simulation")
