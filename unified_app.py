@@ -43,7 +43,32 @@ def save_upload(sport, kind, file):
 def get_upload(sport, kind):
     return load_file(DATA_DIR, sport, kind)
 
-st.set_page_config(page_title="TEAM AI² Pro", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="TEAM AI² Pro", page_icon="🎯", layout="wide", initial_sidebar_state="collapsed")
+# Force a coherent dark palette at Streamlit's theme-token layer, rather
+# than relying only on text selectors that miss dynamically rendered widgets.
+st.markdown("""<style>
+:root, [data-theme="dark"], [data-testid="stAppViewContainer"] {
+  --primary-color: #4db8ff;
+  --text-color: #f1f5ff;
+  --background-color: #080b12;
+  --secondary-background-color: #18263b;
+}
+html, body, .stApp, [data-testid="stAppViewContainer"],
+[data-testid="stMain"], [data-testid="stMainBlockContainer"] {
+  color: #f1f5ff !important;
+}
+.stApp :is(h1,h2,h3,h4,h5,h6,p,small,label),
+.stApp [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stCaptionContainer"],
+.stApp [data-testid="stWidgetLabel"],
+.stApp [data-baseweb="tab"] {
+  color: #f1f5ff !important;
+}
+.stApp [data-testid="stCaptionContainer"] {opacity: 1 !important;}
+.stApp [data-testid="stCaptionContainer"] p {color: #c3d1e8 !important;}
+.stApp [data-baseweb="tab"][aria-selected="false"] {color: #d0ddf2 !important;}
+.stApp [data-testid="stAlert"] p {color: inherit !important;}
+</style>""", unsafe_allow_html=True)
 st.markdown("""<style>
 .stApp {background: #080b12; color: #f1f5ff;}
 .stApp [data-testid="stMarkdownContainer"],
