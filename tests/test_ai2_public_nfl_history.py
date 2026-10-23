@@ -20,6 +20,19 @@ class PublicHistoryTests(unittest.TestCase):
         self.assertEqual(int(result.iloc[0]["latest_observed_week"]), 6)
         self.assertLess(float(result.iloc[0]["carries_pg"]), 15)
 
+    def test_empty_release_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Empty or invalid"):
+            fetch_weekly([2026], reader=lambda _: pd.DataFrame())
+
+    def test_missing_week_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Missing week"):
+            fetch_weekly([2026], reader=lambda _: pd.DataFrame({"player": ["A"]}))
+
+    def test_reader_frame_is_not_mutated(self):
+        source = pd.DataFrame({"week": [1]})
+        fetch_weekly([2026], reader=lambda _: source)
+        self.assertNotIn("season", source.columns)
+
     def test_public_fetch_uses_requested_seasons(self):
         seen = []
         def reader(url):
