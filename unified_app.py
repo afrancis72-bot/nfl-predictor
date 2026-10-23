@@ -370,6 +370,48 @@ else:
                     st.write(f"• {count} — {reason}")
                 st.warning("Provisional projections are calculated from historical football statistics, not DK fantasy-point averages. They are NOT independently verified current-week projections; DST and player roles still require additional modeling and checks. No lineup export is authorized.")
             st.divider()
+            st.subheader("20-lineup demonstration (synthetic test slate)")
+            st.caption("End-to-end interface test only. Synthetic players, salaries, and scores; not Week 7 predictions or contest-ready entries.")
+            if st.button("Run 10,000-scenario demo and build 20 lineups", key="nfl_demo_20"):
+                try:
+                    import pandas as pd
+                    import numpy as np
+                    from ai2_nfl_sim_portfolio import select_simulated_portfolio
+                    rng = np.random.default_rng(20261022)
+                    demo = []
+                    for position, count in (("QB", 12), ("RB", 32), ("WR", 48), ("TE", 20), ("DST", 12)):
+                        for j in range(count):
+                            team_number = j % 12
+                            team = f"T{team_number:02d}"
+                            demo.append({"ID": f"DEMO_{position}_{j:02d}", "Name": f"TEST {position} {j:02d}",
+                                         "Position": position, "TeamAbbrev": team,
+                                         "opponent": f"T{(team_number + 1) % 12:02d}",
+                                         "Salary": 5500,
+                                         "proj": float(rng.uniform(8, 23))})
+                    candidates = build_classic_candidates(demo, count=120, attempts=30000, max_exposure=1.0)
+                    if len(candidates) < 20:
+                        raise ValueError(f"Demo produced only {len(candidates)} candidates")
+                    draws = rng.normal(15, 7, size=(10000, len(demo))).clip(0)
+                    selected = select_simulated_portfolio(candidates, pd.DataFrame(demo), draws,
+                                                          count=20, max_exposure=0.35, upside_share=0.25)
+                    st.session_state["nfl_demo_export"] = export_classic_candidates(
+                        [item["candidate"] for item in selected])
+                    st.session_state["nfl_demo_summary"] = pd.DataFrame([
+                        {"Lineup": i + 1, "Role": item["portfolio_role"],
+                         "Mean": round(item["simulated_mean"], 1),
+                         "99th percentile": round(item["simulated_p99"], 1),
+                         "Salary": item["candidate"]["salary"]}
+                        for i, item in enumerate(selected)])
+                    st.success("Demo complete: 20 legal lineups, 10,000 synthetic score scenarios, 35% exposure ceiling.")
+                except (ValueError, KeyError, TypeError, IndexError) as exc:
+                    st.error(f"Demo failed: {exc}")
+            if st.session_state.get("nfl_demo_export"):
+                st.dataframe(st.session_state["nfl_demo_summary"], hide_index=True)
+                st.download_button("Download DEMO roster CSV — not for DraftKings entry",
+                                   st.session_state["nfl_demo_export"],
+                                   file_name="TEAM_AI2_DEMO_NOT_FOR_ENTRY.csv",
+                                   mime="text/csv", key="nfl_demo_download")
+            st.divider()
             st.subheader("Run Week 7 football-stat simulations")
             st.caption("Uses saved DraftKings salaries, independently verified weekly projections, and observed historical player rates. Simulates football statistics before DraftKings scoring; no sportsbook inputs.")
             st.caption("Historical rates can be fetched under Advanced research tools below. They do not independently verify this week's roles or injuries.")
