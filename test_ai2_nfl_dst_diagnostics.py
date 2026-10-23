@@ -30,6 +30,14 @@ class DstTests(unittest.TestCase):
         self.assertEqual(result.iloc[0]["dst_games_observed"],1)
         self.assertFalse(bool(result.iloc[0]["weekly_projection_valid"]))
 
+    def test_null_defending_team_is_not_counted(self):
+        hist = pd.DataFrame([row(5,"QB",1,2), row(6,"QB",3,1)])
+        hist.loc[1, "opponent_team"] = None
+        result = historical_dst_indicators(hist,2026,7)
+        self.assertEqual(len(result),1)
+        self.assertEqual(result.iloc[0]["defense"],"MIA")
+        self.assertEqual(int(result.iloc[0]["games_observed"]),1)
+
     def test_missing_opponent_fails_closed(self):
         hist = pd.DataFrame([row(5,"QB",1,2)]).drop(columns=["opponent_team"])
         with self.assertRaisesRegex(ValueError,"opponent_team"):
