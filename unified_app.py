@@ -263,6 +263,8 @@ else:
                     if st.session_state.get("nfl_public_rates_key") != requested_history_key:
                         st.session_state.pop("nfl_public_rates", None)
                         st.session_state.pop("nfl_public_history", None)
+                        st.session_state.pop("nfl_baseline_audit", None)
+                        st.session_state.pop("nfl_baseline_audit_rows", None)
                         st.session_state.pop("nfl_public_rates_meta", None)
                     if st.button("Fetch and build historical rates", key="nfl_fetch_rates"):
                         # Import pandas before the guarded fetch: the exception
@@ -286,7 +288,7 @@ else:
                             }
                         except (ValueError, KeyError, OSError, ImportError, pd.errors.ParserError) as exc:
                             st.session_state.pop("nfl_public_rates", None)
-                        st.session_state.pop("nfl_public_history", None)
+                            st.session_state.pop("nfl_public_history", None)
                             st.session_state.pop("nfl_public_rates_meta", None)
                             st.error(f"Public data retrieval failed: {exc}")
                     if "nfl_public_rates" in st.session_state:
@@ -301,6 +303,8 @@ else:
                     st.caption("Evaluate pregame weighted stat baselines against later observed games. This is NOT a DFS simulation backtest or proof of lineup profitability.")
                     if "nfl_public_history" not in st.session_state:
                         st.info("Fetch public historical rates above to enable this audit.")
+                    elif int(history_week) <= 4:
+                        st.info("Select target Week 5 or later for an observed Week 4+ backtest.")
                     elif st.button("Run historical baseline backtest", key="nfl_backtest_baselines"):
                         try:
                             from props_data import walkforward
