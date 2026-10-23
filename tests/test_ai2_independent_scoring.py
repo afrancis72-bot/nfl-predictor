@@ -16,6 +16,13 @@ class IndependentScoringBudgetTests(unittest.TestCase):
         high, _ = _team_scoring_budget(2.0, 1.0)
         self.assertGreater(high, low)
 
+    def test_scoring_budget_is_deterministic_and_bounded(self):
+        first = _team_scoring_budget(1.6, 0.8)
+        self.assertEqual(first, _team_scoring_budget(1.6, 0.8))
+        td, fg = _team_scoring_budget(100, 100, expected_field_goals=100)
+        self.assertEqual(td, 4.8)
+        self.assertEqual(fg, 3.5)
+
     def test_scoring_budget_has_no_market_parameter(self):
         params = inspect.signature(_team_scoring_budget).parameters
         self.assertEqual(
