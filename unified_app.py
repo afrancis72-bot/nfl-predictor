@@ -28,16 +28,21 @@ SPORTS = {
     "NASCAR": {"icon": "🏁", "description": "Race simulations · DFS"},
     "NBA": {"icon": "🏀", "description": "DFS · Player props · Parlays"},
 }
-DATA_DIR = Path(os.environ.get("AI2_DATA_DIR", "./.ai2_data"))
+DATA_DIR = Path(os.environ.get("AI2_DATA_DIR", str(Path.home() / "TEAM_AI2_Pro_Data"))).expanduser()
 DB = DATA_DIR / "slates.sqlite3"
 
 def connect():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB)
+    conn = sqlite3.connect(DB, timeout=30)
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("""CREATE TABLE IF NOT EXISTS uploads (
         sport TEXT NOT NULL, kind TEXT NOT NULL, filename TEXT NOT NULL,
         content BLOB NOT NULL, uploaded_at TEXT NOT NULL,
         PRIMARY KEY (sport, kind))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS upload_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, sport TEXT NOT NULL,
+        kind TEXT NOT NULL, filename TEXT NOT NULL, content BLOB NOT NULL,
+        uploaded_at TEXT NOT NULL, archived_at TEXT NOT NULL)""")
     return conn
 
 def save_upload(sport, kind, file):
@@ -45,6 +50,10 @@ def save_upload(sport, kind, file):
     if not payload:
         raise ValueError("Cannot save an empty upload.")
     with connect() as conn:
+        previous = conn.execute("SELECT filename,content,uploaded_at FROM uploads WHERE sport=? AND kind=?", (sport,kind)).fetchone()
+        if previous:
+            conn.execute("INSERT INTO upload_history(sport,kind,filename,content,uploaded_at,archived_at) VALUES(?,?,?,?,?,?)",
+                         (sport,kind,*previous,datetime.now(timezone.utc).isoformat()))
         conn.execute(
             """INSERT INTO uploads(sport,kind,filename,content,uploaded_at)
             VALUES(?,?,?,?,?)
@@ -138,6 +147,16 @@ else:
                 st.rerun()
             except (OSError,sqlite3.Error,ValueError) as exc:
                 st.error(f"Could not save file: {exc}")
+        st.caption(f"Local data folder: {DATA_DIR}. Files remain after app restarts as long as this folder is retained and writable.")
+        if saved:
+            with st.expander("Previous versions of this file"):
+                with connect() as conn:
+                    history = conn.execute("SELECT id,filename,content,uploaded_at FROM upload_history WHERE sport=? AND kind=? ORDER BY id DESC LIMIT 20", (sport,kind)).fetchall()
+                if not history:
+                    st.caption("No earlier versions saved.")
+                for version_id, old_name, old_bytes, old_time in history:
+                    st.download_button(f"Archived: {old_name} · {old_time}", old_bytes,
+                                       file_name=f"archive_{version_id}_{old_name}", key=f"archive_{sport}_{kind}_{version_id}")
         st.divider()
         st.subheader("Saved build preferences")
         current_mode = load_setting(DB, sport, "portfolio_mode", "Balanced")
