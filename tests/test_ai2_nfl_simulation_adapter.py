@@ -25,6 +25,7 @@ class AdapterTests(unittest.TestCase):
             result = run_verified_stat_simulation(pool(), rates(), n_sims=10000)
         self.assertEqual(result, ("players", "points", "stats"))
         engine.assert_called_once()
+        self.assertIs(engine.call_args.kwargs["allow_role_proxies"], False)
 
     def test_unverified_opportunity_blocks(self):
         p = pool()
