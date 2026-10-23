@@ -9,13 +9,20 @@ def pool():
     return pd.DataFrame([dict(ID="101", Name="Example QB", Position="QB",
                               TeamAbbrev="AAA", Salary=6500, game="AAA@BBB",
                               proj=20.0, optimizer_eligible=True,
-                              weekly_projection_valid=True, opportunity_verified=True),\n                         dict(ID="102", Name="Example RB", Position="RB",\n                              TeamAbbrev="BBB", Salary=5100, game="AAA@BBB",\n                              proj=11.0, optimizer_eligible=True,\n                              weekly_projection_valid=True, opportunity_verified=True)])
+                              weekly_projection_valid=True, opportunity_verified=True),
+                         dict(ID="102", Name="Example RB", Position="RB",
+                              TeamAbbrev="BBB", Salary=5100, game="AAA@BBB",
+                              proj=11.0, optimizer_eligible=True,
+                              weekly_projection_valid=True, opportunity_verified=True)])
 
 
 def rates():
     return pd.DataFrame([dict(player="Example QB", team="AAA", position="QB",
                               games_played=6, pass_attempts_pg=32,
-                              carries_pg=3, targets_pg=0, source="NFLVERSE_OBSERVED"),\n                         dict(player="Example RB", team="BBB", position="RB",\n                              games_played=6, pass_attempts_pg=0, carries_pg=12,\n                              targets_pg=3, source="NFLVERSE_OBSERVED")])
+                              carries_pg=3, targets_pg=0, source="NFLVERSE_OBSERVED"),
+                         dict(player="Example RB", team="BBB", position="RB",
+                              games_played=6, pass_attempts_pg=0, carries_pg=12,
+                              targets_pg=3, source="NFLVERSE_OBSERVED")])
 
 
 class AdapterTests(unittest.TestCase):
