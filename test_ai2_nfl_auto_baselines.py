@@ -26,6 +26,15 @@ class HistoricalBaselineTests(unittest.TestCase):
         self.assertFalse(bool(row["opportunity_verified"]))
         self.assertIn("sparse", row["readiness_reason"])
 
+    def test_alias_and_matchup_consistency(self):
+        from ai2_nfl_auto_baselines import _team
+        self.assertEqual(_team("JAC"), "JAX")
+        self.assertEqual(_team("WSH"), "WAS")
+        self.assertEqual(_team("LA"), "LAR")
+        from ai2_nfl_matchups import opponent_from_game_info
+        self.assertEqual(opponent_from_game_info("JAC", "JAX@MIA 1:00PM ET"), "MIA")
+        self.assertIsNone(opponent_from_game_info("NYJ", "JAX@MIA 1:00PM ET"))
+
     def test_out_player_is_blocked_even_when_history_matches(self):
         weekly = pd.DataFrame([{
             "season": 2026, "week": 6, "season_type": "REG",
