@@ -143,6 +143,35 @@ else:
         if sport != "NFL":
             st.info("Coming next: this sport's simulation engine is not connected.")
         else:
+            salary_saved = get_upload("NFL", "DraftKings salaries")
+            projection_saved = get_upload("NFL", "Projections")
+            st.subheader("Saved slate readiness")
+            status_cols = st.columns(2)
+            with status_cols[0]:
+                if salary_saved:
+                    st.success(f"Salaries ready: {salary_saved[0]}")
+                    st.caption(f"Saved {salary_saved[2]}")
+                else:
+                    st.warning("No saved DraftKings salaries")
+            with status_cols[1]:
+                if projection_saved:
+                    st.success(f"Projections saved: {projection_saved[0]}")
+                    st.caption(f"Saved {projection_saved[2]}")
+                else:
+                    st.warning("No saved independent projections")
+            if salary_saved and projection_saved:
+                try:
+                    saved_rows, saved_issues = inspect_saved_nfl_inputs(salary_saved, projection_saved)
+                    if saved_issues:
+                        st.error("Slate data issues: " + "; ".join(saved_issues))
+                    else:
+                        verified_rows = eligible_nfl_rows(saved_rows)
+                        st.caption(f"{len(saved_rows)} matched projection rows · {len(verified_rows)} pass player eligibility checks. Flags are supplied by the data and are not independent certification.")
+                        if len(verified_rows) < 9:
+                            st.warning("Current saved projections cannot produce a valid nine-player NFL Classic lineup.")
+                except (ValueError, KeyError, TypeError) as exc:
+                    st.error(f"Saved slate needs attention: {exc}")
+            st.divider()
             st.subheader("NFL Classic · Sunday candidate builder")
             st.caption("Projection-ranked legal candidates, NOT correlated simulations or validated contest-ROI predictions. No sportsbook inputs.")
             st.info("First save DraftKings salaries and an independent weekly projection CSV under My Slate. Projections must contain ID, proj, projection_source, weekly_projection_valid and opportunity_verified. The two verification flags must be true and must reflect independently checked data.")
