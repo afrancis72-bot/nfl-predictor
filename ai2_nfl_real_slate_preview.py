@@ -9,7 +9,8 @@ from ai2_nfl_auto_baselines import build_historical_baselines
 from ai2_nfl_matchups import MATCHUP, canonical_team, opponent_from_game_info
 from props_data import make_rates
 
-BLOCKED = {"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "D", "DOUBTFUL"}
+BLOCKED = {"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "D", "DOUBTFUL", "RESERVE", "PRACTICE SQUAD"}
+MIN_OFFENSIVE_BASELINE_DK = 4.0
 
 def prepare_real_slate_preview(salary_rows, history, season=2026, week=7):
     baselines = build_historical_baselines(salary_rows, history, season, week)
@@ -42,6 +43,8 @@ def prepare_real_slate_preview(salary_rows, history, season=2026, week=7):
             continue
         # Remove near-zero-volume historical skill players BEFORE the engine
         # allocates team touchdowns. These are not credible DFS candidates.
+        if pos in {"QB", "RB", "WR", "TE"} and historical < MIN_OFFENSIVE_BASELINE_DK:
+            continue
         if pos in {"RB", "WR", "TE"}:
             # A positive partial fantasy score can still come almost entirely
             # from rare touchdowns. Require observed non-TD football volume.
@@ -60,11 +63,12 @@ def prepare_real_slate_preview(salary_rows, history, season=2026, week=7):
                 carries = 0.0
             if not np.isfinite(targets):
                 targets = 0.0
-            if historical < 1.0 or (carries + targets) < 1.0:
+            if (carries + targets) < 1.0:
                 continue
         pool.append(dict(ID=str(row["ID"]), Name=str(row["Name"]), Position=pos,
                          TeamAbbrev=team, Salary=salary, game=game,
                          opponent=opponent, proj=historical,
+                         dk_status=str(row["DK Status"]).upper().strip(),
                          optimizer_eligible=True, weekly_projection_valid=False,
                          opportunity_verified=False,
                          projection_source="PROVISIONAL historical partial DK baseline"))
