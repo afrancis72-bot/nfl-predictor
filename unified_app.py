@@ -409,6 +409,7 @@ else:
                         }).sort_values("Mean DK", ascending=False)
                         st.session_state.pop("nfl_distribution_diagnostics", None)
                         st.session_state.pop("nfl_distribution_summary", None)
+                        st.session_state.pop("nfl_sim_ranked_candidates", None)
                         st.session_state["nfl_research_draws"] = draws
                         st.session_state["nfl_research_players"] = players.copy()
                         from datetime import datetime, timezone
@@ -502,6 +503,7 @@ else:
                         st.warning("No legal candidates found within the search budget. This does not prove the slate is infeasible.")
                     else:
                         st.session_state["nfl_candidates"] = candidates
+                        st.session_state.pop("nfl_sim_ranked_candidates", None)
                         fingerprint = slate_fingerprint(salaries, projections)
                         save_portfolio(DATA_DIR, fingerprint, candidates)
                         st.success(f"Built {len(candidates)} legal projection-ranked candidates.")
@@ -518,6 +520,7 @@ else:
                 latest = load_latest_portfolio(DATA_DIR, current_fingerprint)
                 if latest:
                     candidates = latest["candidates"]
+                    st.session_state["nfl_candidates"] = candidates
                     st.caption(f"Saved candidate portfolio #{latest['id']} · {latest['created_at']} · matches current uploaded slate")
             if candidates:
                 summary = [{"Lineup": i + 1, "Projected DK points": x["projected_points"],
