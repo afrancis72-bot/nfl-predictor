@@ -28,7 +28,10 @@ def historical_dst_indicators(history, season, week, *, shrink_games=6):
     h = h[h["position"].isin(["QB", "RB", "WR", "TE"])].copy()
     h["defense"] = h["opponent_team"].map(canonical_team)
     h["offense"] = h["recent_team"].map(canonical_team)
-    h = h[(h["defense"] != h["offense"])\n          & h["defense"].str.len().between(2, 3)\n          & ~h["defense"].isin(["NAN", "NONE", ""])\n          & ~h["offense"].isin(["NAN", "NONE", ""])]
+    h = h[(h["defense"] != h["offense"])
+          & h["defense"].str.len().between(2, 3)
+          & ~h["defense"].isin(["NAN", "NONE", ""])
+          & ~h["offense"].isin(["NAN", "NONE", ""])]
     for stat in ("passing_interceptions", "passing_tds", "rushing_tds"):
         h[stat] = pd.to_numeric(h[stat], errors="coerce")
     # Missing stats are unknown, not zero. Group only complete observed rows.
