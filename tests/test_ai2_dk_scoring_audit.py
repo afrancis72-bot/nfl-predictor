@@ -10,11 +10,16 @@ class PartialDKScoringTests(unittest.TestCase):
         box = dict(passing_yards=300, passing_tds=2, interceptions=1,
                    rushing_yards=100, rushing_tds=1, receiving_yards=100,
                    receptions=5, receiving_tds=1)
-        # 12 + 8 - 1 + 10 + 6 + 10 + 5 + 6 + 9 bonus
-        self.assertAlmostEqual(dk_classic_points(box), 65.0)
+        # QB applicable stats: 12 + 8 - 1 + 10 + 6 + 3 + 3 bonus
+        self.assertAlmostEqual(dk_classic_points(box, "QB"), 41.0)
 
     def test_missing_stats_not_assumed_zero(self):
-        self.assertTrue(math.isnan(dk_classic_points(dict(passing_yards=300))))
+        self.assertTrue(math.isnan(dk_classic_points(dict(passing_yards=300), "QB")))
+
+    def test_receiver_without_passing_columns_is_valid(self):
+        box = dict(rushing_yards=0, rushing_tds=0,
+                   receiving_yards=100, receptions=5, receiving_tds=1)
+        self.assertAlmostEqual(dk_classic_points(box, "WR"), 24.0)
 
     def test_walkforward_never_uses_target_week_for_prediction(self):
         def row(week, yards):
