@@ -384,6 +384,9 @@ else:
                     if not salaries or not projections:
                         raise ValueError("Save both DraftKings salaries and independently verified weekly projections in My Slate first.")
                     rates = st.session_state.get("nfl_public_rates")
+                    # Cached rates from another target week can leak later results.
+                    if st.session_state.get("nfl_public_rates_key") != (2026, 7):
+                        rates = None
                     if rates is None or rates.empty:
                         # A Streamlit reboot clears session state. Restore historical
                         # rates from the public source when a verified slate is run,
