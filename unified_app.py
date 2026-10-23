@@ -259,6 +259,11 @@ else:
                     from props_data import make_rates
                     st.session_state["nfl_public_rates"] = make_rates(history, 2026, 7)
                     st.session_state["nfl_public_rates_key"] = (2026, 7)
+                    st.session_state["nfl_public_rates_meta"] = {
+                        "target": "2026 Week 7",
+                        "fetched_utc": datetime.now(timezone.utc).isoformat(),
+                        "players": len(st.session_state["nfl_public_rates"]),
+                    }
                 except (ValueError, KeyError, TypeError, ImportError, OSError) as exc:
                     st.session_state.pop("nfl_auto_baselines_csv", None)
                     st.error(f"Automatic historical baseline failed: {exc}")
@@ -383,7 +388,7 @@ else:
                             st.session_state.pop("nfl_public_rates_meta", None)
                             st.error(f"Public data retrieval failed: {exc}")
                     if "nfl_public_rates" in st.session_state:
-                        meta = st.session_state["nfl_public_rates_meta"]
+                        meta = st.session_state.get("nfl_public_rates_meta") or {"target": f"{history_season} Week {history_week}", "fetched_utc": "not recorded", "players": len(st.session_state["nfl_public_rates"])}
                         st.success(f"Fetched {meta['players']} player baselines for {meta['target']} at {meta['fetched_utc']}")
                         st.caption("Source: nflverse stats_player public release; excludes target week and later. This is historical data, not certified projections.")
                         st.caption("Changing the target season or week invalidates previously fetched rates.")
