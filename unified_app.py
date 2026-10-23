@@ -19,6 +19,7 @@ from ai2_nfl_inputs import inspect_saved_nfl_inputs
 from ai2_nfl_eligibility import eligible_nfl_rows
 from ai2_nfl_feasibility import find_classic_lineup
 from ai2_nfl_candidate_builder import build_classic_candidates
+from ai2_nfl_portfolio_store import slate_fingerprint, save_portfolio, load_latest_portfolio
 from ai2_market_challenge import freeze_simulation, compare_frozen_to_props
 from ai2_market_identity import parse_identity_csv
 from ai2_market_provider import retrieve_market_props
@@ -163,13 +164,23 @@ else:
                         st.warning("No legal candidates found within the search budget. This does not prove the slate is infeasible.")
                     else:
                         st.session_state["nfl_candidates"] = candidates
+                        fingerprint = slate_fingerprint(salaries, projections)
+                        save_portfolio(DATA_DIR, fingerprint, candidates)
                         st.success(f"Built {len(candidates)} legal projection-ranked candidates.")
                         if len(candidates) < lineup_count:
                             st.warning(f"Only {len(candidates)} of {lineup_count} requested lineups met the portfolio exposure constraints.")
                 except (ValueError, KeyError, TypeError) as exc:
                     st.session_state.pop("nfl_candidates", None)
                     st.error(f"Build blocked: {exc}")
-            candidates = st.session_state.get("nfl_candidates", [])
+            saved_salary_file = get_upload("NFL", "DraftKings salaries")
+            saved_projection_file = get_upload("NFL", "Projections")
+            candidates = []
+            if saved_salary_file and saved_projection_file:
+                current_fingerprint = slate_fingerprint(saved_salary_file, saved_projection_file)
+                latest = load_latest_portfolio(DATA_DIR, current_fingerprint)
+                if latest:
+                    candidates = latest["candidates"]
+                    st.caption(f"Saved candidate portfolio #{latest['id']} · {latest['created_at']} · matches current uploaded slate")
             if candidates:
                 summary = [{"Lineup": i + 1, "Projected DK points": x["projected_points"],
                             "Salary": x["salary"],
