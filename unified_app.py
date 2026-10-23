@@ -259,7 +259,14 @@ else:
                     # Walk-forward uses only games before each evaluated week;
                     # never treat these diagnostics as future-week certification.
                     from props_data import walkforward_dk_offense
-                    backtest = walkforward_dk_offense(history, 2026, first_week=4, last_week=6)
+                    try:
+                        backtest = walkforward_dk_offense(history, 2026, first_week=4, last_week=6)
+                    except (ValueError, KeyError, TypeError) as audit_exc:
+                        import pandas as pd
+                        backtest = pd.DataFrame()
+                        st.session_state["nfl_auto_baselines_backtest_error"] = str(audit_exc)
+                    else:
+                        st.session_state.pop("nfl_auto_baselines_backtest_error", None)
                     st.session_state["nfl_auto_baselines_backtest_csv"] = backtest.to_csv(index=False)
                     if backtest.empty:
                         st.session_state["nfl_auto_baselines_backtest_summary"] = None
