@@ -51,14 +51,9 @@ def fetch_oddize_props(key, prop_types, *, timeout=12):
                 main_line = player.get("main_line")
                 if not name or not isinstance(main_line, (int, float)):
                     continue
-                odds = player.get("odds") or []
-                preferred = sorted(
-                    [o for o in odds if isinstance(o, dict)],
-                    key=lambda o: (o.get("book") != "hrb", o.get("book") != "dk"))
-                book = preferred[0] if preferred else {}
                 rows.append({"player": name, "stat": MARKETS[prop_type],
                              "line": float(main_line),
-                             "sportsbook": book.get("book_name", "Oddize consensus"),
+                             "sportsbook": "Oddize main line (book unspecified)",
                              "event_id": event.get("event_id", "")})
     return rows, {"source": "Oddize NFL player props API",
                   "checked_utc": datetime.now(timezone.utc).isoformat(),
