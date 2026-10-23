@@ -27,5 +27,7 @@ jobs:
           python-version: '3.11'
       - name: Install NFL test dependencies
         run: python -m pip install numpy pandas scipy
+      - name: Compile NFL engine and adapter tests
+        run: python -m py_compile dfs_stats_engine.py injury_opportunity.py ai2_nfl_simulation_adapter.py tests/test_ai2_independent_scoring.py tests/test_ai2_nfl_simulation_adapter.py
       - name: Run isolated NFL safety tests
         run: python -m unittest discover -s tests -p 'test_ai2_*.py' -v
