@@ -4,7 +4,6 @@ Requires an API key supplied via Streamlit secrets or environment; never log it.
 Market lines are validation inputs only, not simulator projections.
 """
 import json
-import os
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -24,18 +23,32 @@ MARKETS = {
     "player_receptions": "receptions",
 }
 def _request(path, key, timeout=12, params=None):
+    key = str(key).strip()
+    if not key.startswith("ozk_"):
+        raise ValueError("Oddize key format is invalid (expected an ozk_ prefix). Check Streamlit Secrets.")
     url = API_ROOT + path + ("?" + urlencode(params) if params else "")
     req = Request(url, headers={"X-API-Key": key, "Accept": "application/json"})
     try:
         with urlopen(req, timeout=timeout) as response:
             return json.load(response), dict(response.headers)
     except HTTPError as exc:
-        try:
-            detail = json.loads(exc.read().decode("utf-8", errors="replace"))
-            message = str(detail.get("message") or detail.get("status") or "Access denied")
-        except (ValueError, UnicodeDecodeError, AttributeError):
-            message = "Access denied (no readable API error body)"
-        raise ValueError(f"Oddize HTTP {exc.code}: {message}") from None
+        content_type = exc.headers.get("Content-Type", "").lower()
+        server = exc.headers.get("Server", "not provided")
+        raw = exc.read(2048).decode("utf-8", errors="replace")
+        if "json" in content_type:
+            try:
+                detail = json.loads(raw)
+                message = str(detail.get("message") or detail.get("status") or "API denied access")
+                # Never echo arbitrary error bodies; they could include credentials.
+                message = message[:160] if key not in message else "API denied access"
+            except (ValueError, AttributeError):
+                message = "Unparseable JSON error"
+        else:
+            message = "Non-JSON rejection (possibly hosting/CDN access policy)"
+        raise ValueError(
+            f"Oddize HTTP {exc.code}: {message}; content-type={content_type or 'unknown'}; "
+            f"server={server[:50]}. Key and response body withheld."
+        ) from None
 
 def fetch_oddize_props(key, prop_types, *, timeout=12):
     """One 2-credit call per selected market; return only documented main lines.
