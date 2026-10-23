@@ -334,6 +334,14 @@ else:
                                     window=8,
                                 )
                                 st.session_state["nfl_dk_audit_rows"] = dk_rows
+                                from ai2_nfl_empirical_benchmark import walkforward_empirical_distribution
+                                empirical = walkforward_empirical_distribution(
+                                    st.session_state["nfl_public_history"],
+                                    season=int(history_season),
+                                    first_week=4,
+                                    last_week=int(history_week) - 1,
+                                    window=8, min_history=3)
+                                st.session_state["nfl_empirical_audit_rows"] = empirical
                         except (ValueError, KeyError, TypeError) as exc:
                             st.error(f"Historical audit unavailable: {exc}")
                     if "nfl_baseline_audit" in st.session_state:
@@ -354,6 +362,22 @@ else:
                                                dk_rows.to_csv(index=False).encode("utf-8"),
                                                file_name="nfl_partial_dk_walkforward.csv",
                                                mime="text/csv", key="nfl_download_dk_audit")
+                        empirical = st.session_state.get("nfl_empirical_audit_rows")
+                        if empirical is not None and not empirical.empty:
+                            st.caption("Historical player-score distribution benchmark (minimum three previous games). This is an empirical benchmark, not the correlated simulator.")
+                            st.metric("Empirical benchmark mean absolute error",
+                                      f"{empirical['absolute_error'].mean():.2f} DK")
+                            st.caption(f"Central 50% coverage: {empirical['covered_50'].mean():.1%} (target ~50%); central 80% coverage: {empirical['covered_80'].mean():.1%} (target ~80%); {len(empirical):,} player-games")
+                            st.dataframe(
+                                empirical.groupby("position", as_index=False)
+                                .agg(player_games=("absolute_error", "size"),
+                                     mean_absolute_error=("absolute_error", "mean"),
+                                     central_80_coverage=("covered_80", "mean")),
+                                use_container_width=True, hide_index=True)
+                            st.download_button("Download empirical distribution benchmark",
+                                               empirical.to_csv(index=False).encode("utf-8"),
+                                               file_name="nfl_empirical_distribution_walkforward.csv",
+                                               mime="text/csv", key="nfl_download_empirical_audit")
                         st.download_button("Download historical comparison rows",
                                            st.session_state["nfl_baseline_audit_rows"].to_csv(index=False).encode("utf-8"),
                                            file_name="nfl_baseline_walkforward.csv", mime="text/csv",
