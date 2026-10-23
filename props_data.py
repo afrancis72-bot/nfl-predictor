@@ -104,9 +104,27 @@ def make_rates(history, target_season, target_week, window=8, prior_seasons=1):
     h=h[(h.season<season)|((h.season==season)&(h.week<week))]
     h=h[h.season>=season-int(prior_seasons)]
     if h.empty: raise ValueError('No prior-week observations. Cannot generate a pregame projection.')
-    group_key='player_id' if 'player_id' in h and h.player_id.notna().any() else 'player_name'
+    # Mixed feeds can have GSIS IDs for most players but null IDs for some.
+    # Grouping directly by player_id silently discarded those players.
+    # Use a stable ID where available and an explicit name/team fallback
+    # for the remaining records, without merging unrelated same-name players.
+    if 'player_id' in h.columns:
+        ids = h['player_id'].astype('string').str.strip()
+        valid_ids = ids.notna() & ids.ne('')
+        h = h.copy()
+        h['_history_identity'] = (
+            'NAME:' + h['player_name'].astype(str).str.casefold()
+            + '|TEAM:' + h['recent_team'].astype(str)
+        )
+        h.loc[valid_ids, '_history_identity'] = 'ID:' + ids.loc[valid_ids]
+    else:
+        h = h.copy()
+        h['_history_identity'] = (
+            'NAME:' + h['player_name'].astype(str).str.casefold()
+            + '|TEAM:' + h['recent_team'].astype(str)
+        )
     rows=[]
-    for _,g in h.groupby(group_key,dropna=True):
+    for _,g in h.groupby('_history_identity',dropna=True):
         g=g.sort_values(['season','week']).tail(int(window))
         # One observed game is still usable for a new/low-history player.  Keeping it
         # is preferable to dropping the player entirely; downstream simulation retains
