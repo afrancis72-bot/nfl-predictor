@@ -426,7 +426,7 @@ else:
                         max_exposure=0.35, upside_share=0.25)
                     if len(ranked) != 20:
                         raise ValueError("Simulation did not produce a complete 20-lineup portfolio.")
-                    csv_data = export_classic_candidates(ranked)
+                    csv_data = export_classic_candidates([entry["candidate"] for entry in ranked])
                     st.session_state["nfl_research_players"] = players.copy()
                     st.session_state["nfl_research_draws"] = draws
                     st.session_state["nfl_candidates"] = candidates
