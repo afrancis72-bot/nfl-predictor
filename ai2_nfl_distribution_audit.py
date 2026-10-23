@@ -31,6 +31,20 @@ def distribution_diagnostics(players, draws, actuals):
     truth = pd.to_numeric(actuals["actual_dk"], errors="coerce")
     if not np.isfinite(truth.to_numpy(dtype=float)).all():
         raise ValueError("Observed fantasy points must be finite")
+    # Compare the same complete game/slate, not a hand-picked subset of winners
+    # or healthy players. Extra result IDs are permitted (non-simulated athletes).
+    # The caller must still attest the input slate was frozen before kickoff.
+    if "game" in players.columns and "game" in actuals.columns:
+        expected_games = players["game"].astype("string").str.strip()
+        observed_games = actuals["game"].astype("string").str.strip()
+        if expected_games.isna().any() or expected_games.eq("").any():
+            raise ValueError("Simulated matchup labels are missing")
+        if observed_games.isna().any() or observed_games.eq("").any():
+            raise ValueError("Observed matchup labels are missing")
+        game_lookup = dict(zip(actual_ids, observed_games))
+        if any(i in game_lookup and game_lookup[i] != g
+               for i, g in zip(ids, expected_games)):
+            raise ValueError("Observed and simulated matchup labels disagree")
     lookup = dict(zip(actual_ids, truth))
     if not ids.isin(lookup).all():
         raise ValueError("Missing observed scores for one or more simulated players")
