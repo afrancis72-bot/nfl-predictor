@@ -45,7 +45,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
                                    "projected_points": sum(p["proj"] for p in roster)})
         candidates.sort(key=lambda c: c["projected_points"], reverse=True)
         candidates = candidates[:120]
-        draws = np.random.default_rng(5).normal(15, 8, (1000, len(pool))).clip(0)
+        draws = np.random.default_rng(5).normal(15, 8, (10000, len(pool))).clip(0)
         selected = select_simulated_portfolio(candidates, pd.DataFrame(pool),
                                                draws, count=20, max_exposure=0.35)
         self.assertEqual(len(selected), 20)
