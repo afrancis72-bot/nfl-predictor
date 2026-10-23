@@ -10,7 +10,7 @@ from ai2_nfl_lineup import check_classic_lineup
 def build_classic_candidates(rows, *, count=5, attempts=30000, seed=7,
                              salary_floor=47500, salary_cap=50000,
                              max_exposure=0.60):
-    if not 1 <= count <= 20 or not 1 <= attempts <= 200000:
+    if not 1 <= count <= 200 or not 1 <= attempts <= 200000:
         raise ValueError("Invalid candidate count or search budget")
     if not 0 < max_exposure <= 1:
         raise ValueError("Invalid exposure limit")
