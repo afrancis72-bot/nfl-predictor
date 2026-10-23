@@ -170,7 +170,7 @@ def _resolve_baselines(pool, rates):
         r = pd.concat([r, pd.DataFrame(additions)], ignore_index=True)
     return r, report
 
-def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None):
+def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None, allow_role_proxies=True):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -185,6 +185,15 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         x=x[[(_clean_name(row['Name']),_team(row['TeamAbbrev'])) not in out_keys
              for _,row in x.iterrows()]].copy().reset_index(drop=True)
     r, baseline_report = _resolve_baselines(x, rates)
+    # Unified verified-data path fails closed; legacy callers retain their
+    # existing fallback behavior until separately migrated and tested.
+    if not allow_role_proxies:
+        proxy_players = [f"{entry['player']} ({entry['team']})"
+                         for entry in baseline_report
+                         if entry.get('method') == 'conservative_role_proxy']
+        if proxy_players:
+            raise ValueError('Unobserved role proxies are forbidden: '
+                             + ', '.join(proxy_players[:20]))
     x['TeamAbbrev']=x['TeamAbbrev'].map(_team); x['_name']=x['Name'].map(_clean_name)
     statcols=[c for c in r.columns if c not in {'player','team','position','game','source','latest_observed_season','latest_observed_week'}]
     # Never generate zero-volume player stats and assign arbitrary TDs.
