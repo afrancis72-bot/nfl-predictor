@@ -20,6 +20,7 @@ from ai2_nfl_eligibility import eligible_nfl_rows
 from ai2_nfl_feasibility import find_classic_lineup
 from ai2_nfl_candidate_builder import build_classic_candidates
 from ai2_nfl_portfolio_store import slate_fingerprint, save_portfolio, load_latest_portfolio
+from ai2_nfl_export import export_classic_candidates
 from ai2_market_challenge import freeze_simulation, compare_frozen_to_props
 from ai2_market_identity import parse_identity_csv
 from ai2_market_provider import retrieve_market_props
@@ -190,7 +191,14 @@ else:
                 st.download_button("Download candidate review JSON",
                                    json.dumps(summary, indent=2), file_name="nfl_candidate_review.json",
                                    mime="application/json")
-                st.warning("Review only: DraftKings CSV export and real-money readiness remain disabled pending slate verification, source freshness and historical backtesting.")
+                try:
+                    candidate_csv = export_classic_candidates(candidates)
+                    st.download_button("Download DraftKings roster-slot candidate CSV (review only)",
+                                       candidate_csv, file_name="nfl_classic_candidates_review.csv",
+                                       mime="text/csv", key="nfl_review_roster_csv")
+                except (ValueError, KeyError, TypeError) as exc:
+                    st.error(f"Candidate export blocked: {exc}")
+                st.warning("Review only: roster-slot CSV is NOT a validated DraftKings contest-entry upload. Confirm slate, statuses, ID mapping, entry template, and model quality before any use.")
     with tab_market:
         st.subheader("Market Intelligence · post-simulation only")
         st.caption("Independent simulation first. This screen never changes projections, reruns the model, or authorizes betting.")
