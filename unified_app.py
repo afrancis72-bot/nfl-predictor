@@ -45,8 +45,22 @@ def get_upload(sport, kind):
 
 st.set_page_config(page_title="TEAM AI² Pro", page_icon="🎯", layout="wide")
 st.markdown("""<style>
-.stApp {background: #080b12;}
-div[data-testid="stButton"] button {min-height: 3rem;}
+.stApp {background: #080b12; color: #f1f5ff;}
+.stApp [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stMarkdownContainer"] p,
+.stApp [data-testid="stMarkdownContainer"] h1,
+.stApp [data-testid="stMarkdownContainer"] h2,
+.stApp [data-testid="stMarkdownContainer"] h3,
+.stApp [data-testid="stMarkdownContainer"] h4,
+.stApp [data-testid="stWidgetLabel"] *,
+.stApp [data-testid="stCaptionContainer"] *,
+.stApp [data-testid="stTabs"] button,
+.stApp label {color: #f1f5ff !important;}
+.stApp [data-testid="stCaptionContainer"] * {color: #b8c6df !important;}
+.stApp [data-testid="stAlert"] * {color: inherit;}
+.stApp [data-testid="stButton"] button {min-height: 3rem; background: #173459; color: #f8fbff; border: 1px solid #427bb0;}
+.stApp [data-testid="stButton"] button:disabled {color: #b1baca; background: #293241;}
+.stApp [data-testid="stTabs"] button[aria-selected="true"] {color: #76c8ff !important;}
 </style>""", unsafe_allow_html=True)
 if "sport" not in st.session_state:
     requested = str(st.query_params.get("sport", "")).upper()
