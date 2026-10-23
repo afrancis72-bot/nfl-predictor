@@ -414,6 +414,8 @@ else:
                     ranked = select_simulated_portfolio(
                         candidates, players, draws, count=20, max_exposure=0.35,
                         upside_share=0.25)
+                    st.session_state["nfl_real_preview_stat_draws"] = stat_draws
+                    st.session_state["nfl_real_preview_ranked"] = ranked
                     # Injury uncertainty remains visible for human review;
                     # questionable players are not automatically declared out.
                     flagged = {}
@@ -439,6 +441,31 @@ else:
                 except (ValueError, KeyError, TypeError, IndexError, ImportError, OSError) as exc:
                     st.session_state.pop("nfl_real_preview_csv", None)
                     st.error(f"Real-player preview could not finish: {exc}")
+            st.divider()
+            st.subheader("Sportsbook prop comparison")
+            st.caption("Compare independent football-stat simulation distributions to market lines. "
+                       "No prop line influences the simulation or lineup optimizer. "
+                       "Public sportsbook feeds are not assumed to be available.")
+            prop_file = st.file_uploader(
+                "Optional sportsbook prop CSV (player, stat, line, sportsbook)",
+                type=["csv"], key="nfl_prop_compare_upload")
+            if prop_file is not None and st.session_state.get("nfl_real_preview_stat_draws"):
+                from ai2_nfl_prop_comparison import compare_props, read_prop_csv
+                prop_rows = read_prop_csv(prop_file.getvalue())
+                comparison = compare_props(
+                    st.session_state["nfl_real_preview_stat_draws"], prop_rows,
+                    portfolio=st.session_state.get("nfl_real_preview_ranked"))
+                if comparison:
+                    st.dataframe(pd.DataFrame(comparison), hide_index=True)
+                    st.download_button("Download prop comparison CSV",
+                        pd.DataFrame(comparison).to_csv(index=False),
+                        file_name="TEAM_AI2_PROP_COMPARISON.csv",
+                        mime="text/csv", key="nfl_prop_compare_download")
+                else:
+                    st.warning("No prop rows matched simulated players and supported stats. "
+                               "Check player names, column headers and stat labels.")
+            elif prop_file is not None:
+                st.info("Run the real-player football-stat simulation first to compare props.")
             if st.session_state.get("nfl_real_preview_csv"):
                 st.dataframe(st.session_state["nfl_real_preview_table"], hide_index=True)
                 st.warning("PROVISIONAL: Historical inputs, unverified roles/injuries, incomplete DST prior. Review every player; do not enter these as finalized contest lineups.")
