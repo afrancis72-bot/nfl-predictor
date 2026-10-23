@@ -3,6 +3,7 @@ import re
 import numpy as np
 import pandas as pd
 from props_data import make_rates, dk_classic_points
+from ai2_nfl_matchups import canonical_team, opponent_from_game_info
 
 ALIASES = {"JAC": "JAX", "LA": "LAR", "WAS": "WSH"}
 def _norm_name(value):
@@ -11,7 +12,7 @@ def _norm_name(value):
 
 def _team(value):
     v = str(value).strip().upper()
-    return ALIASES.get(v, v)
+    return canonical_team(v)
 
 def build_historical_baselines(salary_rows, history, season, week):
     """Match observed pre-kickoff player rates to DK IDs and compute transparent baselines.
@@ -35,6 +36,7 @@ def build_historical_baselines(salary_rows, history, season, week):
                "Team": s.get("TeamAbbrev", ""), "Position": pos,
                "Salary": s.get("Salary", ""), "DK Status": s.get("Status", ""),
                "Game Info": s.get("Game Info", ""),
+               "opponent": opponent_from_game_info(s.get("TeamAbbrev", ""), s.get("Game Info", "")),
                "historical_partial_dk": np.nan, "proj": np.nan, "games_observed": 0,
                "latest_observed_season": np.nan, "latest_observed_week": np.nan,
                "pass_attempts_pg": np.nan, "carries_pg": np.nan, "targets_pg": np.nan,
@@ -66,6 +68,8 @@ def build_historical_baselines(salary_rows, history, season, week):
             row["readiness_reason"] = "blocked by DraftKings injury designation"
         elif status in {"Q", "QUESTIONABLE"}:
             row["readiness_reason"] = "questionable: official availability and role review required"
+        elif not row["opponent"]:
+            row["readiness_reason"] = "missing or inconsistent DraftKings game matchup"
         elif pos == "DST":
             row["readiness_reason"] = "DST needs separate defensive-stat projection"
         elif row["match_status"] != "matched":
