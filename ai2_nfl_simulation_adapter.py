@@ -45,4 +45,5 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
     if rates["source"].astype(str).str.contains("ROLE_PROXY", case=False).any():
         raise ValueError("Unverified role-proxy rates are not eligible for official simulation")
     return simulate_stat_driven_dfs(pool, rates, n_sims=int(n_sims),
-                                    seed=int(seed), out_players=out_players)
+                                    seed=int(seed), out_players=out_players,
+                                    allow_role_proxies=False)
