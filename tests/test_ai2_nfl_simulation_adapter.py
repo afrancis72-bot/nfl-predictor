@@ -80,6 +80,7 @@ class AdapterTests(unittest.TestCase):
 
     def test_non_numeric_historical_rate_blocks(self):
         r = rates()
+        r["pass_attempts_pg"] = r["pass_attempts_pg"].astype(object)
         r.loc[0, "pass_attempts_pg"] = "unknown"
         with self.assertRaisesRegex(ValueError, "Invalid historical opportunity"):
             run_verified_stat_simulation(pool(), r)
