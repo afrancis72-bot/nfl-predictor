@@ -34,6 +34,19 @@ class AdapterTests(unittest.TestCase):
         engine.assert_called_once()
         self.assertIs(engine.call_args.kwargs["allow_role_proxies"], False)
 
+    def test_ineligible_player_never_reaches_engine(self):
+        p = pool()
+        p.loc[len(p)] = dict(ID="999", Name="Ineligible WR", Position="WR",
+                             TeamAbbrev="AAA", Salary=3000, game="AAA@BBB",
+                             proj=0.0, optimizer_eligible=False,
+                             weekly_projection_valid=False, opportunity_verified=False)
+        with patch("ai2_nfl_simulation_adapter.simulate_stat_driven_dfs",
+                   return_value=("players", "points", "stats")) as engine:
+            run_verified_stat_simulation(p, rates())
+        passed_pool = engine.call_args.args[0]
+        self.assertEqual(set(passed_pool["ID"].astype(str)), {"101", "102"})
+        self.assertNotIn("999", passed_pool["ID"].astype(str).tolist())
+
     def test_unverified_opportunity_blocks(self):
         p = pool()
         p.loc[0, "opportunity_verified"] = False
