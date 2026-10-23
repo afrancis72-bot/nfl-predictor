@@ -434,22 +434,11 @@ else:
                     st.error(f"Real-player preview could not finish: {exc}")
             st.divider()
             st.subheader("Sportsbook prop comparison")
+            st.caption("Experimental sportsbook-board retrieval was disabled after HTTP 429 rate limiting. Do not repeatedly request that source.")
             st.caption("Compare independent football-stat simulation distributions to market lines. "
                        "No prop line influences the simulation or lineup optimizer. "
                        "Public sportsbook feeds are not assumed to be available.")
             from ai2_nfl_prop_comparison import compare_props, read_prop_csv
-            if st.button("Check public sportsbook prop board (Hard Rock preferred)",
-                         key="nfl_sickfade_prop_refresh"):
-                try:
-                    from ai2_nfl_sickfade_props import fetch_sickfade_props
-                    public_rows, meta = fetch_sickfade_props()
-                    st.session_state["nfl_public_prop_rows"] = public_rows
-                    st.session_state["nfl_public_prop_meta"] = meta
-                    st.success(f"Retrieved {len(public_rows)} published prop lines.")
-                except (OSError, ValueError, KeyError, TypeError) as exc:
-                    st.session_state["nfl_public_prop_rows"] = []
-                    st.session_state.pop("nfl_public_prop_meta", None)
-                    st.warning(f"Public sportsbook board unavailable: {exc}. No market lines inferred.")
             if st.button("Check free public NFL prop lines", key="nfl_free_prop_refresh"):
                 try:
                     from ai2_nfl_free_props import fetch_public_espn_props
