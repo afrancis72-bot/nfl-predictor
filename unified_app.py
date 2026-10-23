@@ -417,6 +417,34 @@ else:
                         st.session_state.pop("nfl_research_draws", None)
                         st.session_state.pop("nfl_research_players", None)
                         st.error(f"Research simulation blocked: {exc}")
+                if "nfl_research_draws" in st.session_state and st.session_state.get("nfl_candidates"):
+                    with st.expander("Simulation-ranked NFL Classic portfolio · experimental", expanded=False):
+                        st.caption("Ranks existing legal candidate lineups using shared correlated game draws. Requires simulated outcomes for every roster member including DST. This is not projected contest ROI.")
+                        if st.button("Rank candidate portfolio by simulation", key="nfl_rank_sim_portfolio"):
+                            try:
+                                from ai2_nfl_sim_portfolio import select_simulated_portfolio
+                                ranked = select_simulated_portfolio(
+                                    st.session_state["nfl_candidates"],
+                                    st.session_state["nfl_research_players"],
+                                    st.session_state["nfl_research_draws"],
+                                    count=min(20, len(st.session_state["nfl_candidates"])),
+                                    max_exposure=0.35, upside_share=0.25)
+                                st.session_state["nfl_sim_ranked_candidates"] = ranked
+                            except (ValueError, KeyError, TypeError) as exc:
+                                st.session_state.pop("nfl_sim_ranked_candidates", None)
+                                st.error(f"Simulation ranking blocked: {exc}")
+                        ranked = st.session_state.get("nfl_sim_ranked_candidates")
+                        if ranked:
+                            st.dataframe(pd.DataFrame([dict(role=x["portfolio_role"],
+                                mean=round(x["simulated_mean"], 2),
+                                p90=round(x["simulated_p90"], 2),
+                                p99=round(x["simulated_p99"], 2))
+                                for x in ranked]), use_container_width=True, hide_index=True)
+                            st.caption(f"Selected {len(ranked)} of the requested candidate lineups under the exposure cap.")
+                            st.download_button("Download simulation-ranked DraftKings CSV",
+                                export_classic_candidates([x["candidate"] for x in ranked]),
+                                file_name="nfl_simulation_ranked_candidates.csv",
+                                mime="text/csv", key="nfl_sim_ranked_export")
                 if "nfl_research_report" in st.session_state:
                     st.dataframe(st.session_state["nfl_research_report"], use_container_width=True, hide_index=True)
                     with st.expander("Postgame simulation distribution audit", expanded=False):
