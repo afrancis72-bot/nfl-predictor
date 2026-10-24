@@ -54,3 +54,53 @@ if __name__ == "__main__":
     print(summary.to_string(index=False))
     detail.to_csv("nfl_replay_baseline_detail.csv", index=False)
     summary.to_csv("nfl_replay_baseline_summary.csv", index=False)
+
+def audit_simulation_outputs(players, draws, ranked=None, *, expected_sims=10000,
+                             max_exposure=0.35):
+    """Validate simulated fantasy points and optional selected lineup portfolio.
+
+    These are structural/integrity tests, not statistical calibration or ROI.
+    """
+    import numpy as np
+    from collections import Counter
+    from ai2_nfl_lineup import check_classic_lineup
+    issues = []
+    matrix = np.asarray(draws, dtype=float)
+    if matrix.ndim != 2 or matrix.shape != (expected_sims, len(players)):
+        issues.append("Simulation matrix shape/count mismatch")
+    elif not np.isfinite(matrix).all():
+        issues.append("Nonfinite fantasy-point outcomes")
+    if "ID" not in players or players["ID"].astype(str).duplicated().any():
+        issues.append("Missing or duplicate simulation player IDs")
+    lineup_count = len(ranked) if ranked is not None else 0
+    exposure = Counter()
+    if ranked is not None:
+        seen = set()
+        index = {str(pid): i for i, pid in enumerate(players["ID"].astype(str))} if "ID" in players else {}
+        for item in ranked:
+            roster = item["candidate"]["players"]
+            issues.extend(check_classic_lineup(roster))
+            ids = [str(p["ID"]) for p in roster]
+            signature = tuple(sorted(ids))
+            if signature in seen:
+                issues.append("Duplicate lineup")
+            seen.add(signature)
+            exposure.update(ids)
+            if matrix.ndim == 2 and matrix.shape[1] == len(players) and all(k in index for k in ids):
+                totals = matrix[:, [index[k] for k in ids]].sum(axis=1)
+                if abs(float(totals.mean()) - float(item["simulated_mean"])) > 0.05:
+                    issues.append("Lineup mean differs from underlying draws")
+                if abs(float(np.percentile(totals, 90)) - float(item["simulated_p90"])) > 0.05:
+                    issues.append("Lineup P90 differs from underlying draws")
+            else:
+                issues.append("Lineup player missing from simulation matrix")
+        if lineup_count:
+            excessive = {k: n for k, n in exposure.items() if n / lineup_count > max_exposure + 1e-9}
+            if excessive:
+                issues.append("Player exposure exceeds limit: " + str(excessive))
+    return {"status": "PASS" if not issues else "FAIL",
+            "simulations": matrix.shape[0] if matrix.ndim == 2 else 0,
+            "players": len(players), "lineups": lineup_count,
+            "max_exposure": max(exposure.values(), default=0) / max(lineup_count, 1),
+            "issues": sorted(set(issues)),
+            "scope": "Structural integrity only; no forecast accuracy or profitability claim"}
