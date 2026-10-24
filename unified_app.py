@@ -457,6 +457,18 @@ else:
                 st.subheader("Simulation statistics")
                 st.caption("10,000 shared historical-stat scenarios; model estimates, not validated current-week forecasts.")
                 st.dataframe(lineup_report, hide_index=True)
+                from ai2_nfl_export import slot_classic_lineup
+                import csv
+                import io
+                named_buffer = io.StringIO()
+                named_writer = csv.writer(named_buffer)
+                named_writer.writerow(["Lineup", "QB", "RB1", "RB2", "WR1", "WR2", "WR3", "TE", "FLEX", "DST", "Salary", "Sim mean", "Sim P90"])
+                for i, item in enumerate(st.session_state["nfl_real_preview_ranked"], 1):
+                    named_writer.writerow([i] + [
+                        str(p.get("Name") or "UNKNOWN") for p in slot_classic_lineup(item["candidate"]["players"])
+                    ] + [item["candidate"]["salary"], round(item["simulated_mean"], 2), round(item["simulated_p90"], 2)])
+                st.download_button("Download named lineup review (CSV)", named_buffer.getvalue(),
+                    file_name="TEAM_AI2_NAMED_LINEUP_REVIEW.csv", mime="text/csv", key="nfl_named_lineup_download")
                 st.download_button("Download player simulation stats (CSV)", player_report.to_csv(index=False),
                     file_name="TEAM_AI2_PLAYER_SIM_STATS.csv", mime="text/csv", key="nfl_player_sim_stats_download")
                 st.download_button("Download lineup simulation stats (CSV)", lineup_report.to_csv(index=False),
