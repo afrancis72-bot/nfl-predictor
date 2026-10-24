@@ -405,6 +405,8 @@ else:
                     ranked = select_simulated_portfolio(
                         candidates, players, draws, count=20, max_exposure=0.35,
                         upside_share=0.25)
+                    st.session_state["nfl_real_preview_players"] = players
+                    st.session_state["nfl_real_preview_draws"] = draws
                     st.session_state["nfl_real_preview_stat_draws"] = stat_draws
                     st.session_state["nfl_real_preview_ranked"] = ranked
                     # Injury uncertainty remains visible for human review;
@@ -432,6 +434,33 @@ else:
                 except (ValueError, KeyError, TypeError, IndexError, ImportError, OSError) as exc:
                     st.session_state.pop("nfl_real_preview_csv", None)
                     st.error(f"Real-player preview could not finish: {exc}")
+            if st.session_state.get("nfl_real_preview_ranked") and st.session_state.get("nfl_real_preview_players") is not None:
+                import numpy as np
+                import pandas as pd
+                sim_players = st.session_state["nfl_real_preview_players"]
+                sim_draws = st.session_state["nfl_real_preview_draws"]
+                player_report = sim_players[[x for x in ["ID", "Name", "Position", "TeamAbbrev", "Salary"] if x in sim_players.columns]].copy()
+                player_report["sim_mean"] = np.mean(sim_draws, axis=0).round(2)
+                player_report["sim_median"] = np.median(sim_draws, axis=0).round(2)
+                player_report["sim_p10"] = np.percentile(sim_draws, 10, axis=0).round(2)
+                player_report["sim_p90"] = np.percentile(sim_draws, 90, axis=0).round(2)
+                if "Salary" in player_report:
+                    player_report["points_per_1000"] = (player_report["sim_mean"] / (pd.to_numeric(player_report["Salary"], errors="coerce") / 1000)).round(2)
+                lineup_report = pd.DataFrame([{
+                    "lineup": i + 1,
+                    "role": item.get("portfolio_role", ""),
+                    "players": ", ".join(str(x.get("Name", x.get("ID"))) for x in item["candidate"]["players"]),
+                    "salary": item["candidate"]["salary"],
+                    "sim_mean": round(item["simulated_mean"], 2),
+                    "sim_p90": round(item["simulated_p90"], 2),
+                } for i, item in enumerate(st.session_state["nfl_real_preview_ranked"])])
+                st.subheader("Simulation statistics")
+                st.caption("10,000 shared historical-stat scenarios; model estimates, not validated current-week forecasts.")
+                st.dataframe(lineup_report, hide_index=True)
+                st.download_button("Download player simulation stats (CSV)", player_report.to_csv(index=False),
+                    file_name="TEAM_AI2_PLAYER_SIM_STATS.csv", mime="text/csv", key="nfl_player_sim_stats_download")
+                st.download_button("Download lineup simulation stats (CSV)", lineup_report.to_csv(index=False),
+                    file_name="TEAM_AI2_LINEUP_SIM_STATS.csv", mime="text/csv", key="nfl_lineup_sim_stats_download")
             # Sportsbook prop integration paused; prioritize DFS simulation and lineup validation.
             if st.session_state.get("nfl_real_preview_csv"):
                 st.dataframe(st.session_state["nfl_real_preview_table"], hide_index=True)
