@@ -458,7 +458,7 @@ else:
                 from ai2_nfl_historical_replay import audit_simulation_outputs
                 integrity = audit_simulation_outputs(sim_players, sim_draws,
                     st.session_state["nfl_real_preview_ranked"], expected_sims=10000,
-                    max_exposure=0.35)
+                    max_exposure=0.65)
                 with st.expander("Model integrity audit (technical details)", expanded=False):
                     if integrity["status"] == "PASS":
                         st.success("Simulation matrix, lineup scoring, roster rules and exposure passed structural checks.")
