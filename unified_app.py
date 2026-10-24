@@ -454,6 +454,18 @@ else:
                     "sim_mean": round(item["simulated_mean"], 2),
                     "sim_p90": round(item["simulated_p90"], 2),
                 } for i, item in enumerate(st.session_state["nfl_real_preview_ranked"])])
+                from ai2_nfl_historical_replay import audit_simulation_outputs
+                integrity = audit_simulation_outputs(sim_players, sim_draws,
+                    st.session_state["nfl_real_preview_ranked"], expected_sims=10000,
+                    max_exposure=0.35)
+                with st.expander("Model integrity audit (technical details)", expanded=False):
+                    if integrity["status"] == "PASS":
+                        st.success("Simulation matrix, lineup scoring, roster rules and exposure passed structural checks.")
+                    else:
+                        st.error("Simulation integrity FAILED. Do not enter these lineups.")
+                        for issue in integrity["issues"]:
+                            st.write("• " + issue)
+                    st.caption("This does not validate player projections, historical calibration or expected ROI.")
                 st.subheader("Simulation statistics")
                 st.caption("10,000 shared historical-stat scenarios; model estimates, not validated current-week forecasts.")
                 st.dataframe(lineup_report, hide_index=True)
