@@ -467,6 +467,57 @@ else:
                         for issue in integrity["issues"]:
                             st.write("• " + issue)
                     st.caption("This does not validate player projections, historical calibration or expected ROI.")
+                with st.expander("Evaluate our hand-built Stroud / CMC lineup", expanded=True):
+                    st.caption("Scores this exact nine-player roster against the SAME 10,000 correlated scenarios already in memory. Does not add individual P90 scores.")
+                    if st.button("Evaluate hand-built lineup", key="nfl_handbuilt_eval"):
+                        try:
+                            from ai2_nfl_lineup import check_classic_lineup
+                            wanted = [
+                                ("QB", "C.J. Stroud"), ("RB", "Christian McCaffrey"),
+                                ("RB", "Chuba Hubbard"), ("WR", "Puka Nacua"),
+                                ("WR", "Ja'Marr Chase"), ("WR", "Jaylin Noel"),
+                                ("TE", "Tyler Higbee"), ("TE", "Michael Mayer"),
+                                ("DST", "Colts")]
+                            roster = []
+                            indexes = []
+                            for pos, name in wanted:
+                                matched = sim_players.index[
+                                    sim_players["Name"].astype(str).str.casefold().eq(name.casefold())
+                                    & sim_players["Position"].astype(str).str.upper().eq(pos)
+                                ].tolist()
+                                if len(matched) != 1:
+                                    raise ValueError(f"Expected one simulated {pos} named {name}; found {len(matched)}.")
+                                idx = matched[0]
+                                indexes.append(sim_players.index.get_loc(idx))
+                                roster.append(sim_players.loc[idx].to_dict())
+                            errors = check_classic_lineup(roster, salary_floor=49600, salary_cap=50000)
+                            if errors:
+                                raise ValueError("; ".join(errors))
+                            totals = np.asarray(sim_draws)[:, indexes].sum(axis=1)
+                            summary = {
+                                "Salary": int(sum(float(p["Salary"]) for p in roster)),
+                                "Mean": round(float(totals.mean()), 2),
+                                "Median": round(float(np.median(totals)), 2),
+                                "P90": round(float(np.percentile(totals, 90)), 2),
+                                "P99": round(float(np.percentile(totals, 99)), 2),
+                                "Chance 142+": round(float(np.mean(totals >= 142) * 100), 2),
+                                "Chance 160+": round(float(np.mean(totals >= 160) * 100), 2),
+                                "Chance 180+": round(float(np.mean(totals >= 180) * 100), 2),
+                                "Chance 200+": round(float(np.mean(totals >= 200) * 100), 2),
+                                "Chance 214+": round(float(np.mean(totals >= 214) * 100), 2),
+                            }
+                            st.session_state["nfl_handbuilt_result"] = summary
+                            st.session_state["nfl_handbuilt_scenarios"] = pd.DataFrame({
+                                "scenario": np.arange(1, len(totals) + 1), "dk_points": totals})
+                        except (ValueError, KeyError, IndexError, TypeError) as exc:
+                            st.error(f"Could not score hand-built lineup: {exc}")
+                    if st.session_state.get("nfl_handbuilt_result"):
+                        st.dataframe(pd.DataFrame([st.session_state["nfl_handbuilt_result"]]), hide_index=True)
+                        st.download_button("Download hand-built lineup scenario scores (CSV)",
+                            st.session_state["nfl_handbuilt_scenarios"].to_csv(index=False),
+                            file_name="TEAM_AI2_HANDBUILT_SCENARIOS.csv", mime="text/csv",
+                            key="nfl_handbuilt_scenarios_download")
+                        st.warning("Provisional historical-baseline simulation only; current player availability and forecast calibration remain unverified.")
                 st.subheader("Simulation statistics")
                 st.caption("10,000 shared historical-stat scenarios; model estimates, not validated current-week forecasts.")
                 st.dataframe(lineup_report, hide_index=True)
