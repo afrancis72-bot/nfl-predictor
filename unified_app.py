@@ -398,8 +398,12 @@ else:
                     st.info(f"Matched {len(pool)} real eligible historical-baseline players. Running actual football-statistics engine.")
                     players, draws, stat_draws = simulate_stat_driven_dfs(
                         pool, rates, n_sims=10000, allow_role_proxies=False)
+                    # Scenario: exclude Hurst and questionable Nacua; retain Tucker with reduced exposure.
+                    excluded_names = {"ted hurst iii", "puka nacua"}
+                    build_pool = pool[~pool["Name"].astype(str).str.casefold().isin(excluded_names)].copy()
+                    st.caption("Scenario exclusions: Ted Hurst III and Puka Nacua. Tre Tucker remains eligible.")
                     candidates = build_classic_candidates(
-                        pool.to_dict("records"), count=1200, attempts=120000, max_exposure=1.0,
+                        build_pool.to_dict("records"), count=1200, attempts=120000, max_exposure=1.0,
                         salary_floor=49600)
                     if len(candidates) < 20:
                         raise ValueError(f"Only {len(candidates)} legal real-player candidates; need at least 20.")
