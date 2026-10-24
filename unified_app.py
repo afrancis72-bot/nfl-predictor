@@ -399,12 +399,12 @@ else:
                     players, draws, stat_draws = simulate_stat_driven_dfs(
                         pool, rates, n_sims=10000, allow_role_proxies=False)
                     candidates = build_classic_candidates(
-                        pool.to_dict("records"), count=120, max_exposure=1.0,
+                        pool.to_dict("records"), count=1200, attempts=120000, max_exposure=1.0,
                         salary_floor=49600)
                     if len(candidates) < 20:
                         raise ValueError(f"Only {len(candidates)} legal real-player candidates; need at least 20.")
                     ranked = select_simulated_portfolio(
-                        candidates, players, draws, count=20, max_exposure=0.35,
+                        candidates, players, draws, count=20, max_exposure=0.65,
                         upside_share=0.25)
                     st.session_state["nfl_real_preview_players"] = players
                     st.session_state["nfl_real_preview_draws"] = draws
