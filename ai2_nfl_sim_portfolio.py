@@ -25,7 +25,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
     signatures = set()
     for candidate in candidates:
         roster = candidate["players"]
-        errors = check_classic_lineup(roster, salary_floor=47500, salary_cap=50000)
+        errors = check_classic_lineup(roster, salary_floor=49600, salary_cap=50000)
         if errors:
             raise ValueError("Illegal candidate: " + "; ".join(errors))
         keys = [str(p["ID"]) for p in roster]
