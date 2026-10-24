@@ -41,6 +41,26 @@ def build_classic_candidates(rows, *, count=5, attempts=30000, seed=7,
         score = sum(float(p["proj"]) for p in lineup)
         if key not in best or score > best[key][0]:
             best[key] = (score, lineup)
+    # Improve the best legal random seeds with targeted same-position upgrades.
+    # This discovers balanced salary trades that pure random sampling misses.
+    seeds = sorted(best.values(), key=lambda x: x[0], reverse=True)[:min(count, 400)]
+    for _, seed_lineup in seeds:
+        roster = list(seed_lineup)
+        used = {str(p["ID"]) for p in roster}
+        for i, old in enumerate(roster):
+            alternatives = sorted(pools[old["Position"]],
+                                  key=lambda p: float(p["proj"]), reverse=True)[:20]
+            for replacement in alternatives:
+                if str(replacement["ID"]) in used:
+                    continue
+                revised = roster.copy()
+                revised[i] = replacement
+                if check_classic_lineup(revised, salary_floor=salary_floor, salary_cap=salary_cap):
+                    continue
+                key = tuple(sorted(str(p["ID"]) for p in revised))
+                score = sum(float(p["proj"]) for p in revised)
+                if key not in best or score > best[key][0]:
+                    best[key] = (score, revised)
     selected = []
     exposures = Counter()
     limit = max(1, int(count * max_exposure + 0.999999))
