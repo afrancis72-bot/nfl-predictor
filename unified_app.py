@@ -399,7 +399,8 @@ else:
                     players, draws, stat_draws = simulate_stat_driven_dfs(
                         pool, rates, n_sims=10000, allow_role_proxies=False)
                     candidates = build_classic_candidates(
-                        pool.to_dict("records"), count=120, max_exposure=1.0)
+                        pool.to_dict("records"), count=120, max_exposure=1.0,
+                        salary_floor=49600)
                     if len(candidates) < 20:
                         raise ValueError(f"Only {len(candidates)} legal real-player candidates; need at least 20.")
                     ranked = select_simulated_portfolio(
@@ -592,7 +593,8 @@ else:
                         pool, rates, n_sims=10000)
                     if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
                         raise ValueError("Simulation results are incomplete or nonfinite.")
-                    candidates = build_classic_candidates(eligible, count=120, max_exposure=1.0)
+                    candidates = build_classic_candidates(eligible, count=120, max_exposure=1.0,
+                        salary_floor=49600)
                     if len(candidates) < 20:
                         raise ValueError(f"Only {len(candidates)} legal candidate lineups were found; 20 required.")
                     ranked = select_simulated_portfolio(
