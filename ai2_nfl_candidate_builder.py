@@ -8,7 +8,7 @@ from random import Random
 from ai2_nfl_lineup import check_classic_lineup
 
 def build_classic_candidates(rows, *, count=5, attempts=30000, seed=7,
-                             salary_floor=47500, salary_cap=50000,
+                             salary_floor=49600, salary_cap=50000,
                              max_exposure=0.60):
     if not 1 <= count <= 200 or not 1 <= attempts <= 200000:
         raise ValueError("Invalid candidate count or search budget")
