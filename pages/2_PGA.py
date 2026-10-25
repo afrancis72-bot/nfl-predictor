@@ -33,26 +33,26 @@ st.info(
     "are still required before using entries in a contest."
 )
 
-# Prevent an old tournament's portfolio being reused after PGA slate changes.
+# Streamlit preserves session_state objects between pages. A fresh tournament
+# setup replaces the bundle, so immediately discard portfolios from prior setups
+# even if golfer names and salaries happen to match.
 bundle = st.session_state.get("pga_bundle")
-if bundle:
-    players = bundle.get("players")
-    if isinstance(players, pd.DataFrame) and {"player", "salary"}.issubset(players.columns):
-        cols = [x for x in ("player", "salary", "ID") if x in players.columns]
-        roster_signature = tuple(
-            tuple(str(v) for v in row)
-            for row in players[cols].sort_values("player").itertuples(index=False, name=None)
-        )
-        signature = (
-            str(bundle.get("tournament_name")),
-            str(bundle.get("tournament_start")),
-            roster_signature,
-        )
-        previous = st.session_state.get("_pga_portfolio_slate_signature")
-        if previous is not None and previous != signature:
-            st.session_state.pop("dfs_portfolio", None)
-        st.session_state["_pga_portfolio_slate_signature"] = signature
+if bundle is not None:
+    bundle_id = id(bundle)
+    prior_id = st.session_state.get("_pga_active_bundle_id")
+    if prior_id != bundle_id:
+        st.session_state.pop("dfs_portfolio", None)
+        st.session_state.pop("_pga_portfolio_origin", None)
+        st.session_state["_pga_active_bundle_id"] = bundle_id
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-runpy.run_path(str(ROOT / "app.py"), run_name="__main__")
+context = runpy.run_path(str(ROOT / "app.py"), run_name="__main__")
+
+# Reached only after the DFS page finishes. Setup intentionally calls st.stop().
+# Stamp a newly-generated portfolio to the exact in-memory setup it used.
+bundle = st.session_state.get("pga_bundle")
+portfolio = st.session_state.get("dfs_portfolio")
+if context.get("page") == "🏆 Tournament DFS" and bundle is not None and portfolio is not None:
+    st.session_state["_pga_portfolio_origin"] = (id(bundle), id(portfolio))
+
