@@ -30,7 +30,7 @@ def fill_entries_template(portfolio: pd.DataFrame, dk_players: pd.DataFrame, ent
     if dk["__name"].duplicated().any():
         raise ValueError("Duplicate golfer names in salary file; player ID lookup is ambiguous.")
     dk["__id"] = dk["ID"].astype(str).str.strip()
-    if dk["__id"].str.fullmatch(r"\d+(?:\.0)?").fillna(False).all() is False:
+    if not dk["__id"].str.fullmatch(r"\d+(?:\.0)?").fillna(False).all():
         raise ValueError("DraftKings golfer ID is missing or malformed in salary file.")
     dk["__id"] = dk["__id"].str.replace(r"\.0$", "", regex=True)
     if dk["__id"].duplicated().any():
