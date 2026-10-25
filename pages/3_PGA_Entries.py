@@ -31,20 +31,13 @@ if not isinstance(players, pd.DataFrame) or not {"player", "salary"}.issubset(pl
     st.error("Current PGA player pool is unavailable. Rebuild the tournament setup.")
     st.stop()
 
-cols = [c for c in ("player", "salary", "ID") if c in players]
-roster_signature = tuple(
-    tuple(str(v) for v in row)
-    for row in players[cols].sort_values("player").itertuples(index=False, name=None)
-)
-signature = (
-    str(bundle.get("tournament_name")), str(bundle.get("tournament_start")),
-    roster_signature,
-)
-if st.session_state.get("_pga_portfolio_slate_signature") != signature:
+# Require an actual optimizer run for this exact session's tournament bundle.
+# Portfolio/setup object identities change whenever a new model is built.
+if st.session_state.get("_pga_portfolio_origin") != (id(bundle), id(portfolio)):
     st.session_state.pop("dfs_portfolio", None)
     st.error(
-        "The saved lineups have not been validated against this tournament setup. "
-        "Return to PGA, generate a new portfolio, then open Entry Export."
+        "These lineups are not linked to the currently loaded PGA model. "
+        "Return to PGA Tournament DFS and generate a fresh portfolio."
     )
     st.stop()
 
