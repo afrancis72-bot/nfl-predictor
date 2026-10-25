@@ -3,3 +3,6 @@ pandas>=2.0
 numpy>=1.26
 scipy>=1.11
 beautifulsoup4
+
+requests>=2.31
+scikit-learn>=1.3
