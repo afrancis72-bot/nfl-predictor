@@ -9,9 +9,12 @@ import sys
 import pandas as pd
 import streamlit as st
 
+APP_ROOT = Path(__file__).resolve().parents[1]
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 from sports.pga.dk_entries import fill_entries_template
 
-ROOT = Path(__file__).resolve().parents[1] / "sports" / "pga" / "legacy"
+ROOT = APP_ROOT / "sports" / "pga" / "legacy"
 REQUIRED = (
     "app.py", "pga_predictor_pro.py", "golf_first_v11.py",
     "portfolio_optimizer.py", "round_parlay.py",
