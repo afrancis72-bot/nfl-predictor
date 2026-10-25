@@ -12,7 +12,6 @@ import streamlit as st
 APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
-from sports.pga.dk_entries import fill_entries_template
 
 ROOT = APP_ROOT / "sports" / "pga" / "legacy"
 REQUIRED = (
@@ -28,6 +27,7 @@ if missing:
     st.stop()
 
 st.caption("PGA V11 golf-first simulator · Team AI² Pro")
+st.page_link("pages/3_PGA_Entries.py", label="DraftKings PGA Entries export", icon="📄")
 st.info(
     "PGA source is installed. Current-week data and deployment validation "
     "are still required before using entries in a contest."
@@ -55,35 +55,4 @@ if bundle:
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-context = runpy.run_path(str(ROOT / "app.py"), run_name="__main__")
-
-# The standalone PGA app produces a research long-form CSV. Offer a separate,
-# validated DK Entries-file export only with real user-supplied entry IDs.
-bundle = st.session_state.get("pga_bundle")
-portfolio = st.session_state.get("dfs_portfolio")
-if context.get("page") == "🏆 Tournament DFS" and bundle and portfolio:
-    with st.expander("DraftKings contest-entry export (optional)", expanded=False):
-        st.caption(
-            "Upload your actual PGA DraftKings Entries CSV to fill six G slots "
-            "using golfer IDs from this week's DraftKings salary file. "
-            "Contest IDs and entry IDs are preserved."
-        )
-        template_file = st.file_uploader(
-            "DraftKings PGA Entries CSV", type=["csv"], key="pga_dk_entries_template"
-        )
-        if template_file is not None:
-            try:
-                template = pd.read_csv(template_file, dtype=str)
-                completed = fill_entries_template(
-                    portfolio["portfolio"], bundle["players"], template
-                )
-                st.success(f"Validated {len(portfolio['summary'])} lineups for entry export.")
-                st.download_button(
-                    "Download completed DraftKings Entries CSV",
-                    completed.to_csv(index=False),
-                    "team_ai2_pga_entries.csv",
-                    "text/csv",
-                    key="pga_dk_entries_download",
-                )
-            except Exception as exc:
-                st.error(f"DraftKings export blocked: {exc}")
+runpy.run_path(str(ROOT / "app.py"), run_name="__main__")
