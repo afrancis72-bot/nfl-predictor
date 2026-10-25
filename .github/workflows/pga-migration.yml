@@ -1,0 +1,28 @@
+name: PGA migration checks
+
+on:
+  push:
+    branches: [feature/unified-ai2-platform]
+    paths:
+      - 'scripts/import_pga.py'
+      - 'tests/test_pga_import.py'
+      - 'sports/pga/**'
+      - '.github/workflows/pga-migration.yml'
+  pull_request:
+    paths:
+      - 'scripts/import_pga.py'
+      - 'tests/test_pga_import.py'
+      - 'sports/pga/**'
+      - '.github/workflows/pga-migration.yml'
+
+jobs:
+  pga-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test PGA import integrity
+        run: python -m unittest discover -s tests -p 'test_pga_import.py' -v
