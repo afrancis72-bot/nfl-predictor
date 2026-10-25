@@ -10,9 +10,12 @@ on:
       - 'tests/test_pga_page_smoke.py'
       - 'tests/test_pga_source_parity.py'
       - 'tests/test_pga_dk_entries.py'
+      - 'tests/test_pga_real_dk_template.py'
       - 'sports/pga/**'
       - 'pages/2_PGA.py'
+      - 'pages/3_PGA_Entries.py'
       - 'sports/pga/dk_entries.py'
+      - 'sports/pga/dk_template.py'
       - '.github/workflows/pga-migration.yml'
   pull_request:
     paths:
@@ -22,9 +25,12 @@ on:
       - 'tests/test_pga_page_smoke.py'
       - 'tests/test_pga_source_parity.py'
       - 'tests/test_pga_dk_entries.py'
+      - 'tests/test_pga_real_dk_template.py'
       - 'sports/pga/**'
       - 'pages/2_PGA.py'
+      - 'pages/3_PGA_Entries.py'
       - 'sports/pga/dk_entries.py'
+      - 'sports/pga/dk_template.py'
       - '.github/workflows/pga-migration.yml'
 
 jobs:
@@ -46,5 +52,7 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_pga_source_parity.py' -v
       - name: Validate PGA DraftKings contest-entry exporter
         run: python -m unittest discover -s tests -p 'test_pga_dk_entries.py' -v
+      - name: PGA native DraftKings Entries format regression
+        run: python -m unittest discover -s tests -p 'test_pga_real_dk_template.py' -v
       - name: PGA Streamlit page smoke test
         run: python -m unittest discover -s tests -p 'test_pga_page_smoke.py' -v
