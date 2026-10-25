@@ -9,8 +9,10 @@ on:
       - 'tests/test_pga_engine_e2e.py'
       - 'tests/test_pga_page_smoke.py'
       - 'tests/test_pga_source_parity.py'
+      - 'tests/test_pga_dk_entries.py'
       - 'sports/pga/**'
       - 'pages/2_PGA.py'
+      - 'sports/pga/dk_entries.py'
       - '.github/workflows/pga-migration.yml'
   pull_request:
     paths:
@@ -19,8 +21,10 @@ on:
       - 'tests/test_pga_engine_e2e.py'
       - 'tests/test_pga_page_smoke.py'
       - 'tests/test_pga_source_parity.py'
+      - 'tests/test_pga_dk_entries.py'
       - 'sports/pga/**'
       - 'pages/2_PGA.py'
+      - 'sports/pga/dk_entries.py'
       - '.github/workflows/pga-migration.yml'
 
 jobs:
@@ -40,5 +44,7 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_pga_engine_e2e.py' -v
       - name: Preserve original PGA engine source hashes
         run: python -m unittest discover -s tests -p 'test_pga_source_parity.py' -v
+      - name: Validate PGA DraftKings contest-entry exporter
+        run: python -m unittest discover -s tests -p 'test_pga_dk_entries.py' -v
       - name: PGA Streamlit page smoke test
         run: python -m unittest discover -s tests -p 'test_pga_page_smoke.py' -v
