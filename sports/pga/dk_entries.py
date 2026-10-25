@@ -12,7 +12,7 @@ def fill_entries_template(portfolio: pd.DataFrame, dk_players: pd.DataFrame, ent
     required = {"lineup", "player", "salary"}
     if not required.issubset(portfolio.columns):
         raise ValueError("Portfolio must contain lineup, player and salary columns.")
-    if not {"player", "ID"}.issubset(dk_players.columns):
+    if not {"player", "ID", "salary"}.issubset(dk_players.columns):
         raise ValueError("Upload the native DraftKings PGA salary file containing player IDs.")
     if "Entry ID" not in entries.columns:
         raise ValueError("Use your DraftKings Entries CSV with Entry ID and six G slots.")
@@ -36,7 +36,13 @@ def fill_entries_template(portfolio: pd.DataFrame, dk_players: pd.DataFrame, ent
     if dk["__id"].duplicated().any():
         raise ValueError("Duplicate DraftKings golfer IDs in salary file.")
 
-    lookup = dict(zip(dk["__name"], zip(dk["player"].astype(str), dk["__id"])))
+    dk["__salary"] = pd.to_numeric(dk["salary"], errors="coerce")
+    if dk["__salary"].isna().any() or (dk["__salary"] <= 0).any():
+        raise ValueError("Current DraftKings salary file contains invalid salaries.")
+    lookup = dict(zip(
+        dk["__name"],
+        zip(dk["player"].astype(str), dk["__id"], dk["__salary"])
+    ))
     roster = portfolio.copy()
     roster["__name"] = roster["player"].astype(str).str.strip().str.casefold()
     roster["salary"] = pd.to_numeric(roster["salary"], errors="coerce")
@@ -51,12 +57,21 @@ def fill_entries_template(portfolio: pd.DataFrame, dk_players: pd.DataFrame, ent
         unmatched = sorted(set(group["__name"]) - set(lookup))
         if unmatched:
             raise ValueError("Golfers missing from current DraftKings salary file: " + ", ".join(unmatched))
+        for _, golfer in group.iterrows():
+            actual_salary = lookup[golfer["__name"]][2]
+            if int(golfer["salary"]) != int(actual_salary):
+                raise ValueError(
+                    "Saved lineup salary differs from this week's DraftKings salary "
+                    f"for {golfer['player']}. Rebuild the PGA model using the current slate."
+                )
         lineups.append([f"{lookup[n][0]} ({lookup[n][1]})" for n in group["__name"]])
 
     if not lineups:
         raise ValueError("No PGA lineups to export.")
     if len(lineups) > len(entries):
         raise ValueError("There are more lineups than available DraftKings entries.")
+    if entries["Entry ID"].astype(str).duplicated().any():
+        raise ValueError("Duplicate DraftKings Entry IDs in template.")
     if entries.iloc[:len(lineups)]["Entry ID"].isna().any():
         raise ValueError("DraftKings Entries CSV has blank Entry ID values.")
     result = entries.copy()
