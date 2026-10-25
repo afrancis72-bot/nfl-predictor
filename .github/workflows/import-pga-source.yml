@@ -1,0 +1,74 @@
+name: Import PGA source into unified branch
+
+on:
+  push:
+    branches: [feature/unified-ai2-platform]
+    paths:
+      - '.github/workflows/import-pga-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import-pga:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out unified app
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Check out original PGA repository
+        uses: actions/checkout@v4
+        with:
+          repository: afrancis72-bot/pga-predictor
+          ref: main
+          path: _pga_source
+          # For private repositories, configure PGA_SOURCE_TOKEN as a read-only secret.
+          token: ${{ secrets.PGA_SOURCE_TOKEN || github.token }}
+      - name: Copy original PGA source with integrity verification
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, shutil
+          src=Path("_pga_source")
+          dst=Path("sports/pga/legacy")
+          dst.mkdir(parents=True,exist_ok=True)
+          skip={".git",".github","__pycache__",".streamlit"}
+          count=0
+          for f in src.rglob("*"):
+              if not f.is_file() or any(p in skip for p in f.relative_to(src).parts):
+                  continue
+              if f.suffix not in {".py",".csv",".json",".md",".txt",".toml",".yaml",".yml"}:
+                  continue
+              target=dst/f.relative_to(src)
+              target.parent.mkdir(parents=True,exist_ok=True)
+              shutil.copyfile(f,target)
+              if hashlib.sha256(f.read_bytes()).digest()!=hashlib.sha256(target.read_bytes()).digest():
+                  raise RuntimeError(f"Integrity mismatch: {f}")
+              count+=1
+          app=dst/"app.py"
+          original=app.read_text(encoding="utf-8")
+          import re
+          adapted,n=re.subn(r'^st\.set_page_config\([^\n]*\)\s*$', '', original, count=1,flags=re.MULTILINE)
+          if n!=1:
+              raise RuntimeError("Expected exactly one page_config call to adapt")
+          adapted=adapted.replace('st.title("⛳ PGA Predictor Pro — Unified Dashboard V10.9.5")','st.title("⛳ Team AI² Pro | PGA")')
+          app.write_text(adapted,encoding="utf-8")
+          print(f"Copied and verified {count} source files; adapted only app.py for Streamlit multipage.")
+          PY
+      - name: Syntax-check imported Python
+        run: python -m compileall -q sports/pga/legacy pages/2_PGA.py
+      - name: Commit imported source to development branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sports/pga/legacy
+          if git diff --cached --quiet; then
+            echo "PGA source already matches; nothing to commit"
+          else
+            git commit -m "Import original PGA engine into unified development branch"
+            git push origin HEAD:feature/unified-ai2-platform
+          fi
