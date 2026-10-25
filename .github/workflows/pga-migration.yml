@@ -7,6 +7,7 @@ on:
       - 'scripts/import_pga.py'
       - 'tests/test_pga_import.py'
       - 'tests/test_pga_engine_e2e.py'
+      - 'tests/test_pga_page_smoke.py'
       - 'sports/pga/**'
       - 'pages/2_PGA.py'
       - '.github/workflows/pga-migration.yml'
@@ -15,6 +16,7 @@ on:
       - 'scripts/import_pga.py'
       - 'tests/test_pga_import.py'
       - 'tests/test_pga_engine_e2e.py'
+      - 'tests/test_pga_page_smoke.py'
       - 'sports/pga/**'
       - 'pages/2_PGA.py'
       - '.github/workflows/pga-migration.yml'
@@ -34,3 +36,5 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: PGA engine simulation and optimizer regression
         run: python -m unittest discover -s tests -p 'test_pga_engine_e2e.py' -v
+      - name: PGA Streamlit page smoke test
+        run: python -m unittest discover -s tests -p 'test_pga_page_smoke.py' -v
