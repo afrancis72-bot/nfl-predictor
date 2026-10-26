@@ -8,7 +8,7 @@ import re
 import pandas as pd
 
 
-def fill_entries_template(portfolio: pd.DataFrame, dk_players: pd.DataFrame, entries: pd.DataFrame) -> pd.DataFrame:
+def fill_entries_template(portfolio: pd.DataFrame, dk_players: pd.DataFrame, entries: pd.DataFrame, featured_lineup: int | None = None) -> pd.DataFrame:
     required = {"lineup", "player", "salary"}
     if not required.issubset(portfolio.columns):
         raise ValueError("Portfolio must contain lineup, player and salary columns.")
@@ -49,7 +49,8 @@ def fill_entries_template(portfolio: pd.DataFrame, dk_players: pd.DataFrame, ent
     if roster["salary"].isna().any():
         raise ValueError("Portfolio includes an invalid salary.")
     lineups = []
-    for _, group in roster.groupby("lineup", sort=True):
+    lineup_ids = []
+    for lineup_id, group in roster.groupby("lineup", sort=True):
         if len(group) != 6 or group["__name"].nunique() != 6:
             raise ValueError("Every PGA lineup must contain exactly six distinct golfers.")
         if group["salary"].sum() > 50000 or group["salary"].sum() <= 0:
@@ -64,6 +65,7 @@ def fill_entries_template(portfolio: pd.DataFrame, dk_players: pd.DataFrame, ent
                     "Saved lineup salary differs from this week's DraftKings salary "
                     f"for {golfer['player']}. Rebuild the PGA model using the current slate."
                 )
+        lineup_ids.append(int(lineup_id))
         lineups.append([f"{lookup[n][0]} ({lookup[n][1]})" for n in group["__name"]])
 
     if not lineups:
@@ -75,7 +77,35 @@ def fill_entries_template(portfolio: pd.DataFrame, dk_players: pd.DataFrame, ent
     if entries.iloc[:len(lineups)]["Entry ID"].isna().any():
         raise ValueError("DraftKings Entries CSV has blank Entry ID values.")
     result = entries.copy()
-    for row_idx, golfers in enumerate(lineups):
+    assignments = list(zip(range(len(lineups)), lineups))
+    if featured_lineup is not None:
+        # The user has one $5 single-entry and ten $0.50 GPP entries.
+        # Never assume that DraftKings placed the expensive contest first.
+        if int(featured_lineup) not in lineup_ids:
+            raise ValueError("Featured PGA lineup is missing from the optimizer portfolio.")
+        if "Entry Fee" not in entries.columns:
+            raise ValueError("DraftKings entry fees are missing; cannot safely assign the featured lineup to the $5 contest.")
+        fees = pd.to_numeric(
+            entries["Entry Fee"].fillna("").astype(str).str.replace(r"[^\\d.]", "", regex=True),
+            errors="coerce",
+        )
+        if len(lineups) == 11:
+            high = list(entries.index[fees.eq(5.0)])
+            low = list(entries.index[fees.eq(0.50)])
+            if len(high) != 1 or len(low) < 10:
+                raise ValueError("Expected exactly one $5 entry and at least ten $0.50 entries; check contest fees.")
+            targets = [high[0]] + low[:10]
+        else:
+            maximum = fees.max(skipna=True)
+            high = list(entries.index[fees.eq(maximum)])
+            remaining = list(entries.index[fees.lt(maximum)])
+            if len(high) != 1 or len(remaining) < len(lineups) - 1:
+                raise ValueError("Unable to identify a unique higher-fee entry for the featured lineup.")
+            targets = [high[0]] + remaining[:len(lineups)-1]
+        ordered = [int(featured_lineup)] + [x for x in lineup_ids if x != int(featured_lineup)]
+        roster_map = dict(zip(lineup_ids, lineups))
+        assignments = [(row, roster_map[lineup_id]) for row, lineup_id in zip(targets, ordered)]
+    for row_idx, golfers in assignments:
         for col_idx, golfer in zip(slot_indices, golfers):
             result.iat[row_idx, col_idx] = golfer
     # Restore repeated DK slot headers if pandas suffixed them.
