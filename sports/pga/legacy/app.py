@@ -8,6 +8,7 @@ from international_ingestion import search_courses, geocode_course, location_det
 from portfolio_optimizer import PortfolioSettings, optimize_portfolio
 from pga_predictor_pro import Config, predict_from_dataframes
 from golf_first_v11 import simulate_golf_first
+from rrg_course_fit import normalize_rrg_course_fit, attach_source_comparison
 from round_parlay import fetch_groupings, normalize_groupings_upload, fetch_live_results, fetch_official_prior_rounds, normalize_live_results, build_round_ratings, simulate_groups, build_six_leg_tickets, golfchannel_round_url
 
 ROOT = Path(__file__).resolve().parent
@@ -351,10 +352,16 @@ if page == "🏠 Setup / Inputs":
     course_query=b.text_input("Course",value=prev.get("course_query", ""),placeholder="Current course")
     tournament_start=c.date_input("Tournament-week start",value=prev.get("tournament_start",date.today()))
 
-    st.subheader("Required weekly files")
-    u1,u2=st.columns(2)
-    players_up=u1.file_uploader("DraftKings PGA salary / field CSV",type="csv",key="setup_players")
-    otis_fit_up=u2.file_uploader("OTIS — Advanced Course-Fit CSV",type="csv",key="setup_otis")
+    st.subheader("Tournament files")
+    st.caption("DraftKings is required. RickRunGood and OTIS are independent OPTIONAL comparison sources. "
+               "The primary model runs without either. Missing provider data is never fabricated.")
+    u1,u2,u3=st.columns(3)
+    players_up=u1.file_uploader("DraftKings PGA field (required)",type="csv",key="setup_players")
+    rrg_up=u2.file_uploader("RickRunGood course-fit (optional)",type="csv",key="setup_rrg")
+    otis_fit_up=u3.file_uploader("OTIS Advanced Course-Fit (optional)",type="csv",key="setup_otis")
+    use_otis_in_model=st.checkbox("Experimental: include OTIS as a projection input (not an independent model run)",value=False)
+    if use_otis_in_model:
+        st.warning("OTIS-assisted mode changes the primary model. To compare independent predictions fairly, leave this unchecked.")
 
     st.subheader("Automatic course & weather")
     c1,c2,c3=st.columns([1,1,1])
@@ -403,20 +410,44 @@ if page == "🏠 Setup / Inputs":
     if st.button("Load inputs & build tournament model",type="primary",use_container_width=True):
         if not tournament_name.strip() or not course_query.strip():
             st.error("Enter the tournament and course.")
-        elif players_up is None or otis_fit_up is None:
-            st.error("Upload the DraftKings field and OTIS Advanced Course-Fit CSV.")
+        elif players_up is None:
+            st.error("Upload the DraftKings player salaries. OTIS is not required.")
         else:
             try:
                 players_raw=pd.read_csv(players_up); players,dk_format=normalize_dk_players(players_raw)
-                otis_raw=pd.read_csv(otis_fit_up); otis_fit,otis_status=normalize_otis_course_fit(otis_raw)
                 if players.empty: raise ValueError("DraftKings file did not contain usable PGA golfers.")
-                if otis_fit.empty: raise ValueError(f"OTIS file could not be used: {otis_status}")
-                dk_names=set(players.player.astype(str).str.strip().str.casefold()); onames=set(otis_fit.player.astype(str).str.strip().str.casefold())
+                if rrg_up is not None:
+                    rrg_fit,rrg_info=normalize_rrg_course_fit(pd.read_csv(rrg_up),players)
+                    if rrg_fit.empty: raise ValueError("RickRunGood file had no valid FIT data.")
+                else:
+                    rrg_fit=pd.DataFrame()
+                    rrg_info={"source":"not supplied","matched":0,"total":len(players),"coverage":0.0}
+                rrg_count=int(rrg_info["matched"])
+                if otis_fit_up is not None:
+                    otis_raw=pd.read_csv(otis_fit_up); otis_fit,otis_status=normalize_otis_course_fit(otis_raw)
+                    if otis_fit.empty: raise ValueError(f"OTIS file could not be used: {otis_status}")
+                else:
+                    otis_fit=pd.DataFrame(columns=["player"]); otis_status="Not supplied"
+                dk_names=set(players.player.astype(str).str.strip().str.casefold())
+                onames=set(otis_fit.player.astype(str).str.strip().str.casefold())
                 match_count=len(dk_names & onames)
-                if match_count/len(players)<.70: raise ValueError(f"DK ↔ OTIS coverage is only {match_count}/{len(players)}; below the 70% safety floor.")
+                if use_otis_in_model and not len(otis_fit):
+                    raise ValueError("OTIS-assisted modeling was selected, but no OTIS file was uploaded.")
+                if use_otis_in_model and match_count/len(players)<.70:
+                    raise ValueError(f"OTIS model coverage {match_count}/{len(players)} is below the 70% safety floor.")
                 if stats_up is not None:
                     player_stats,stats_status=validate_advanced_input(pd.read_csv(stats_up),"player_stats")
-                else: player_stats,stats_status=otis_fit.copy(),otis_status
+                    if player_stats.empty:
+                        raise ValueError(f"Uploaded player stats could not be used: {stats_status}")
+                elif use_otis_in_model:
+                    player_stats,stats_status=otis_fit.copy(),otis_status
+                else:
+                    player_stats=pd.DataFrame(columns=["player"])
+                    stats_status="Independent model; no OTIS layer"
+                model_mode="OTIS-assisted (not independent)" if use_otis_in_model else "Independent model (OTIS withheld)"
+                if rrg_up is not None and rrg_count/len(players)<.70:
+                    st.warning(f"Only {rrg_count}/{len(players)} golfers match RickRunGood. "
+                               "Those rankings are for comparison only; missing fits are not imputed.")
                 if results_up is not None: results,results_status=validate_advanced_input(pd.read_csv(results_up),"results")
                 else: results,results_status=validate_advanced_input(load_repo_csv("results.csv"),"results")
                 if history_up is not None: history,history_status=validate_advanced_input(pd.read_csv(history_up),"course_history")
@@ -454,30 +485,40 @@ if page == "🏠 Setup / Inputs":
                     pred["v11_gpp_objective"]=0.45*pred["v11_mean_dk"]+0.55*pred["v11_p90_dk"]
                     pred["v11_balanced_objective"]=0.80*pred["v11_mean_dk"]+0.20*pred["v11_p75_dk"]
                     pred["v11_cut_objective"]=0.85*pred["v11_mean_dk"]+0.15*pred["v11_p75_dk"]
+                    # Independent source ranks are added AFTER simulations and NEVER alter the prediction.
+                    pred=attach_source_comparison(pred,rrg_fit,otis_fit)
                 bundle={"tournament_name":tournament_name,"course_query":course_query,"tournament_start":tournament_start,"country_hint":country_hint,
-                        "players":players,"otis_fit":otis_fit,"player_stats":player_stats,"results":results,"history":history,"holes":holes,"weather":weather,
+                        "players":players,"otis_fit":otis_fit,"rrg_fit":rrg_fit,"rrg_info":rrg_info,"model_mode":model_mode,
+                        "player_stats":player_stats,"results":results,"history":history,"holes":holes,"weather":weather,
                         "holes_source":holes_source,"weather_source":weather_source,"dk_format":dk_format,"otis_status":otis_status,"otis_match_count":match_count,
                         "sims":int(sims),"prediction":pred,"selected_course":selected_course,"v11_diagnostics":v11_diag,"tournament_format":tournament_format}
                 st.session_state.pga_bundle=bundle; st.session_state.prediction=pred
-                st.success(f"Setup ready — {len(players)} golfers, DK ↔ OTIS {match_count}/{len(players)}, {int(sims):,} simulations complete.")
+                st.success(f"Setup ready — {len(players)} golfers, {int(sims):,} simulations; {model_mode}. "
+                           f"RRG: {rrg_count}/{len(players)}, OTIS: {match_count}/{len(players)}.")
+                if stats_up is None and not use_otis_in_model:
+                    st.warning("No verified player-level strokes-gained or recent-form data loaded. "
+                               "The model uses DraftKings historical fantasy PPG as an UNCALIBRATED strength proxy. "
+                               "Compare rankings for research, but do not treat win/cut probabilities as validated.")
             except Exception as exc:
                 st.error(str(exc))
 
     b=st.session_state.pga_bundle
     if b:
         st.subheader("Current setup status")
-        q1,q2,q3,q4,q5=st.columns(5)
+        q1,q2,q3,q4,q5,q6=st.columns(6)
         q1.metric("Tournament",b["tournament_name"])
-        q2.metric("Field",f"{len(b['players'])} ✓")
-        q3.metric("OTIS",f"{b['otis_match_count']}/{len(b['players'])} ✓")
-        q4.metric("Weather",("Auto ✓" if b["weather_source"]=="Open-Meteo" else b["weather_source"]))
-        q5.metric("Course",b["holes_source"])
+        q2.metric("Field",len(b["players"]))
+        q3.metric("RRG",f"{b['rrg_info']['matched']}/{len(b['players'])}")
+        q4.metric("OTIS",f"{b['otis_match_count']}/{len(b['players'])}")
+        q5.metric("Weather",("Auto" if b["weather_source"]=="Open-Meteo" else b["weather_source"]))
+        q6.metric("Course",b["holes_source"])
+        st.caption("Model source: " + b["model_mode"] + ". Comparison-source rankings never modify simulations.")
         st.success("Setup is stored for this session. Use the sidebar to go directly to DFS, Round Parlays, Course DNA, or Results.")
     st.stop()
 
 bundle=st.session_state.pga_bundle
 if not bundle:
-    st.warning("No tournament setup is loaded yet. Go to **🏠 Setup / Inputs**, load the two weekly files, and build the model once.")
+    st.warning("No tournament setup loaded. Go to **🏠 Setup / Inputs** and upload the DraftKings field. RRG/OTIS are optional.")
     st.stop()
 
 tournament_name=bundle["tournament_name"]; course_query=bundle["course_query"]; tournament_start=bundle["tournament_start"]
@@ -488,11 +529,12 @@ st.caption(f"**{tournament_name}** • {course_query} • {len(players)} golfers
 
 if page == "🏆 Tournament DFS":
     st.header("🏆 Tournament DFS")
-    c1,c2,c3,c4=st.columns(4); c1.metric("Field",len(mc)); c2.metric("Simulations",f"{sims:,}"); c3.metric("Salary cap","$50,000"); c4.metric("OTIS coverage",f"{bundle['otis_match_count']}/{len(players)}")
+    c1,c2,c3,c4=st.columns(4); c1.metric("Field",len(mc)); c2.metric("Simulations",f"{sims:,}"); c3.metric("Salary cap","$50,000"); c4.metric("RRG coverage",f"{bundle['rrg_info']['matched']}/{len(players)}")
+    st.caption("Independent model, RRG and OTIS ranks are kept separate unless you explicitly opted into OTIS-assisted projection.")
     st.info(f"V11 golf-first active • {bundle.get('tournament_format','format not specified')} • "
             f"{bundle.get('v11_diagnostics',{}).get('hole_pars_source','unknown hole pars')}. "
             "DK scoring from simulated golf; probabilities remain provisional until calibrated.")
-    tab1,tab2=st.tabs(["Model Rankings","Build Lineups"])
+    tab1,tab2,tab3=st.tabs(["Model Rankings","Model vs RRG vs OTIS","Build Lineups"])
     with tab1:
         display_cols=[c for c in ["player","salary","win_pct","top5_pct","top10_pct","top20_pct","make_cut_pct","expected_finish","v11_mean_dk","v11_median_dk","v11_p75_dk","v11_p90_dk","v11_p95_dk","v11_avg_birdies","v11_avg_bogeys","dk_points_proxy","course_fit_ceiling"] if c in mc.columns]
         sort_options=[c for c in ["v11_mean_dk","v11_p90_dk","win_pct","top10_pct","make_cut_pct","course_fit_ceiling","salary"] if c in mc.columns]
@@ -500,7 +542,18 @@ if page == "🏆 Tournament DFS":
         st.dataframe(mc.sort_values(sort_col,ascending=(sort_col=="salary"))[display_cols],width="stretch",hide_index=True)
         st.download_button("Download projections",mc.to_csv(index=False),f"{tournament_name.replace(' ','_')}_projections.csv","text/csv")
     with tab2:
-        a,b,c,d=st.columns(4); lineup_count=a.number_input("Lineups",1,20,10); max_exposure=b.slider("Max exposure",.10,1.0,.50,.05); min_unique=c.number_input("Minimum unique golfers",1,5,3); salary_floor=d.number_input("Minimum lineup salary",40000,50000,46500,100)
+        st.caption("Separate PRE-TOURNAMENT rankings. Positive rank delta means our model ranks a golfer worse than the external source. Missing source values stay blank.")
+        cols=[c for c in ("player","salary","model_rank","rrg_rank","otis_rank",
+                          "model_vs_rrg_rank_delta","model_vs_otis_rank_delta",
+                          "rrg_fit","otis_true_skill","otis_course_fit") if c in mc.columns]
+        st.dataframe(mc[cols].sort_values("model_rank"),width="stretch",hide_index=True)
+        st.download_button("Download independent source comparison",
+                           mc[cols].to_csv(index=False),"pga_source_rank_comparison.csv",mime="text/csv")
+        if bundle["otis_match_count"]==0:
+            st.info("OTIS not yet released. The independent model and RRG comparison are available now.")
+        st.warning("A shared ranking does not validate win, top-10 or cut probabilities. Source agreement is a research signal, not a guarantee.")
+    with tab3:
+        a,b,c,d=st.columns(4); lineup_count=a.number_input("Lineups",1,20,11); max_exposure=b.slider("Max exposure",.10,1.0,.50,.05); min_unique=c.number_input("Minimum unique golfers",1,5,3); salary_floor=d.number_input("Minimum lineup salary",40000,50000,46500,100)
         min_player_salary=st.number_input("Minimum golfer salary",6000,10000,6500,100); strategy=st.selectbox("Strategy",["GPP Ceiling","Balanced / Single Entry","Cut Equity"])
         names=sorted(mc.player.dropna().astype(str).unique()); locks=st.multiselect("Lock golfers",names); excludes=st.multiselect("Exclude golfers",[n for n in names if n not in locks])
         if st.button("Generate portfolio",type="primary"):
@@ -707,7 +760,17 @@ elif page == "🧬 Course DNA":
             st.write("Weather does not change the permanent Course DNA. Wind and other round conditions are applied in the round/tournament environment layer so a windy Friday can play differently from a calmer Thursday without rewriting what Yokohama fundamentally demands.")
     else:
         dna,note=_course_dna(otis_fit)
-        st.subheader(f"{course_query} — Model Thesis")
+        rrg=bundle.get("rrg_fit",pd.DataFrame())
+        if isinstance(rrg,pd.DataFrame) and not rrg.empty:
+            st.subheader("RickRunGood course-fit decomposition (independent comparison)")
+            rcols={"rrg_driving":"Driving","rrg_approach":"Approach","rrg_around_green":"Around green",
+                   "rrg_putting":"Putting","rrg_scoring":"Scoring"}
+            summaries=[{"Component":name,"Average contribution":round(float(pd.to_numeric(rrg[col],errors="coerce").mean()),4)}
+                       for col,name in rcols.items() if col in rrg]
+            st.dataframe(pd.DataFrame(summaries),hide_index=True,width="stretch")
+            st.caption("RRG values are within-source FIT contributions, not strokes gained or Team AI²-derived weights. "
+                       "The course layout and independent model thesis must be researched separately.")
+        st.subheader(f"{course_query} — OTIS visible components (if available)")
         st.info(_dna_thesis(dna,course_query))
         if dna.empty:
             st.warning(note)
@@ -732,4 +795,5 @@ else:
     st.info("As rounds finish, this page will compare predicted win/push/loss probabilities with actual 3-ball outcomes and tournament percentiles. We will evaluate calibration across events rather than tune to one result.")
 
 st.divider()
-st.caption("V10.9.5 Unified PGA Dashboard — independent researched Course DNA now feeds both Tournament DFS and Round Parlays for the 2026 Baycurrent Classic. V10.7.2 official PGA TOUR TeeTimes API, V10.6.6b tournament model, Course-Fit methodology, round simulation, and parlay methodology are preserved. Course DNA adds a transparent reconstruction/audit view from the visible weekly Course-Fit components; it does not invent unavailable granular inputs.")
+st.caption("Team AI² Pro unified PGA: DraftKings-only independent tournament modeling, optional RickRunGood and OTIS ranking comparisons, and explicit provenance. "
+           "Legacy Baycurrent-specific Course DNA remains a historical profile; no Mexico-specific traits or probabilities are fabricated.")
