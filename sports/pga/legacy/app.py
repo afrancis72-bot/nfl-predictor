@@ -406,7 +406,10 @@ if page == "🏠 Setup / Inputs":
     sims=st.selectbox("Tournament simulations",[1000,3000,5000],index=1)
     tournament_format=st.radio("Tournament format",["No cut — all four rounds","Standard cut — after Round 2"],horizontal=True,index=1)
     cut_size=st.number_input("Approximate cut position (ties included)",min_value=1,max_value=100,value=65,disabled=tournament_format.startswith("No cut"))
-    course_par=st.selectbox("Course par",[70,71,72,73],index=2)
+    mexico_2026=("mexico" in tournament_name.casefold() or "vidanta" in course_query.casefold()) and tournament_start.year==2026
+    course_par=st.selectbox("Course par",[70,71,72,73],index=1 if mexico_2026 else 2)
+    if mexico_2026:
+        st.caption("Official 2026 Vidanta Vallarta: par 71, 7,337 yards; course re-routed. Verify hole-by-hole pars separately.")
     st.warning("Confirm cut/no-cut, par, and course hole pars before building. The app cannot infer tournament rules reliably from the tournament name.")
     if st.button("Load inputs & build tournament model",type="primary",use_container_width=True):
         if not tournament_name.strip() or not course_query.strip():
