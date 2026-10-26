@@ -1373,6 +1373,35 @@ def build_features(
 
         p["owgr_used"] = owgr
         p["owgr_strength"] = owgr_z
+    # Independent current-field fallback when external skill/form is missing.
+    # Without this, a fresh DK salary file plus an empty legacy results.csv yields
+    # nearly identical strength scores for every golfer. DraftKings AvgPointsPerGame
+    # is an uncalibrated historical DFS proxy, NOT a strokes-gained statistic.
+    # Existing OWGR, SG or rolling-form features take precedence when adequately
+    # populated; this fallback does not override the original golf-first engine.
+    skill_cols = (
+        "owgr", "form_sg_total", "form_sg_approach", "form_sg_ott",
+        "form_sg_putting", "sg_total", "sg_approach", "sg_ott", "sg_putting",
+    )
+    minimum_skill = max(5, int(0.35 * len(p)))
+    has_skill = any(
+        c in p and pd.to_numeric(p[c], errors="coerce").notna().sum() >= minimum_skill
+        for c in skill_cols
+    )
+    p["model_baseline_source"] = "Observed golf features / original model"
+    if not has_skill and "AvgPointsPerGame" in p.columns:
+        historical_dk = pd.to_numeric(p["AvgPointsPerGame"], errors="coerce")
+        if historical_dk.notna().sum() >= minimum_skill and historical_dk.nunique(dropna=True) > 5:
+            center = historical_dk[historical_dk > 0].median()
+            center = float(center) if pd.notna(center) else 0.0
+            historical_dk = historical_dk.where(historical_dk > 0, center).fillna(center)
+            score += 0.65 * zscore(historical_dk).fillna(0).to_numpy()
+            p["model_baseline_source"] = "UNVALIDATED DK historical PPG strength proxy"
+        else:
+            p["model_baseline_source"] = "INSUFFICIENT PLAYER STRENGTH DATA"
+    elif not has_skill:
+        p["model_baseline_source"] = "INSUFFICIENT PLAYER STRENGTH DATA"
+
     # V10.6.6: weekly OTIS Advanced Course-Fit player layer.
     # OTIS Rank and OTIS Model are deliberately excluded. We use only the
     # decomposed within-field signals: True Skill, Course Fit and Form.
