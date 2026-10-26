@@ -59,9 +59,14 @@ if template_file is None:
 
 try:
     template = parse_dk_entries(template_file.getvalue())
+    featured_id = portfolio.get("featured_lineup")
     completed = fill_entries_template(
-        portfolio["portfolio"], players, template
+        portfolio["portfolio"], players, template, featured_lineup=featured_id
     )
+    if featured_id is not None:
+        st.success(f"Lineup {featured_id} assigned to the verified $5 contest entry. "
+                   "Ten remaining lineups assigned to $0.50 entries.")
+        st.caption("Allocation was matched using DraftKings Entry Fee, NOT row order.")
     st.success(
         f"Validated {len(portfolio['summary'])} PGA lineups "
         f"for {len(template)} available entries."
