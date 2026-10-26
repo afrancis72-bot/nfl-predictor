@@ -9,6 +9,7 @@ from portfolio_optimizer import PortfolioSettings, optimize_portfolio
 from pga_predictor_pro import Config, predict_from_dataframes
 from golf_first_v11 import simulate_golf_first
 from rrg_course_fit import normalize_rrg_course_fit, attach_source_comparison
+from featured_entry import choose_featured_lineup
 from round_parlay import fetch_groupings, normalize_groupings_upload, fetch_live_results, fetch_official_prior_rounds, normalize_live_results, build_round_ratings, simulate_groups, build_six_leg_tickets, golfchannel_round_url
 
 ROOT = Path(__file__).resolve().parent
@@ -553,8 +554,8 @@ if page == "🏆 Tournament DFS":
             st.info("OTIS not yet released. The independent model and RRG comparison are available now.")
         st.warning("A shared ranking does not validate win, top-10 or cut probabilities. Source agreement is a research signal, not a guarantee.")
     with tab3:
-        a,b,c,d=st.columns(4); lineup_count=a.number_input("Lineups",1,20,11); max_exposure=b.slider("Max exposure",.10,1.0,.50,.05); min_unique=c.number_input("Minimum unique golfers",1,5,3); salary_floor=d.number_input("Minimum lineup salary",40000,50000,46500,100)
-        min_player_salary=st.number_input("Minimum golfer salary",6000,10000,6500,100); strategy=st.selectbox("Strategy",["GPP Ceiling","Balanced / Single Entry","Cut Equity"])
+        a,b,c,d=st.columns(4); lineup_count=a.number_input("Lineups",1,20,11); max_exposure=b.slider("Max exposure",.10,1.0,.37,.01); min_unique=c.number_input("Minimum unique golfers",1,5,3); salary_floor=d.number_input("Minimum lineup salary",40000,50000,46500,100)
+        min_player_salary=st.number_input("Minimum golfer salary",6000,10000,6500,100); strategy=st.selectbox("Strategy",["GPP Ceiling","Balanced / Single Entry","Cut Equity"],index=1)
         names=sorted(mc.player.dropna().astype(str).unique()); locks=st.multiselect("Lock golfers",names); excludes=st.multiselect("Exclude golfers",[n for n in names if n not in locks])
         if st.button("Generate portfolio",type="primary"):
             settings=PortfolioSettings(lineup_count=int(lineup_count),salary_cap=50000,salary_floor=int(salary_floor),min_player_salary=int(min_player_salary),roster_size=6,max_exposure=float(max_exposure),min_unique=int(min_unique),strategy=strategy,seed=42)
@@ -563,15 +564,27 @@ if page == "🏆 Tournament DFS":
                 def _dfs_progress(frac,msg):
                     progress.progress(min(1.0,max(0.0,float(frac))),text=msg)
                 portfolio,summary,exposure=optimize_portfolio(mc,settings,locks,excludes,progress_callback=_dfs_progress)
-                st.session_state.dfs_portfolio={"portfolio":portfolio,"summary":summary,"exposure":exposure}
+                summary,featured_id=choose_featured_lineup(summary,portfolio,mc)
+                st.session_state.dfs_portfolio={
+                    "portfolio":portfolio,"summary":summary,"exposure":exposure,"featured_lineup":featured_id
+                }
                 progress.empty()
-                st.success(f"Generated {len(summary)} lineups.")
+                st.success(f"Generated {len(summary)} lineups. Perception-based $5 feature candidate: Lineup {featured_id}.")
+                st.caption("The feature index ranks estimated DK means, cut equity, top-10 strength, and summed player P90. "
+                           "It is NOT a calibrated first-place or profitable-entry probability.")
             except Exception as exc:
                 try: progress.empty()
                 except Exception: pass
                 st.error(str(exc))
         po=st.session_state.get("dfs_portfolio")
         if po:
+            featured=po.get("featured_lineup")
+            if featured:
+                st.subheader(f"⭐ Proposed $5 single-entry: Lineup {featured}")
+                featured_players=po["portfolio"].loc[po["portfolio"]["lineup"].eq(featured),["player","salary","make_cut_pct","dk_points_proxy"]]
+                st.dataframe(featured_players,hide_index=True,width="stretch")
+                st.caption("Review this candidate against the RickRunGood and OTIS comparisons before final lock. "
+                           "The other ten portfolios are intended for the $0.50 contest.")
             st.dataframe(po["summary"],width="stretch",hide_index=True); st.dataframe(po["portfolio"],width="stretch",hide_index=True)
             st.subheader("Exposure"); st.dataframe(po["exposure"],width="stretch",hide_index=True)
             st.download_button("Download lineups CSV",po["portfolio"].to_csv(index=False),"pga_lineups.csv","text/csv")
