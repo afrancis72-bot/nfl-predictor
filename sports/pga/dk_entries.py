@@ -86,7 +86,7 @@ def fill_entries_template(portfolio: pd.DataFrame, dk_players: pd.DataFrame, ent
         if "Entry Fee" not in entries.columns:
             raise ValueError("DraftKings entry fees are missing; cannot safely assign the featured lineup to the $5 contest.")
         fees = pd.to_numeric(
-            entries["Entry Fee"].fillna("").astype(str).str.replace(r"[^\\d.]", "", regex=True),
+            entries["Entry Fee"].fillna("").astype(str).str.replace(r"[^0-9.]", "", regex=True),
             errors="coerce",
         )
         if len(lineups) == 11:
