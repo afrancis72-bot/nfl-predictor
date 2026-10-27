@@ -597,7 +597,15 @@ if page == "🏆 Tournament DFS":
         if sg_enabled:
             st.caption("The default 12-round sample floor excludes golfers without credible SG evidence. "
                        "Missing SG never receives fabricated values.")
-        names=sorted(mc.player.dropna().astype(str).unique()); locks=st.multiselect("Lock golfers",names); excludes=st.multiselect("Exclude golfers",[n for n in names if n not in locks])
+        names=sorted(mc.player.dropna().astype(str).unique())
+        locks=st.multiselect("Lock golfers (ALL lineups)",names)
+        excludes=st.multiselect("Exclude golfers from ALL lineups",[n for n in names if n not in locks])
+        mexico_feature_defaults=["Tony Finau"] if mexico_2026 and "Tony Finau" in names else []
+        feature_exclusions=st.multiselect(
+            "Exclude from $5 feature lineup ONLY (eligible for ten $0.50 entries)",
+            names,default=mexico_feature_defaults,key="pga_feature_exclusions",
+            help="Human-judgment veto on the single $5 entry. The model can still use these golfers in the $0.50 lineups.",
+        )
         if st.button("Generate portfolio",type="primary"):
             settings=PortfolioSettings(lineup_count=int(lineup_count),salary_cap=50000,salary_floor=int(salary_floor),min_player_salary=int(min_player_salary),min_measured_sg_rounds=int(min_sg_rounds),roster_size=6,max_exposure=float(max_exposure),min_unique=int(min_unique),strategy=strategy,seed=42)
             try:
@@ -605,12 +613,18 @@ if page == "🏆 Tournament DFS":
                 def _dfs_progress(frac,msg):
                     progress.progress(min(1.0,max(0.0,float(frac))),text=msg)
                 portfolio,summary,exposure=optimize_portfolio(mc,settings,locks,excludes,progress_callback=_dfs_progress)
-                summary,featured_id=choose_featured_lineup(summary,portfolio,mc)
+                summary,featured_id=choose_featured_lineup(
+                    summary,portfolio,mc,feature_exclusions=feature_exclusions
+                )
                 st.session_state.dfs_portfolio={
-                    "portfolio":portfolio,"summary":summary,"exposure":exposure,"featured_lineup":featured_id
+                    "portfolio":portfolio,"summary":summary,"exposure":exposure,
+                    "featured_lineup":featured_id,"feature_exclusions":list(feature_exclusions)
                 }
                 progress.empty()
-                st.success(f"Generated {len(summary)} lineups. Perception-based $5 feature candidate: Lineup {featured_id}.")
+                st.success(f"Generated {len(summary)} lineups. Highest-rated eligible $5 feature candidate: Lineup {featured_id}.")
+                if feature_exclusions:
+                    st.info("Feature-only veto applied: "+", ".join(feature_exclusions)+
+                            ". These golfers remain eligible for the $0.50 entries.")
                 st.caption("The feature index ranks estimated DK means, cut equity, top-10 strength, and summed player P90. "
                            "It is NOT a calibrated first-place or profitable-entry probability.")
             except Exception as exc:
