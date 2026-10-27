@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "sports" / "pga" / "legacy"))
 
 from rrg_course_fit import normalize_rrg_course_fit, attach_source_comparison
+from rrg_strokes_gained import normalize_rrg_strokes_gained
 from featured_entry import choose_featured_lineup
 
 sys.path.insert(0, str(ROOT))
@@ -63,6 +64,68 @@ class SourceIndependenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_rrg_course_fit(pd.DataFrame({"Name":["A"],"Value":[10]}),
                                      pd.DataFrame({"player":["A"]}))
+
+
+
+class ObservedSgTests(unittest.TestCase):
+    def setUp(self):
+        self.dk = pd.DataFrame({
+            "player": ["Cameron Davis", "Rico Hoey", "Zachary Bauchou", "Jordan L. Smith", "No Data"],
+            "salary": [8800, 8200, 7000, 6800, 6000],
+        })
+        self.csv = pd.DataFrame({
+            "Name": ["Cam Davis", "Richard Hoey", "Zach Bauchou", "Jordan Smith", "No Data"],
+            "Salary": [8800, 8200, 7000, 6800, 6000],
+            "Rounds": [50, 20, 4, 2, 0],
+            "SG OTT": [0.5, 0.3, 0.8, 0.4, np.nan],
+            "SG APP": [0.7, 0.2, 0.5, -0.2, np.nan],
+            "SG ARG": [0.1, 0.4, 0.2, -0.3, np.nan],
+            "SG PUTT": [-0.1, 0.1, 0.2, 0.8, np.nan],
+            "SG TOT": [1.2, 1.0, 1.7, 0.7, np.nan],
+            "Driving Distance": [300, 310, 320, 295, np.nan],
+            "Driving Accuracy %": [64, 58, 61, 72, np.nan],
+            "GIR %": [69, 68, 71, 62, np.nan],
+            "Recent -1S": ["T10", "CUT", "2", "T4", ""],
+        })
+
+    def test_complete_field_and_named_aliases(self):
+        result, audit = normalize_rrg_strokes_gained(self.csv, self.dk)
+        self.assertEqual(audit["matched"], 5)
+        self.assertEqual(audit["full_sg_components"], 4)
+        self.assertEqual(audit["sg_total_available"], 4)
+        self.assertEqual(
+            float(result.loc[result.player.eq("Cameron Davis"),"rrg_raw_sg_approach"].iat[0]), 0.7
+        )
+        self.assertEqual(
+            float(result.loc[result.player.eq("Rico Hoey"),"rrg_raw_sg_total"].iat[0]), 1.0
+        )
+        self.assertEqual(len(result), len(self.dk))
+
+    def test_small_sample_shrinkage_and_missing_data(self):
+        result, _ = normalize_rrg_strokes_gained(self.csv, self.dk, prior_rounds=12.0)
+        long = result.loc[result.player.eq("Cameron Davis")].iloc[0]
+        thin = result.loc[result.player.eq("Zachary Bauchou")].iloc[0]
+        missing = result.loc[result.player.eq("No Data")].iloc[0]
+        self.assertAlmostEqual(long["sg_approach"], 0.7 * 50 / 62)
+        self.assertAlmostEqual(thin["sg_approach"], 0.5 * 4 / 16)
+        self.assertLess(thin["model_data_confidence"], long["model_data_confidence"])
+        self.assertTrue(pd.isna(missing["sg_approach"]))
+        self.assertEqual(float(missing["model_data_confidence"]), 0.0)
+        self.assertEqual(long["driving_distance"], 300.0)  # Not shrunk as if SG.
+        self.assertIn("T10",long["rrg_recent_finishes"])
+
+    def test_bad_salary_and_collision_fail_closed(self):
+        invalid = self.csv.copy()
+        invalid.loc[0,"Salary"] = 9000
+        with self.assertRaises(ValueError):
+            normalize_rrg_strokes_gained(invalid, self.dk)
+        repeated = pd.concat([self.csv,self.csv.iloc[[0]]],ignore_index=True)
+        with self.assertRaises(ValueError):
+            normalize_rrg_strokes_gained(repeated, self.dk)
+
+    def test_reject_missing_sg_columns(self):
+        with self.assertRaises(ValueError):
+            normalize_rrg_strokes_gained(self.csv.drop(columns=["SG APP"]),self.dk)
 
 
 class FeaturedContestTests(unittest.TestCase):
