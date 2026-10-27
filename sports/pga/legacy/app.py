@@ -413,7 +413,7 @@ if page == "🏠 Setup / Inputs":
     mexico_2026=("mexico" in tournament_name.casefold() or "vidanta" in course_query.casefold()) and tournament_start.year==2026
     course_par=st.selectbox("Course par",[70,71,72,73],index=1 if mexico_2026 else 2)
     if mexico_2026:
-        st.caption("Official 2026 Vidanta Vallarta: par 71, 7,337 yards; course re-routed. Verify hole-by-hole pars separately.")
+        st.caption("Official 2026 Vidanta Vallarta: par 71, 7,337 yards; new routing with five par 3s, nine par 4s and four par 5s. Official hole pars are used automatically unless validated hole-level data were supplied.")
     st.warning("Confirm cut/no-cut, par, and course hole pars before building. The app cannot infer tournament rules reliably from the tournament name.")
     if st.button("Load inputs & build tournament model",type="primary",use_container_width=True):
         if not tournament_name.strip() or not course_query.strip():
@@ -505,6 +505,16 @@ if page == "🏠 Setup / Inputs":
                                 vals=pd.to_numeric(holes[par_col],errors="coerce").dropna().astype(int).tolist()
                                 if len(vals)==18 and sum(vals)==int(course_par): hole_pars=vals
                                 break
+                    # New 2026 routing, verified against the PGA TOUR published scorecard.
+                    # Do not substitute generic par-71 hole architecture for this event.
+                    official_mexico_pars=[4,3,5,4,3,5,3,5,4,4,4,5,4,4,3,4,3,4]
+                    if mexico_2026 and int(course_par)==71:
+                        if hole_pars is not None and hole_pars != official_mexico_pars:
+                            st.warning("Uploaded hole pars differ from the PGA TOUR 2026 Mexico Open routing. "
+                                       "The supplied par sequence is retained for this run; verify the upload.")
+                        elif hole_pars is None:
+                            hole_pars=official_mexico_pars
+                            st.info("Using PGA TOUR official 2026 Mexico hole pars (five par 3s, four par 5s).")
                     pred,dk_samples,v11_diag=simulate_golf_first(pred,sims=int(sims),seed=42,course_par=int(course_par),
                         no_cut=tournament_format.startswith("No cut"),cut_size=int(cut_size),hole_pars=hole_pars)
                     pred["dk_points_proxy"]=pred["v11_mean_dk"]
@@ -527,6 +537,11 @@ if page == "🏠 Setup / Inputs":
                 st.success(f"Setup ready — {len(players)} golfers; {int(sims):,} simulations. {model_mode}.")
                 st.caption(f"Measured SG: {sg_info['full_sg_components']}/{len(players)}; "
                            f"RRG course fit: {rrg_count}/{len(players)}; OTIS: {match_count}/{len(players)}.")
+                if use_otis_in_model:
+                    st.warning("SOURCE WARNING: This run incorporates OTIS into the primary model. "
+                               "The app's model ranking and OTIS ranking are NOT independent evidence. "
+                               "For an independent comparison, upload the RickRunGood L50 SG sheet and "
+                               "leave the experimental OTIS blend unchecked, then rebuild the model.")
                 if sg_info["full_sg_components"]<0.5*len(players) and stats_up is None and not use_otis_in_model:
                     st.warning("No sufficiently complete current golf statistics. The fallback uses historical DK scoring "
                                "and is NOT a validated fantasy projection or cut-probability model.")
@@ -566,6 +581,11 @@ if page == "🏆 Tournament DFS":
     st.header("🏆 Tournament DFS")
     c1,c2,c3,c4=st.columns(4); c1.metric("Field",len(mc)); c2.metric("Simulations",f"{sims:,}"); c3.metric("Salary cap","$50,000"); c4.metric("RRG coverage",f"{bundle['rrg_info']['matched']}/{len(players)}")
     st.caption("Independent model, RRG and OTIS ranks are kept separate unless you explicitly opted into OTIS-assisted projection.")
+    if str(bundle.get("model_mode","")).startswith("OTIS-assisted"):
+        st.warning("⚠️ OTIS-ASSISTED RUN: This model includes OTIS in the projections. "
+                   "Do NOT treat its model-vs-OTIS ranking comparison as independent confirmation. "
+                   "Rebuild with RickRunGood L50 strokes gained and experimental OTIS blending OFF "
+                   "to compare independent Team AI² estimates against OTIS.")
     st.info(f"V11 golf-first active • {bundle.get('tournament_format','format not specified')} • "
             f"{bundle.get('v11_diagnostics',{}).get('hole_pars_source','unknown hole pars')}. "
             "DK scoring from simulated golf; probabilities remain provisional until calibrated.")
