@@ -570,7 +570,7 @@ if page == "🏆 Tournament DFS":
             "DK scoring from simulated golf; probabilities remain provisional until calibrated.")
     tab1,tab2,tab3=st.tabs(["Model Rankings","Model vs RRG vs OTIS","Build Lineups"])
     with tab1:
-        display_cols=[c for c in ["player","salary","win_pct","top5_pct","top10_pct","top20_pct","make_cut_pct","expected_finish","v11_mean_dk","v11_median_dk","v11_p75_dk","v11_p90_dk","v11_p95_dk","v11_avg_birdies","v11_avg_bogeys","dk_points_proxy","course_fit_ceiling"] if c in mc.columns]
+        display_cols=[c for c in ["player","salary","rrg_sg_rounds","model_data_confidence","sg_total","sg_approach","sg_ott","sg_putting","model_baseline_source","win_pct","top5_pct","top10_pct","top20_pct","make_cut_pct","expected_finish","v11_mean_dk","v11_median_dk","v11_p75_dk","v11_p90_dk","v11_p95_dk","v11_avg_birdies","v11_avg_bogeys","dk_points_proxy","course_fit_ceiling"] if c in mc.columns]
         sort_options=[c for c in ["v11_mean_dk","v11_p90_dk","win_pct","top10_pct","make_cut_pct","course_fit_ceiling","salary"] if c in mc.columns]
         sort_col=st.selectbox("Sort by",sort_options)
         st.dataframe(mc.sort_values(sort_col,ascending=(sort_col=="salary"))[display_cols],width="stretch",hide_index=True)
@@ -588,10 +588,18 @@ if page == "🏆 Tournament DFS":
         st.warning("A shared ranking does not validate win, top-10 or cut probabilities. Source agreement is a research signal, not a guarantee.")
     with tab3:
         a,b,c,d=st.columns(4); lineup_count=a.number_input("Lineups",1,20,11); max_exposure=b.slider("Max exposure",.10,1.0,.37,.01); min_unique=c.number_input("Minimum unique golfers",1,5,3); salary_floor=d.number_input("Minimum lineup salary",40000,50000,46500,100)
-        min_player_salary=st.number_input("Minimum golfer salary",6000,10000,6500,100); strategy=st.selectbox("Strategy",["GPP Ceiling","Balanced / Single Entry","Cut Equity"],index=1)
+        min_player_salary=st.number_input("Minimum golfer salary",6000,10000,6500,100)
+        sg_enabled="rrg_sg_rounds" in mc.columns
+        min_sg_rounds=st.selectbox("Minimum measured SG rounds",[0,8,12,20],index=2,
+                                  disabled=not sg_enabled,
+                                  help="Blocks unsupported very-small-sample golfers when RickRunGood measured data is supplied. Zero disables.")
+        strategy=st.selectbox("Strategy",["GPP Ceiling","Balanced / Single Entry","Cut Equity"],index=1)
+        if sg_enabled:
+            st.caption("The default 12-round sample floor excludes golfers without credible SG evidence. "
+                       "Missing SG never receives fabricated values.")
         names=sorted(mc.player.dropna().astype(str).unique()); locks=st.multiselect("Lock golfers",names); excludes=st.multiselect("Exclude golfers",[n for n in names if n not in locks])
         if st.button("Generate portfolio",type="primary"):
-            settings=PortfolioSettings(lineup_count=int(lineup_count),salary_cap=50000,salary_floor=int(salary_floor),min_player_salary=int(min_player_salary),roster_size=6,max_exposure=float(max_exposure),min_unique=int(min_unique),strategy=strategy,seed=42)
+            settings=PortfolioSettings(lineup_count=int(lineup_count),salary_cap=50000,salary_floor=int(salary_floor),min_player_salary=int(min_player_salary),min_measured_sg_rounds=int(min_sg_rounds),roster_size=6,max_exposure=float(max_exposure),min_unique=int(min_unique),strategy=strategy,seed=42)
             try:
                 progress=st.progress(0,text="Preparing DFS optimizer…")
                 def _dfs_progress(frac,msg):
