@@ -12,6 +12,7 @@ class PortfolioSettings:
     salary_cap: int = 50000
     salary_floor: int = 46500
     min_player_salary: int = 6500
+    min_measured_sg_rounds: int = 12
     roster_size: int = 6
     max_exposure: float = 0.50
     min_unique: int = 3
@@ -91,6 +92,22 @@ def optimize_portfolio(
     d["salary"] = pd.to_numeric(d["salary"], errors="coerce").astype(int)
     d = d[~d.player.isin(excludes)]
     d = d[d["salary"] >= settings.min_player_salary].copy()
+    # When observed golf data exists, an unmeasured golfer is not a safe
+    # substitute for a verified current-week player. Require adequate sample
+    # coverage. This does NOT invent absent SG, nor treat DK PPG as SG.
+    if "rrg_sg_rounds" in d.columns and settings.min_measured_sg_rounds > 0:
+        samples = pd.to_numeric(d["rrg_sg_rounds"], errors="coerce").fillna(0)
+        coverage = pd.to_numeric(
+            d.get("model_data_confidence", pd.Series(0.0,index=d.index)),
+            errors="coerce",
+        ).fillna(0)
+        observed = samples.ge(settings.min_measured_sg_rounds) & coverage.ge(0.35)
+        blocked_locks = sorted(locks & set(d.loc[~observed, "player"]))
+        if blocked_locks:
+            raise ValueError("Locked golfer(s) lack adequate current SG data: "
+                             + ", ".join(blocked_locks)
+                             + ". Adjust minimum SG rounds only with a documented rationale.")
+        d = d[observed].copy()
     if not locks.issubset(set(d.player)):
         missing = sorted(locks - set(d.player))
         raise ValueError(f"Locked golfer(s) unavailable: {', '.join(missing)}")
