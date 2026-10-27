@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "sports" / "pga" / "legacy"))
 from rrg_course_fit import normalize_rrg_course_fit, attach_source_comparison
 from rrg_strokes_gained import normalize_rrg_strokes_gained
 from featured_entry import choose_featured_lineup
+from mexico_course_evidence import mexico_course_evidence, mexico_course_thesis
 from portfolio_optimizer import optimize_portfolio, PortfolioSettings
 
 sys.path.insert(0, str(ROOT))
@@ -128,6 +129,37 @@ class ObservedSgTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_rrg_strokes_gained(self.csv.drop(columns=["SG APP"]),self.dk)
 
+
+
+class MexicoCourseEvidenceTests(unittest.TestCase):
+    def test_preserves_chart_values_not_prediction_weights(self):
+        evidence=mexico_course_evidence()
+        values=evidence.set_index("Statistic")["Chart association"]
+        self.assertAlmostEqual(float(values["SG: Total"]), 0.437)
+        self.assertAlmostEqual(float(values["SG: Approach"]), 0.354)
+        self.assertAlmostEqual(float(values["Approach: 175–200 yards"]), 0.277)
+        self.assertAlmostEqual(float(values["Approach: 200–225 yards"]), 0.240)
+        self.assertAlmostEqual(float(values["Driving Accuracy %"]), 0.005)
+        self.assertAlmostEqual(float(values["SG: Around-the-Green"]), 0.063)
+        self.assertEqual(
+            evidence.loc[evidence["Statistic"].eq("Approach: 175–200 yards"),
+                         "Displayed comparison rank"].iat[0],
+            "#1/6",
+        )
+
+    def test_unavailable_distance_bucket_is_labeled(self):
+        evidence=mexico_course_evidence()
+        long_iron=evidence[evidence["Statistic"].str.contains("175–200|200–225",regex=True)]
+        self.assertEqual(len(long_iron),2)
+        self.assertTrue(long_iron["L50 golfer data"].eq("Not present in L50").all())
+        thesis=mexico_course_thesis()
+        self.assertIn("not direct weight percentages",thesis["guardrail"])
+
+    def test_unified_course_dna_page_displays_evidence(self):
+        app=(ROOT/"sports/pga/legacy/app.py").read_text(encoding="utf-8")
+        self.assertIn("mexico_course_evidence()",app)
+        self.assertIn("pga_mexico_2026_course_evidence.csv",app)
+        self.assertIn("not an automated",app)
 
 
 class MinimumMeasuredRoundsTests(unittest.TestCase):
