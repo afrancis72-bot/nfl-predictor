@@ -593,6 +593,9 @@ if page == "🏆 Tournament DFS":
             st.download_button("Download lineups CSV",po["portfolio"].to_csv(index=False),"pga_lineups.csv","text/csv")
 
 elif page == "🏌️ Round Showdown":
+    if otis_fit is None or otis_fit.empty:
+        st.info("The tournament DFS model runs without OTIS. Round Showdown still needs an OTIS pre-round file plus verified completed-round results; no substitute is fabricated.")
+        st.stop()
     from round_showdown import build_showdown_pool, optimize_showdown
     st.header("🏌️ Round Showdown — R2 / R3 / R4")
     st.caption("Dedicated DraftKings single-round lineups. Uses OTIS pre-round strength, independent Course DNA and verified completed-round scores. Showdown uses a simulated single-round fantasy proxy distribution from round strength, verified prior-round evidence and available OTIS skill components. It is not an official DraftKings projection.")
@@ -639,6 +642,9 @@ elif page == "🏌️ Round Showdown":
             st.dataframe(sd["exposure"],width="stretch",hide_index=True)
 
 elif page == "🎯 Round Parlays":
+    if otis_fit is None or otis_fit.empty:
+        st.info("Tournament modeling and independent RRG comparisons work without OTIS. Round-parlay ratings still require the OTIS source and prior-round evidence; this page will be enabled when supported inputs are available.")
+        st.stop()
     st.header("🎯 Round Parlays")
     st.caption("Groupings are pulled automatically from the official PGA TOUR structured feed. Manual controls are hidden unless the automatic source fails.")
     a,b,c,d=st.columns(4)
