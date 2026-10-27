@@ -600,7 +600,11 @@ if page == "🏆 Tournament DFS":
         names=sorted(mc.player.dropna().astype(str).unique())
         locks=st.multiselect("Lock golfers (ALL lineups)",names)
         excludes=st.multiselect("Exclude golfers from ALL lineups",[n for n in names if n not in locks])
-        mexico_feature_defaults=["Tony Finau"] if mexico_2026 and "Tony Finau" in names else []
+        mexico_feature_week = (
+            ("mexico" in tournament_name.casefold() or "vidanta" in course_query.casefold())
+            and tournament_start.year == 2026
+        )
+        mexico_feature_defaults=["Tony Finau"] if mexico_feature_week and "Tony Finau" in names else []
         feature_exclusions=st.multiselect(
             "Exclude from $5 feature lineup ONLY (eligible for ten $0.50 entries)",
             names,default=mexico_feature_defaults,key="pga_feature_exclusions",
