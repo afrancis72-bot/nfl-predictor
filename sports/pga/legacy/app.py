@@ -10,6 +10,7 @@ from pga_predictor_pro import Config, predict_from_dataframes
 from golf_first_v11 import simulate_golf_first
 from rrg_course_fit import normalize_rrg_course_fit, attach_source_comparison
 from rrg_strokes_gained import normalize_rrg_strokes_gained
+from mexico_course_evidence import mexico_course_evidence, mexico_course_thesis
 from featured_entry import choose_featured_lineup
 from round_parlay import fetch_groupings, normalize_groupings_upload, fetch_live_results, fetch_official_prior_rounds, normalize_live_results, build_round_ratings, simulate_groups, build_six_leg_tickets, golfchannel_round_url
 
@@ -836,6 +837,43 @@ elif page == "🧬 Course DNA":
 
         with st.expander("🌬️ Round conditions are separate",expanded=False):
             st.write("Weather does not change the permanent Course DNA. Wind and other round conditions are applied in the round/tournament environment layer so a windy Friday can play differently from a calmer Thursday without rewriting what Yokohama fundamentally demands.")
+    elif (
+        ("mexico" in str(tournament_name).casefold() and "open" in str(tournament_name).casefold())
+        or "vidanta" in str(course_query).casefold()
+    ) and tournament_start.year == 2026:
+        thesis=mexico_course_thesis()
+        stats=mexico_course_evidence()
+        st.subheader("Vidanta Vallarta — 2026 course-demand evidence")
+        st.info("Primary: **overall ball striking and approach play**. The chart singles out "
+                "**175–200 and 200–225 yard approaches**. GIR, scoring and tee-to-green skill "
+                "matter more here than pure driving accuracy.")
+        c1,c2,c3,c4=st.columns(4)
+        for c,name in zip((c1,c2,c3,c4),
+                          ("SG: Total","SG: Approach","Approach: 175–200 yards","Approach: 200–225 yards")):
+            value=float(stats.loc[stats["Statistic"].eq(name),"Chart association"].iloc[0])
+            c.metric(name,f"{value:.3f}")
+        st.caption(thesis["source"]+". Figures are user-provided chart values, "
+                   "NOT independently fitted predictor weights or forecast probabilities.")
+        st.dataframe(stats,width="stretch",hide_index=True)
+        st.download_button("Download course-demand evidence",
+                           stats.to_csv(index=False),"pga_mexico_2026_course_evidence.csv",
+                           mime="text/csv")
+        st.subheader("Our measurable inputs vs unavailable inputs")
+        st.write("**In the L50 strokes-gained CSV:** SG Total, Approach, Off-the-Tee, "
+                 "Putting, Around-the-Green, driving distance and accuracy, and GIR.")
+        st.warning("**Not in the supplied L50 golfer file:** individual 175–200 and 200–225 yard "
+                   "approach performance, birdie-or-better rate, bogey avoidance and scoring average. "
+                   "The engine does not infer those player statistics from generic SG: Approach.")
+        st.caption("Chart strengths are not additive. SG Total, Tee-to-Green and Approach overlap; "
+                   "the same performance must not be counted as three independent advantages. "
+                   "RickRunGood course FIT also uses related inputs, so agreement isn't fully independent.")
+        with st.expander("Model usage and research guardrails",expanded=True):
+            st.write("These screenshot observations are **audited course evidence**, not an automated "
+                     "numerical bonus in the currently committed simulations. "
+                     "Our model consumes observed golf statistics independently, while this evidence "
+                     "supports a future controlled Mexico Course-DNA ON/OFF comparison. "
+                     "The 2026 routing changed, so historical course-fit figures are not assumed fully transferable.")
+            st.caption(thesis["guardrail"])
     else:
         dna,note=_course_dna(otis_fit)
         rrg=bundle.get("rrg_fit",pd.DataFrame())
@@ -874,4 +912,4 @@ else:
 
 st.divider()
 st.caption("Team AI² Pro unified PGA: DraftKings-only independent tournament modeling, optional RickRunGood and OTIS ranking comparisons, and explicit provenance. "
-           "Legacy Baycurrent-specific Course DNA remains a historical profile; no Mexico-specific traits or probabilities are fabricated.")
+           "Mexico 2026 RickRunGood course evidence is recorded separately, with no fabricated approach-bucket projections.")
