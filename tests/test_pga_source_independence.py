@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "sports" / "pga" / "legacy"))
 from rrg_course_fit import normalize_rrg_course_fit, attach_source_comparison
 from rrg_strokes_gained import normalize_rrg_strokes_gained
 from featured_entry import choose_featured_lineup
+from portfolio_optimizer import optimize_portfolio, PortfolioSettings
 
 sys.path.insert(0, str(ROOT))
 from sports.pga.dk_entries import fill_entries_template
@@ -126,6 +127,32 @@ class ObservedSgTests(unittest.TestCase):
     def test_reject_missing_sg_columns(self):
         with self.assertRaises(ValueError):
             normalize_rrg_strokes_gained(self.csv.drop(columns=["SG APP"]),self.dk)
+
+
+
+class MinimumMeasuredRoundsTests(unittest.TestCase):
+    def test_lock_with_missing_sg_is_blocked(self):
+        rows = []
+        for i in range(12):
+            rows.append({
+                "player": f"Golfer {i}", "salary": 7500,
+                "win_pct": 0.01+(i/1000), "top10_pct": 0.07+(i/1000),
+                "make_cut_pct": 0.55, "dk_points_proxy": 60+i,
+                "v11_mean_dk": 60+i, "v11_p75_dk": 80+i,
+                "v11_p90_dk": 100+i, "rrg_sg_rounds": 0 if i==0 else 50,
+                "model_data_confidence": 0 if i==0 else 50/62,
+            })
+        with self.assertRaisesRegex(ValueError, "lack adequate current SG data"):
+            optimize_portfolio(pd.DataFrame(rows),
+                PortfolioSettings(lineup_count=1,min_measured_sg_rounds=12),
+                locks=["Golfer 0"])
+
+    def test_pga_setup_has_native_sg_input(self):
+        app=(ROOT/"sports/pga/legacy/app.py").read_text(encoding="utf-8")
+        self.assertIn("normalize_rrg_strokes_gained(pd.read_csv(rrg_sg_up),players)",app)
+        self.assertIn("sg_stats.copy()",app)
+        self.assertIn("rrg_fit",app)
+        self.assertIn("attach_source_comparison(pred,rrg_fit,otis_fit)",app)
 
 
 class FeaturedContestTests(unittest.TestCase):
