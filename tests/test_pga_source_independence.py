@@ -281,6 +281,16 @@ class FeaturedContestTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             fill_entries_template(roster,golfers,pd.DataFrame(d),featured_lineup=7)
 
+    def test_mexico_routing_and_assisted_export_warning(self):
+        app=(ROOT/"sports/pga/legacy/app.py").read_text(encoding="utf-8")
+        self.assertIn(
+            "official_mexico_pars=[4,3,5,4,3,5,3,5,4,4,4,5,4,4,3,4,3,4]",
+            app,
+        )
+        self.assertIn("hole_pars=official_mexico_pars",app)
+        self.assertIn("OTIS-ASSISTED RUN",app)
+        self.assertIn("pga_otis_assisted_comparison_NOT_INDEPENDENT.csv",app)
+
     def test_app_sources_parse(self):
         paths=[
             ROOT/"sports/pga/legacy/app.py",
