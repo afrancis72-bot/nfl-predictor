@@ -9,6 +9,7 @@ from portfolio_optimizer import PortfolioSettings, optimize_portfolio
 from pga_predictor_pro import Config, predict_from_dataframes
 from golf_first_v11 import simulate_golf_first
 from rrg_course_fit import normalize_rrg_course_fit, attach_source_comparison
+from rrg_strokes_gained import normalize_rrg_strokes_gained
 from featured_entry import choose_featured_lineup
 from round_parlay import fetch_groupings, normalize_groupings_upload, fetch_live_results, fetch_official_prior_rounds, normalize_live_results, build_round_ratings, simulate_groups, build_six_leg_tickets, golfchannel_round_url
 
@@ -353,16 +354,18 @@ if page == "🏠 Setup / Inputs":
     course_query=b.text_input("Course",value=prev.get("course_query", ""),placeholder="Current course")
     tournament_start=c.date_input("Tournament-week start",value=prev.get("tournament_start",date.today()))
 
-    st.subheader("Tournament files")
-    st.caption("DraftKings is required. RickRunGood and OTIS are independent OPTIONAL comparison sources. "
-               "The primary model runs without either. Missing provider data is never fabricated.")
-    u1,u2,u3=st.columns(3)
-    players_up=u1.file_uploader("DraftKings PGA field (required)",type="csv",key="setup_players")
-    rrg_up=u2.file_uploader("RickRunGood course-fit (optional)",type="csv",key="setup_rrg")
-    otis_fit_up=u3.file_uploader("OTIS Advanced Course-Fit (optional)",type="csv",key="setup_otis")
-    use_otis_in_model=st.checkbox("Experimental: include OTIS as a projection input (not an independent model run)",value=False)
-    if use_otis_in_model:
-        st.warning("OTIS-assisted mode changes the primary model. To compare independent predictions fairly, leave this unchecked.")
+    st.subheader("Tournament data")
+    st.caption("Observed golf stats drive our model. External FIT rankings remain separate for comparison.")
+    u1,u2=st.columns(2)
+    players_up=u1.file_uploader("1 · DraftKings PGA salary slate (required)",type="csv",key="setup_players")
+    rrg_sg_up=u2.file_uploader("2 · RickRunGood L50 strokes gained (recommended)",type="csv",key="setup_rrg_sg")
+    with st.expander("External ranking comparison (optional)",expanded=False):
+        e1,e2=st.columns(2)
+        rrg_up=e1.file_uploader("RickRunGood course-fit FIT",type="csv",key="setup_rrg")
+        otis_fit_up=e2.file_uploader("OTIS Advanced Course-Fit",type="csv",key="setup_otis")
+        use_otis_in_model=st.checkbox("Experimental: use OTIS in primary projections instead of an independent comparison",value=False)
+        if use_otis_in_model:
+            st.warning("OTIS-assisted runs are not independent. Leave unchecked for model-vs-provider audit.")
 
     st.subheader("Automatic course & weather")
     c1,c2,c3=st.columns([1,1,1])
@@ -427,6 +430,15 @@ if page == "🏠 Setup / Inputs":
                     rrg_fit=pd.DataFrame()
                     rrg_info={"source":"not supplied","matched":0,"total":len(players),"coverage":0.0}
                 rrg_count=int(rrg_info["matched"])
+                if rrg_sg_up is not None:
+                    sg_stats,sg_info=normalize_rrg_strokes_gained(pd.read_csv(rrg_sg_up),players)
+                    if sg_info["matched"] < max(6,int(0.50*len(players))):
+                        raise ValueError(f"Only {sg_info['matched']}/{len(players)} golfers matched the SG sheet; verify the tournament.")
+                else:
+                    sg_stats=pd.DataFrame(columns=["player"])
+                    sg_info={"source":"Not supplied","field_size":len(players),"matched":0,
+                             "full_sg_components":0,"sg_total_available":0,"at_least_12_rounds":0,
+                             "no_sample_count":len(players),"mean_rounds":0.0}
                 if otis_fit_up is not None:
                     otis_raw=pd.read_csv(otis_fit_up); otis_fit,otis_status=normalize_otis_course_fit(otis_raw)
                     if otis_fit.empty: raise ValueError(f"OTIS file could not be used: {otis_status}")
@@ -443,12 +455,25 @@ if page == "🏠 Setup / Inputs":
                     player_stats,stats_status=validate_advanced_input(pd.read_csv(stats_up),"player_stats")
                     if player_stats.empty:
                         raise ValueError(f"Uploaded player stats could not be used: {stats_status}")
+                    model_mode="Independent custom golf stats override"
+                elif not sg_stats.empty and use_otis_in_model:
+                    player_stats=sg_stats.merge(otis_fit,on="player",how="left",validate="one_to_one")
+                    stats_status="RickRunGood observed L50 SG + OTIS experimental blend"
+                    model_mode="OTIS-assisted (not independent)"
+                elif not sg_stats.empty:
+                    player_stats=sg_stats.copy()
+                    stats_status="RickRunGood observed L50 SG"
+                    model_mode="Independent Team AI² model using observed RickRunGood SG"
                 elif use_otis_in_model:
                     player_stats,stats_status=otis_fit.copy(),otis_status
+                    model_mode="OTIS-assisted (not independent)"
                 else:
                     player_stats=pd.DataFrame(columns=["player"])
-                    stats_status="Independent model; no OTIS layer"
-                model_mode="OTIS-assisted (not independent)" if use_otis_in_model else "Independent model (OTIS withheld)"
+                    stats_status="Only DraftKings historical fantasy averages"
+                    model_mode="UNVALIDATED DK PPG fallback"
+                if rrg_sg_up is not None and sg_info["full_sg_components"]<len(players):
+                    st.caption(f"Complete SG components: {sg_info['full_sg_components']}/{len(players)} golfers. "
+                               "Incomplete data remains missing and receives reduced confidence.")
                 if rrg_up is not None and rrg_count/len(players)<.70:
                     st.warning(f"Only {rrg_count}/{len(players)} golfers match RickRunGood. "
                                "Those rankings are for comparison only; missing fits are not imputed.")
@@ -492,17 +517,21 @@ if page == "🏠 Setup / Inputs":
                     # Independent source ranks are added AFTER simulations and NEVER alter the prediction.
                     pred=attach_source_comparison(pred,rrg_fit,otis_fit)
                 bundle={"tournament_name":tournament_name,"course_query":course_query,"tournament_start":tournament_start,"country_hint":country_hint,
-                        "players":players,"otis_fit":otis_fit,"rrg_fit":rrg_fit,"rrg_info":rrg_info,"model_mode":model_mode,
+                        "players":players,"otis_fit":otis_fit,"rrg_fit":rrg_fit,"rrg_info":rrg_info,
+                        "rrg_sg_info":sg_info,"model_mode":model_mode,
                         "player_stats":player_stats,"results":results,"history":history,"holes":holes,"weather":weather,
                         "holes_source":holes_source,"weather_source":weather_source,"dk_format":dk_format,"otis_status":otis_status,"otis_match_count":match_count,
                         "sims":int(sims),"prediction":pred,"selected_course":selected_course,"v11_diagnostics":v11_diag,"tournament_format":tournament_format}
                 st.session_state.pga_bundle=bundle; st.session_state.prediction=pred
-                st.success(f"Setup ready — {len(players)} golfers, {int(sims):,} simulations; {model_mode}. "
-                           f"RRG: {rrg_count}/{len(players)}, OTIS: {match_count}/{len(players)}.")
-                if stats_up is None and not use_otis_in_model:
-                    st.warning("No verified player-level strokes-gained or recent-form data loaded. "
-                               "The model uses DraftKings historical fantasy PPG as an UNCALIBRATED strength proxy. "
-                               "Compare rankings for research, but do not treat win/cut probabilities as validated.")
+                st.success(f"Setup ready — {len(players)} golfers; {int(sims):,} simulations. {model_mode}.")
+                st.caption(f"Measured SG: {sg_info['full_sg_components']}/{len(players)}; "
+                           f"RRG course fit: {rrg_count}/{len(players)}; OTIS: {match_count}/{len(players)}.")
+                if sg_info["full_sg_components"]<0.5*len(players) and stats_up is None and not use_otis_in_model:
+                    st.warning("No sufficiently complete current golf statistics. The fallback uses historical DK scoring "
+                               "and is NOT a validated fantasy projection or cut-probability model.")
+                elif sg_info["full_sg_components"]>=0.5*len(players) and stats_up is None:
+                    st.info("Measured last-50 SG now drives the independent projection. Small samples are shrunk toward neutral. "
+                            "Golf-first simulations remain uncalibrated; no invented hole stats or cut probabilities.")
             except Exception as exc:
                 st.error(str(exc))
 
@@ -512,11 +541,12 @@ if page == "🏠 Setup / Inputs":
         q1,q2,q3,q4,q5,q6=st.columns(6)
         q1.metric("Tournament",b["tournament_name"])
         q2.metric("Field",len(b["players"]))
-        q3.metric("RRG",f"{b['rrg_info']['matched']}/{len(b['players'])}")
-        q4.metric("OTIS",f"{b['otis_match_count']}/{len(b['players'])}")
-        q5.metric("Weather",("Auto" if b["weather_source"]=="Open-Meteo" else b["weather_source"]))
-        q6.metric("Course",b["holes_source"])
-        st.caption("Model source: " + b["model_mode"] + ". Comparison-source rankings never modify simulations.")
+        q3.metric("SG",f"{b.get('rrg_sg_info',{}).get('full_sg_components',0)}/{len(b['players'])}")
+        q4.metric("RRG FIT",f"{b['rrg_info']['matched']}/{len(b['players'])}")
+        q5.metric("OTIS",f"{b['otis_match_count']}/{len(b['players'])}")
+        q6.metric("Weather",("Auto" if b["weather_source"]=="Open-Meteo" else b["weather_source"]))
+        st.caption("Model source: " + b["model_mode"] + ". RRG FIT and OTIS ranks never change the model unless "
+                   "you explicitly select experimental OTIS blend. RRG SG and RRG FIT overlap in underlying data.")
         st.success("Setup is stored for this session. Use the sidebar to go directly to DFS, Round Parlays, Course DNA, or Results.")
     st.stop()
 
