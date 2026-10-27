@@ -602,8 +602,15 @@ if page == "🏆 Tournament DFS":
                           "model_vs_rrg_rank_delta","model_vs_otis_rank_delta",
                           "rrg_fit","otis_true_skill","otis_course_fit") if c in mc.columns]
         st.dataframe(mc[cols].sort_values("model_rank"),width="stretch",hide_index=True)
-        st.download_button("Download independent source comparison",
-                           mc[cols].to_csv(index=False),"pga_source_rank_comparison.csv",mime="text/csv")
+        independent_source_comparison=not str(bundle.get("model_mode","")).startswith("OTIS-assisted")
+        st.download_button(
+            "Download independent source comparison" if independent_source_comparison
+            else "Download OTIS-assisted comparison (NOT independent)",
+            mc[cols].to_csv(index=False),
+            "pga_source_rank_comparison.csv" if independent_source_comparison
+            else "pga_otis_assisted_comparison_NOT_INDEPENDENT.csv",
+            mime="text/csv"
+        )
         if bundle["otis_match_count"]==0:
             st.info("OTIS not yet released. The independent model and RRG comparison are available now.")
         st.warning("A shared ranking does not validate win, top-10 or cut probabilities. Source agreement is a research signal, not a guarantee.")
