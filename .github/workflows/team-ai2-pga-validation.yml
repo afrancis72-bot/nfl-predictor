@@ -1,0 +1,32 @@
+name: Team AI2 PGA regressions
+
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - "sports/pga/**"
+      - "pages/2_PGA.py"
+      - "pages/3_PGA_Entries.py"
+      - "tests/test_pga_source_independence.py"
+      - ".github/workflows/team-ai2-pga-validation.yml"
+  pull_request:
+    paths:
+      - "sports/pga/**"
+      - "pages/2_PGA.py"
+      - "pages/3_PGA_Entries.py"
+      - "tests/test_pga_source_independence.py"
+
+jobs:
+  pga-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install "pandas>=2.0" "numpy>=1.26"
+      - name: Validate source independence and DK fee routing
+        run: python -m unittest discover -s tests -p 'test_pga_source_independence.py' -v
