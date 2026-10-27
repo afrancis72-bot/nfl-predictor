@@ -180,6 +180,51 @@ class FeaturedContestTests(unittest.TestCase):
         self.assertEqual(updated.loc[updated.lineup.eq(2),"contest_allocation"].iat[0],"$5 SINGLE ENTRY")
         self.assertEqual(updated.contest_allocation.eq("$5 SINGLE ENTRY").sum(),1)
 
+
+    def test_feature_veto_excludes_finau_only_from_five_dollar_lineup(self):
+        portfolio, golfers = self.sample_portfolio(count=3)
+        # Add Finau to the strongest model lineup; other lines remain valid.
+        portfolio.loc[portfolio["lineup"].eq(2) & portfolio["player"].eq("Golfer 2-0"),"player"]="Tony Finau"
+        projections = golfers[["player"]].assign(v11_p90_dk=100)
+        projections = pd.concat([
+            projections, pd.DataFrame([{"player":"Tony Finau","v11_p90_dk":100}])
+        ],ignore_index=True)
+        summary = pd.DataFrame({
+            "lineup":[1,2,3],
+            "sum_dk_proxy":[420,485,430],
+            "avg_make_cut_pct":[0.55,0.80,0.55],
+            "sum_top10_pct":[0.5,1.8,0.7],
+        })
+        # Unrestricted model chooses the highest-scoring Finau lineup.
+        unfiltered, winner = choose_featured_lineup(summary,portfolio,projections)
+        self.assertEqual(winner,2)
+        # Restricted $5 assignment chooses the best remaining lineup instead.
+        filtered, winner = choose_featured_lineup(
+            summary,portfolio,projections,feature_exclusions=["Tony Finau"]
+        )
+        self.assertNotEqual(winner,2)
+        self.assertFalse(bool(filtered.loc[filtered.lineup.eq(2),"feature_eligible"].iat[0]))
+        self.assertEqual(
+            filtered.loc[filtered.lineup.eq(2),"contest_allocation"].iat[0],"$0.50 GPP"
+        )
+        self.assertIn("Tony Finau",portfolio["player"].tolist())
+        self.assertEqual(filtered.contest_allocation.eq("$5 SINGLE ENTRY").sum(),1)
+
+    def test_every_feature_candidate_vetoed_fails_closed(self):
+        portfolio, golfers=self.sample_portfolio(count=3)
+        predictions=golfers[["player"]].assign(v11_p90_dk=100)
+        summary=pd.DataFrame({
+            "lineup":[1,2,3],
+            "sum_dk_proxy":[420,485,430],
+            "avg_make_cut_pct":[0.55,0.80,0.55],
+            "sum_top10_pct":[0.5,1.8,0.7]
+        })
+        # All twelve+ players vetoed; no silent override permitted.
+        with self.assertRaisesRegex(ValueError,"No eligible lineup for the"):
+            choose_featured_lineup(
+                summary,portfolio,predictions,feature_exclusions=golfers.player.tolist()
+            )
+
     def test_actual_dk_fees_direct_feature_to_five_dollar_row(self):
         roster, golfers=self.sample_portfolio()
         # DraftKings exports use six repeated G roster columns; pandas suffixes them.
