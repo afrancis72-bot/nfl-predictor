@@ -5,7 +5,7 @@ from ai2_nfl_sim_portfolio import select_simulated_portfolio
 
 def player(name, pos, salary, team):
     return {"ID":name,"Name":name,"Position":pos,"Salary":salary,
-            "TeamAbbrev":team,"opponent":"XYZ","opportunity_verified":True}
+            "TeamAbbrev":team,"opponent":"XYZ","opportunity_verified":True,"projected_targets":5,"projected_touches":12}
 
 def roster(qb):
     return [player(qb,"QB",6500,"A"),player("r1","RB",7500,"B"),
