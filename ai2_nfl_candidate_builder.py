@@ -4,6 +4,7 @@ Produces legal candidate lineups only from independently verified weekly
 projection rows. No sportsbook inputs and no profitability guarantees.
 """
 from collections import Counter
+from ai2_nfl_role_evidence import player_opportunity_evidence
 from random import Random
 from ai2_nfl_lineup import check_classic_lineup
 
@@ -29,6 +30,8 @@ def build_classic_candidates(rows, *, count=5, attempts=30000, seed=7,
         if (position == "WR" and salary < min_wr_salary) or (position == "RB" and salary < min_rb_salary):
             continue
         if require_opportunity and row.get("opportunity_verified") is not True:
+            continue
+        if require_opportunity and not player_opportunity_evidence(row)[0]:
             continue
         pools[position].append(row)
     if any(len(pools[p]) < n for p, n in (("QB", 1), ("RB", 2), ("WR", 3), ("TE", 1), ("DST", 1))):
