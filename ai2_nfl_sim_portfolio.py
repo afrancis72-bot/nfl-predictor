@@ -13,9 +13,11 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                                value_salary_ceiling=5000, value_max_appearances=2,
                                premium_count=5, premium_value_max_appearances=1,
                                min_wr_salary=4000, min_rb_salary=4500,
-                               require_opportunity=True):
+                               require_opportunity=True, p90_efficiency_retention=0.95):
     if not 1 <= count <= 20 or not 0 < max_exposure <= 1 or not 0 <= upside_share <= 1:
         raise ValueError("Invalid portfolio parameters")
+    if not 0 < p90_efficiency_retention <= 1:
+        raise ValueError("P90 efficiency retention must be in (0,1]")
     if not 0 <= premium_count <= count or not 1 <= premium_value_max_appearances <= value_max_appearances:
         raise ValueError("Invalid premium or value exposure limits")
     if not {"ID"}.issubset(players.columns):
@@ -52,6 +54,11 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
         scored.append(dict(candidate=candidate, simulated_mean=float(scores.mean()),
                            simulated_p90=float(np.percentile(scores, 90)),
                            simulated_p99=float(np.percentile(scores, 99))))
+    if not scored:
+        raise ValueError("No simulated candidates available")
+    best_p90_efficiency = max(x["simulated_p90"] / (float(x["candidate"]["salary"]) / 1000) for x in scored)
+    efficiency_floor = best_p90_efficiency * p90_efficiency_retention
+    scored = [x for x in scored if x["simulated_p90"] / (float(x["candidate"]["salary"]) / 1000) >= efficiency_floor]
     limit = max(1, int(np.floor(count * max_exposure)))
     chosen, exposures, premium_exposures, used = [], Counter(), Counter(), set()
     for role, quota in (("upside", round(count * upside_share)),
@@ -87,5 +94,5 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             used.add(i)
             selected_role += 1
     if len(chosen) != count:
-        raise ValueError(f"Only {len(chosen)} of {count} lineups satisfy the exposure and roster constraints; no partial portfolio exported")
+        raise ValueError(f"Only {len(chosen)} of {count} lineups meet role, exposure and P90/$1,000 retention ({p90_efficiency_retention:.0%}) constraints; no partial portfolio exported")
     return chosen
