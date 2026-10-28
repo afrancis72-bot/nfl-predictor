@@ -42,11 +42,16 @@ def build_oneclick_portfolio(salaries, projections, *, seed=42, count=20):
         raise ValueError("This screen builds exactly 20 Classic lineups.")
     season, week = _slate_week(salaries)
     if not projections:
+        from ai2_nfl_auto_intelligence import collect_automatic_baselines
+        intel = collect_automatic_baselines(salaries, season, week)
         raise ValueError(
-            "Build cannot complete: automated VERIFIED Week %s player projections "
-            "and opportunity data are not connected yet. Your salary file is saved. "
-            "Historical data alone cannot justify current-week picks. "
-            "No misleading lineups have been generated." % week)
+            f"Automatic NFL research completed for Week {week}: "
+            f"{intel['matched_count']} players matched to observed historical stats; "
+            f"{intel['missing_count']} unmatched. "
+            "Lineup release blocked: " + "; ".join(intel["blockers"])
+            + ". No extra upload is required from you; the automatic injury-aware "
+              "forecast and DST model are unfinished."
+        )
     rows, issues = inspect_saved_nfl_inputs(salaries, projections)
     if issues:
         raise ValueError("Slate validation failed: " + "; ".join(issues))
