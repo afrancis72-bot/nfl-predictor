@@ -173,8 +173,7 @@ else:
                     raise ValueError("Upload your DraftKings salary CSV first.")
                 with st.spinner("Validating current slate, player evidence and simulation inputs..."):
                     output_one = build_oneclick_portfolio(
-                        salaries_one, get_upload("NFL", "Projections"),
-                        seed=int(seed_one), count=20)
+                        salaries_one, seed=int(seed_one), count=20)
                 st.session_state["ai2_oneclick_result"] = output_one
                 st.session_state["ai2_oneclick_slate"] = salaries_one[0]
             except (ValueError, KeyError, TypeError, ImportError, OSError) as exc:
@@ -183,7 +182,7 @@ else:
         output_one = st.session_state.get("ai2_oneclick_result")
         if output_one:
             st.subheader("Your 20 lineups")
-            st.caption("Projected simulation scores are not guaranteed results. Verify news and roster status before entry.")
+            st.warning(output_one.get("research_warning", "Experimental model: review official active statuses before entry."))
             st.dataframe(_ai2_pd.DataFrame(output_one["summary"]), use_container_width=True, hide_index=True)
             st.download_button("Download DraftKings lineup CSV", data=output_one["csv"],
                                file_name="team_ai2_nfl_20_lineups.csv", mime="text/csv")
@@ -191,7 +190,7 @@ else:
                 for i, entry in enumerate(output_one["ranked"], 1):
                     st.write(f"Lineup {i} | {entry['contest_tier']} | P90 {entry['simulated_p90']:.1f} | P99 {entry['simulated_p99']:.1f}")
                     st.write(entry["selection_explanation"])
-        st.caption("No synthetic demos, advanced uploads or research controls are needed here. If independently verified projections are unavailable, the build will explain what is missing instead of guessing.")
+        st.caption("Automatic football-stat research runs when you press Build. If reliable data cannot be retrieved, no lineup is exported.")
         st.stop()
 
     tab_data,tab_build,tab_market,tab_results,tab_health = st.tabs(
