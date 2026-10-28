@@ -41,7 +41,9 @@ class OneClickTests(unittest.TestCase):
         raw = pd.DataFrame([{"player": "P0"}])
         outs = [{"player": "Unavailable", "team": "DAL"}]
         model_pool.return_value = (players, raw, outs, {"complete_games":1})
-        simulation.return_value = (players, np.full((10000,9), 11.0), {})
+        simulation.return_value = (players, np.full((10000,9), 11.0),
+                                   {"P1": {"targets": np.full(10000, 6),
+                                            "carries": np.zeros(10000)}})
         candidates.return_value = [{"players": players.to_dict("records"), "salary":50000} for _ in range(20)]
         selection.return_value = [
             {"candidate": {"players": players.to_dict("records"),"salary":50000},
@@ -57,6 +59,9 @@ class OneClickTests(unittest.TestCase):
         self.assertIs(simulation.call_args.args[1], raw)
         self.assertEqual(simulation.call_args.kwargs["seed"],117)
         self.assertEqual(candidates.call_args.kwargs["seed"],117)
+        modeled = {row["Name"]:row for row in candidates.call_args.args[0]}
+        self.assertEqual(modeled["P1"]["projected_targets"],6.0)
+        self.assertEqual(modeled["P1"]["projected_touches"],6.0)
 
     def test_seed_bounds(self):
         with self.assertRaisesRegex(ValueError, "seed"):
