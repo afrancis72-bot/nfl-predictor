@@ -15,7 +15,8 @@ from collections import defaultdict
 
 def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
                            upside_share, value_salary_ceiling,
-                           value_max_appearances, premium_value_max_appearances):
+                           value_max_appearances, premium_value_max_appearances,
+                           premium_excluded_ids=frozenset()):
     """Find a feasible *whole* portfolio when sequential greedy selection dead-ends.
 
     Binary regular/premium decisions are optimized jointly, preserving hard
@@ -54,6 +55,9 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
     for i in range(n):
         add_constraint([(i, 1), (n + i, 1)], 0, 1)
     max_player = max(1, int(np.floor(count * max_exposure)))
+    for ident in premium_excluded_ids:
+        for i in appearances.get(str(ident), ()):
+            add_constraint([(n + i, 1)], 0, 0)
     for ident, indices in appearances.items():
         cap = min(max_player, value_max_appearances) if ident in cheap else max_player
         add_constraint([(i, 1) for i in indices] +
@@ -133,7 +137,9 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                                value_salary_ceiling=5000, value_max_appearances=2,
                                premium_count=5, premium_value_max_appearances=1,
                                min_wr_salary=4000, min_rb_salary=4500,
-                               require_opportunity=True, p90_efficiency_retention=0.95):
+                               require_opportunity=True, p90_efficiency_retention=0.95,
+                               premium_excluded_ids=frozenset()):
+    premium_excluded_ids = frozenset(str(x) for x in premium_excluded_ids)
     if not 1 <= count <= 20 or not 0 < max_exposure <= 1 or not 0 <= upside_share <= 1:
         raise ValueError("Invalid portfolio parameters")
     if not 0 < p90_efficiency_retention <= 1:
@@ -221,7 +227,8 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             max_exposure=max_exposure, upside_share=upside_share,
             value_salary_ceiling=value_salary_ceiling,
             value_max_appearances=value_max_appearances,
-            premium_value_max_appearances=premium_value_max_appearances)
+            premium_value_max_appearances=premium_value_max_appearances,
+            premium_excluded_ids=premium_excluded_ids)
     # Allocate premium entries AFTER selecting the complete exposure-constrained
     # portfolio: a candidate's position in the upside/balanced search is NOT
     # evidence that it deserves a more expensive contest entry.
@@ -232,6 +239,8 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
     for i in order:
         if len(premium_ids) == premium_count:
             break
+        if any(str(p["ID"]) in premium_excluded_ids for p in chosen[i]["candidate"]["players"]):
+            continue
         affordable = [p for p in chosen[i]["candidate"]["players"]
                       if str(p.get("Position", "")).upper() in {"RB", "WR"}
                       and float(p["Salary"]) < value_salary_ceiling]
@@ -268,6 +277,9 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             value_salary_ceiling=value_salary_ceiling,
             value_max_appearances=value_max_appearances,
             premium_value_max_appearances=premium_value_max_appearances)
+    if any(str(p["ID"]) in premium_excluded_ids
+           for i in premium_ids for p in chosen[i]["candidate"]["players"]):
+        raise ValueError("Premium player exclusion violated; refusing to export portfolio")
     for i, item in enumerate(chosen):
         item["contest_tier"] = "$3" if i in premium_ids else "$0.50"
         roster = item["candidate"]["players"]
