@@ -3,6 +3,7 @@
 This is not independent certification of user-supplied flags.
 """
 from math import isfinite
+from ai2_nfl_role_evidence import player_opportunity_evidence
 from ai2_nfl_preflight import BLOCKED, REQUIRED
 
 def eligible_nfl_rows(rows, *, min_wr_salary=4000, min_rb_salary=4500, require_opportunity=True):
@@ -28,6 +29,8 @@ def eligible_nfl_rows(rows, *, min_wr_salary=4000, min_rb_salary=4500, require_o
             continue
         position = str(row.get("Position", "")).upper()
         if (position == "WR" and salary < min_wr_salary) or (position == "RB" and salary < min_rb_salary):
+            continue
+        if require_opportunity and not player_opportunity_evidence(row)[0]:
             continue
         if position not in {"QB", "RB", "WR", "TE", "DST"}:
             continue
