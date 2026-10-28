@@ -892,7 +892,7 @@ else:
                                 st.error(f"Simulation ranking blocked: {exc}")
                         ranked = st.session_state.get("nfl_sim_ranked_candidates")
                         if ranked:
-                            st.dataframe(pd.DataFrame([dict(role=x["portfolio_role"],
+                            st.dataframe(pd.DataFrame([dict(contest=x["contest_tier"], p90_per_1000=x["p90_per_1000"], role=x["portfolio_role"],
                                 mean=round(x["simulated_mean"], 2),
                                 p90=round(x["simulated_p90"], 2),
                                 p99=round(x["simulated_p99"], 2))
@@ -943,8 +943,8 @@ else:
             st.divider()
             st.subheader("NFL Classic · Sunday candidate builder")
             st.caption("Projection-ranked legal candidates, NOT correlated simulations or validated contest-ROI predictions. No sportsbook inputs.")
-            st.info("First save DraftKings salaries and an independent weekly projection CSV under My Slate. Projections must contain ID, proj, projection_source, weekly_projection_valid and opportunity_verified. The two verification flags must be true and must reflect independently checked data.")
-            lineup_count = st.slider("Candidate lineups", 1, 20, 20, key="nfl_candidate_count")
+            st.info("Save independent weekly projections and DK salaries. Low-cost WR/RB require verified opportunity plus numeric projected_targets/recent_targets_per_game/route_participation, or projected_touches/recent_touches_per_game/snap_share; a documented verified injury role is an alternative. Unknown evidence is rejected. All metrics must be independently verified.")
+            lineup_count = st.slider("Candidate lineups", 1, 20, 15, key="nfl_candidate_count")
             exposure_limit = st.slider("Maximum player exposure", 20, 100, 35, 5, key="nfl_candidate_exposure")
             if st.button("Build NFL Classic candidates", key="nfl_build_candidates"):
                 try:
