@@ -76,15 +76,55 @@ def build_classic_candidates(rows, *, count=5, attempts=30000, seed=7,
                 score = sum(float(p["proj"]) for p in revised)
                 if key not in best or score > best[key][0]:
                     best[key] = (score, revised)
-    selected = []
+    # Preserve different quarterback and game-stack paths for the *simulator*.
+    # Merely taking the top projected means repeatedly crowds out viable QBs,
+    # including QBs in high-total games. These are candidates, NOT final picks.
+    ordered = sorted(best.values(), key=lambda x: x[0], reverse=True)
+    by_qb = {}
+    for item in ordered:
+        qb = next(p for p in item[1] if p["Position"] == "QB")
+        qb_id = str(qb["ID"])
+        has_pass_stack = any(
+            p["Position"] in {"WR", "TE"} and p["TeamAbbrev"] == qb["TeamAbbrev"]
+            for p in item[1] if p["ID"] != qb["ID"])
+        by_qb.setdefault(qb_id, []).append((item, has_pass_stack))
+
+    selected, selected_keys = [], set()
     exposures = Counter()
     limit = max(1, int(count * max_exposure + 0.999999))
-    for score, lineup in sorted(best.values(), key=lambda x: x[0], reverse=True):
-        if len(selected) >= count:
-            break
+
+    def add(item):
+        score, lineup = item
+        key = tuple(sorted(str(p["ID"]) for p in lineup))
+        if key in selected_keys or len(selected) >= count:
+            return False
         if any(exposures[str(p["ID"])] >= limit for p in lineup):
-            continue
+            return False
         selected.append({"players": lineup, "projected_points": round(score, 2),
                          "salary": int(sum(float(p["Salary"]) for p in lineup))})
+        selected_keys.add(key)
         exposures.update(str(p["ID"]) for p in lineup)
+        return True
+
+    # Reserve up to half the search pool for alternative QBs. Prefer a QB +
+    # receiving teammate where possible but retain nonstacked alternatives.
+    # Fewer viable QBs does not create invented or illegal candidates.
+    qb_ids = sorted(by_qb, key=lambda k: by_qb[k][0][0][0], reverse=True)
+    target_diverse = min(count // 2, len(ordered))
+    if qb_ids and target_diverse:
+        quota = max(1, target_diverse // len(qb_ids))
+        for qb_id in qb_ids:
+            taken = 0
+            for item, stacked in sorted(by_qb[qb_id], key=lambda x: (x[1], x[0][0]), reverse=True):
+                if taken >= quota or len(selected) >= target_diverse:
+                    break
+                if add(item):
+                    taken += 1
+    # Remaining candidates compete on projected points, including previously
+    # crowded-out stacked and unstacked combinations. Simulated portfolio
+    # selection determines winners and contest assignment downstream.
+    for item in ordered:
+        if len(selected) >= count:
+            break
+        add(item)
     return selected
