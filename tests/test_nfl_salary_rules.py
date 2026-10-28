@@ -4,7 +4,7 @@ from ai2_nfl_eligibility import eligible_nfl_rows
 class EligibilityTests(unittest.TestCase):
     def test_minimums_and_roles(self):
         def row(identifier, pos, salary, role=True):
-            return dict(ID=identifier, Position=pos, Salary=salary, proj=10,
+            return dict(ID=identifier, Name=identifier, Position=pos, Salary=salary, proj=10,
                 TeamAbbrev="DAL", opponent="ARI", dk_status="",
                 projection_source="verified", weekly_projection_valid=True,
                 opportunity_verified=role, projected_targets=5, projected_touches=12)
