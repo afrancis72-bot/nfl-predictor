@@ -3,6 +3,7 @@
 Scenario percentiles are not contest ROI or predicted cash rates.
 """
 from collections import Counter
+from math import ceil
 import numpy as np
 import pandas as pd
 from ai2_nfl_lineup import check_classic_lineup
@@ -60,6 +61,26 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
         if ident in cheap:
             add_constraint([(n + i, 1) for i in indices],
                            0, premium_value_max_appearances)
+    # Premium entries carry more money. The global 35% player limit does
+    # not protect a five-entry premium subportfolio by itself.
+    premium_qb_limit = max(1, ceil(premium_count * 0.35))
+    premium_pass_team_limit = max(1, ceil(premium_count * 0.60))
+    quarterback_ids = defaultdict(set)
+    passing_team_indices = defaultdict(set)
+    for i, item in enumerate(scored):
+        roster = item["candidate"]["players"]
+        for p in roster:
+            position = str(p.get("Position", "")).upper()
+            if position == "QB":
+                quarterback_ids[str(p["ID"])].add(i)
+            if position in {"QB", "WR", "TE"}:
+                passing_team_indices[str(p.get("TeamAbbrev", "")).upper()].add(i)
+    for indices in quarterback_ids.values():
+        add_constraint([(n + i, 1) for i in indices], 0, premium_qb_limit)
+    for team, indices in passing_team_indices.items():
+        if team:
+            # A lineup with 2+ receivers from the same team counts once.
+            add_constraint([(n + i, 1) for i in indices], 0, premium_pass_team_limit)
     means = np.array([v["simulated_mean"] for v in scored])
     p90 = np.array([v["simulated_p90"] for v in scored])
     p99 = np.array([v["simulated_p99"] for v in scored])
@@ -226,6 +247,27 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             value_max_appearances=value_max_appearances,
             premium_value_max_appearances=premium_value_max_appearances)
 
+    # Even a complete greedy premium assignment can overconcentrate one QB
+    # or one team's passing offense. Re-optimize jointly in that case.
+    premium_qb_exposures = Counter()
+    premium_pass_team_exposures = Counter()
+    for i in premium_ids:
+        roster = chosen[i]["candidate"]["players"]
+        premium_qb_exposures.update(str(p["ID"]) for p in roster
+                                    if str(p.get("Position", "")).upper() == "QB")
+        premium_pass_team_exposures.update({
+            str(p.get("TeamAbbrev", "")).upper() for p in roster
+            if str(p.get("Position", "")).upper() in {"QB", "WR", "TE"}
+            and str(p.get("TeamAbbrev", "")).strip()})
+    if (premium_qb_exposures and max(premium_qb_exposures.values()) > max(1, ceil(premium_count * 0.35))
+            or premium_pass_team_exposures and
+            max(premium_pass_team_exposures.values()) > max(1, ceil(premium_count * 0.60))):
+        chosen, premium_ids = _solve_joint_portfolio(
+            scored, count=count, premium_count=premium_count,
+            max_exposure=max_exposure, upside_share=upside_share,
+            value_salary_ceiling=value_salary_ceiling,
+            value_max_appearances=value_max_appearances,
+            premium_value_max_appearances=premium_value_max_appearances)
     for i, item in enumerate(chosen):
         item["contest_tier"] = "$3" if i in premium_ids else "$0.50"
         roster = item["candidate"]["players"]
