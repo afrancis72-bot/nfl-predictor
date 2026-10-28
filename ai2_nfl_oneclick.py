@@ -81,7 +81,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         prepared.append(player)
     candidates = build_classic_candidates(
         prepared, count=1200, attempts=200000, seed=seed,
-        salary_floor=49600, salary_cap=50000, max_exposure=1.0,
+        salary_floor=49600, salary_cap=50000, max_exposure=0.35,
         min_wr_salary=4000, min_rb_salary=4500, require_opportunity=True)
     if len(candidates) < count:
         raise ValueError(
