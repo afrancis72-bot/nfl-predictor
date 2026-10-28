@@ -129,7 +129,17 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             good, why = player_opportunity_evidence(p, value_ceiling=value_salary_ceiling)
             if not good:
                 raise ValueError("Unjustified value player reached final portfolio")
-            evidence[str(p["ID"])] = why if p["Position"] in {"WR", "RB"} and float(p["Salary"]) < value_salary_ceiling else "Valid weekly projection; value-specific role gate not applicable"
+            player_draws = matrix[:, index[str(p["ID"])]]
+            player_mean = float(player_draws.mean())
+            player_p90 = float(np.percentile(player_draws, 90))
+            salary_eff = player_p90 / (float(p["Salary"]) / 1000)
+            source = str(p.get("projection_source") or "unspecified").strip()
+            basis = why if p["Position"] in {"WR", "RB"} and float(p["Salary"]) < value_salary_ceiling else "Weekly projection marked verified; low-cost role gate not applicable"
+            evidence[str(p["ID"])] = (
+                f"{basis}; simulated mean {player_mean:.1f}, P90 {player_p90:.1f}, "
+                f"P90/$1K {salary_eff:.2f}; projection source: {source}. "
+                "These statistics explain modeled opportunity, not a guaranteed outcome."
+            )
         item["selection_explanation"] = {
             "contest_assignment": "Ranked by simulated P99, then P90 and mean; restricted low-salary exposure" if i in premium_ids else "Selected by portfolio simulation and exposure constraints",
             "qb_receiving_teammates": teammates,
