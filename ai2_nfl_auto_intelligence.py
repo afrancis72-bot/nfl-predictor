@@ -47,7 +47,7 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
     if injury_issue:
         blockers.append("Official NFL injury feed unavailable: " + injury_issue)
     return {
-        "players": baseline, "adjusted_rates": adjusted_rates,
+        "players": baseline, "raw_rates": rates, "adjusted_rates": adjusted_rates,
         "opportunity_changes": opportunity_changes, "source": "nflverse historical stats and NFL official game designations",
         "target_season": season, "target_week": week,
         "matched_count": int(baseline["match_status"].eq("matched").sum()),
