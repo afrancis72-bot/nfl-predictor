@@ -663,30 +663,30 @@ else:
                         pool, rates, n_sims=10000)
                     if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
                         raise ValueError("Simulation results are incomplete or nonfinite.")
-                    candidates = build_classic_candidates(eligible, count=120, max_exposure=1.0,
+                    candidates = build_classic_candidates(eligible, count=600, attempts=120000, max_exposure=1.0,
                         salary_floor=49600, **nfl_eligibility_kwargs)
-                    if len(candidates) < 20:
-                        raise ValueError(f"Only {len(candidates)} legal candidate lineups were found; 20 required.")
+                    if len(candidates) < 15:
+                        raise ValueError(f"Only {len(candidates)} legal candidate lineups were found; 15 required.")
                     ranked = select_simulated_portfolio(
-                        candidates, players, draws, count=20,
+                        candidates, players, draws, count=15,
                         max_exposure=0.35, upside_share=0.25, **nfl_portfolio_kwargs)
-                    if len(ranked) != 20:
-                        raise ValueError("Simulation did not produce a complete 20-lineup portfolio.")
+                    if len(ranked) != 15:
+                        raise ValueError("Simulation did not produce a complete 15-lineup portfolio.")
                     csv_data = export_classic_candidates([entry["candidate"] for entry in ranked])
                     st.session_state["nfl_research_players"] = players.copy()
                     st.session_state["nfl_research_draws"] = draws
                     st.session_state["nfl_candidates"] = candidates
                     st.session_state["nfl_sim_ranked_candidates"] = ranked
                     st.session_state["nfl_full_sim_export"] = csv_data
-                    st.success("Completed 10,000 correlated football-stat scenarios and selected 20 simulation-ranked lineups.")
+                    st.success("Completed 10,000 correlated football-stat scenarios and selected 15 simulation-ranked lineups.")
                 except (ValueError, KeyError, TypeError, ImportError, IndexError) as exc:
                     st.session_state.pop("nfl_full_sim_export", None)
                     st.error(f"Simulation cannot run with current inputs: {exc}")
             if st.session_state.get("nfl_full_sim_export"):
                 st.download_button(
-                    "Download 20-lineup DraftKings roster CSV (review required)",
+                    "Download 15-lineup DraftKings roster CSV (review required)",
                     st.session_state["nfl_full_sim_export"],
-                    file_name="team_ai2_nfl_simulated_20_review.csv",
+                    file_name="team_ai2_nfl_simulated_15_review.csv",
                     mime="text/csv", key="nfl_full_sim_download")
                 st.warning("Review current official player statuses, projections, contest slate, and entry IDs before using this experimental portfolio. Simulated results do not establish profitability.")
             st.divider()
@@ -897,7 +897,14 @@ else:
                                 p90=round(x["simulated_p90"], 2),
                                 p99=round(x["simulated_p99"], 2))
                                 for x in ranked]), use_container_width=True, hide_index=True)
-                            st.caption(f"Selected {len(ranked)} of the requested candidate lineups under the exposure cap.")
+                            st.caption(f"Selected {len(ranked)} lineups under eligibility and exposure requirements.")
+                            with st.expander("Why was each player selected?", expanded=False):
+                                for j, item in enumerate(ranked, 1):
+                                    st.write(f"Lineup {j} | {item['contest_tier']} | P90 {item['simulated_p90']:.2f} | P99 {item['simulated_p99']:.2f} | P90/$1K {item['p90_per_1000']:.2f}")
+                                    st.caption(item["selection_explanation"]["contest_assignment"] + "; " + item["selection_explanation"]["qb_stack_note"])
+                                    for p in item["candidate"]["players"]:
+                                        evidence = item["selection_explanation"]["player_opportunity_evidence"][str(p["ID"])]
+                                        st.write(f"{p.get('Position')} {p.get('Name', p['ID'])}: {evidence}")
                             st.download_button("Download simulation-ranked DraftKings CSV",
                                 export_classic_candidates([x["candidate"] for x in ranked]),
                                 file_name="nfl_simulation_ranked_candidates.csv",
