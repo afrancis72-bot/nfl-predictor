@@ -6,7 +6,8 @@ Historical averages are not quietly certified as current-week forecasts.
 from ai2_nfl_inputs import parse_csv_payload
 from ai2_nfl_auto_baselines import build_historical_baselines
 from ai2_nfl_official_injuries import fetch_official_injury_statuses, match_injury_statuses
-from props_data import fetch_weekly
+from props_data import fetch_weekly, make_rates
+from ai2_nfl_workload import redistribute_opportunities
 
 UNAVAILABLE = frozenset({"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "DOUBTFUL", "D"})
 
@@ -35,14 +36,19 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
     baseline["model_candidate"] = (baseline["match_status"].eq("matched")
                                    & ~baseline["excluded_for_status"]
                                    & ~baseline["requires_injury_review"])
+    rates = make_rates(history, season, week)
+    statuses = {(str(row["Name"]), str(row.get("Team", ""))): str(row["current_status"])
+                for _, row in baseline.iterrows()}
+    adjusted_rates, opportunity_changes = redistribute_opportunities(rates, statuses)
     missing = baseline[baseline["match_status"].ne("matched")]
-    blockers = ["No validated injury/teammate workload redistribution model",
+    blockers = ["Workload redistribution is estimated from observed rates, not validated against current depth charts",
                 "Independent DST projections not yet connected",
                 "Historical rates are not a verified current-week role forecast"]
     if injury_issue:
         blockers.append("Official NFL injury feed unavailable: " + injury_issue)
     return {
-        "players": baseline, "source": "nflverse historical stats and NFL official game designations",
+        "players": baseline, "adjusted_rates": adjusted_rates,
+        "opportunity_changes": opportunity_changes, "source": "nflverse historical stats and NFL official game designations",
         "target_season": season, "target_week": week,
         "matched_count": int(baseline["match_status"].eq("matched").sum()),
         "candidate_count": int(baseline["model_candidate"].sum()),
