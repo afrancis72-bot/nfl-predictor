@@ -9,16 +9,28 @@ from ai2_nfl_lineup import check_classic_lineup
 
 def build_classic_candidates(rows, *, count=5, attempts=30000, seed=7,
                              salary_floor=49600, salary_cap=50000,
-                             max_exposure=0.60):
+                             max_exposure=0.60, min_wr_salary=4000, min_rb_salary=4500,
+                             require_opportunity=True):
     if not 1 <= count <= 2000 or not 1 <= attempts <= 200000:
         raise ValueError("Invalid candidate count or search budget")
     if not 0 < max_exposure <= 1:
         raise ValueError("Invalid exposure limit")
+    if min_wr_salary < 0 or min_rb_salary < 0:
+        raise ValueError("Salary minimums must be nonnegative")
     pools = {p: [] for p in ("QB", "RB", "WR", "TE", "DST")}
     for row in rows:
         position = str(row.get("Position", "")).upper()
-        if position in pools:
-            pools[position].append(row)
+        if position not in pools:
+            continue
+        try:
+            salary = float(row["Salary"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if (position == "WR" and salary < min_wr_salary) or (position == "RB" and salary < min_rb_salary):
+            continue
+        if require_opportunity and row.get("opportunity_verified") is not True:
+            continue
+        pools[position].append(row)
     if any(len(pools[p]) < n for p, n in (("QB", 1), ("RB", 2), ("WR", 3), ("TE", 1), ("DST", 1))):
         return []
     rng = Random(seed)
