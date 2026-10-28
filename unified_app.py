@@ -152,6 +152,48 @@ else:
         st.rerun()
     st.title(f"{SPORTS[sport]['icon']} {sport}")
     st.caption("Unified platform development preview · Research-only NFL engine available; no sport engine certified.")
+    if sport == "NFL":
+        st.caption("NFL Classic · Upload a DraftKings salary CSV, optionally change the seed, then build.")
+        from ai2_nfl_oneclick import build_oneclick_portfolio
+        import io as _ai2_io
+        import pandas as _ai2_pd
+        upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
+        saved_one = get_upload("NFL", "DraftKings salaries")
+        if saved_one:
+            st.success(f"Current saved slate: {saved_one[0]}")
+        seed_one = st.number_input("Simulation seed (optional)", min_value=0, max_value=2147483647, value=42, step=1, key="nfl_one_seed")
+        if st.button("BUILD MY 20 LINEUPS", type="primary", key="nfl_one_build", use_container_width=True):
+            try:
+                if upload_one is not None:
+                    from ai2_nfl_inputs import parse_csv_payload
+                    parse_csv_payload(upload_one.getvalue())
+                    save_upload("NFL", "DraftKings salaries", upload_one)
+                salaries_one = get_upload("NFL", "DraftKings salaries")
+                if not salaries_one:
+                    raise ValueError("Upload your DraftKings salary CSV first.")
+                with st.spinner("Validating current slate, player evidence and simulation inputs..."):
+                    output_one = build_oneclick_portfolio(
+                        salaries_one, get_upload("NFL", "Projections"),
+                        seed=int(seed_one), count=20)
+                st.session_state["ai2_oneclick_result"] = output_one
+                st.session_state["ai2_oneclick_slate"] = salaries_one[0]
+            except (ValueError, KeyError, TypeError, ImportError, OSError) as exc:
+                st.session_state.pop("ai2_oneclick_result", None)
+                st.error(str(exc))
+        output_one = st.session_state.get("ai2_oneclick_result")
+        if output_one:
+            st.subheader("Your 20 lineups")
+            st.caption("Projected simulation scores are not guaranteed results. Verify news and roster status before entry.")
+            st.dataframe(_ai2_pd.DataFrame(output_one["summary"]), use_container_width=True, hide_index=True)
+            st.download_button("Download DraftKings lineup CSV", data=output_one["csv"],
+                               file_name="team_ai2_nfl_20_lineups.csv", mime="text/csv")
+            with st.expander("Why the model selected these players"):
+                for i, entry in enumerate(output_one["ranked"], 1):
+                    st.write(f"Lineup {i} | {entry['contest_tier']} | P90 {entry['simulated_p90']:.1f} | P99 {entry['simulated_p99']:.1f}")
+                    st.write(entry["selection_explanation"])
+        st.caption("No synthetic demos, advanced uploads or research controls are needed here. If independently verified projections are unavailable, the build will explain what is missing instead of guessing.")
+        st.stop()
+
     tab_data,tab_build,tab_market,tab_results,tab_health = st.tabs(
         ["My Slate", "Build / Simulate", "Market Intelligence", "My Results", "Engine Health"]
     )
