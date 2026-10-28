@@ -1,0 +1,30 @@
+name: NFL live Week 8 slate acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'scripts/validate_live_nfl_week8.py'
+      - 'tests/fixtures/2026_week8_user_dk_slate.csv'
+      - '.github/workflows/nfl-live-acceptance.yml'
+jobs:
+  real-slate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install NFL dependencies
+        run: python -m pip install numpy pandas scipy beautifulsoup4
+      - name: Build real Week 8 portfolio
+        run: python -u scripts/validate_live_nfl_week8.py
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: nfl-real-week8-20-lineups-review-only
+          path: artifacts/nfl_live_week8/
+          retention-days: 14
