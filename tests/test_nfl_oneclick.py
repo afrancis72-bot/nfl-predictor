@@ -38,6 +38,9 @@ class OneClickTests(unittest.TestCase):
             {"ID": str(i), "Name": f"P{i}", "Position": "WR", "Salary": 5000,
              "proj": 10.0, "projection_source": "observed", "TeamAbbrev":"DAL"}
             for i in range(9)])
+        # A prior week's changed opinion must not become an invisible ban.
+        players.loc[0, "Name"] = "Malik Willis"
+        players.loc[2, "Name"] = "Adonai Mitchell"
         raw = pd.DataFrame([{"player": "P0"}])
         outs = [{"player": "Unavailable", "team": "DAL"}]
         model_pool.return_value = (players, raw, outs, {"complete_games":1})
@@ -62,6 +65,10 @@ class OneClickTests(unittest.TestCase):
         modeled = {row["Name"]:row for row in candidates.call_args.args[0]}
         self.assertEqual(modeled["P1"]["projected_targets"],6.0)
         self.assertEqual(modeled["P1"]["projected_touches"],6.0)
+        self.assertIn("Malik Willis", modeled)
+        self.assertIn("Adonai Mitchell", modeled)
+        self.assertEqual(output["audit"]["user_vetoed"], [])
+
 
     def test_seed_bounds(self):
         with self.assertRaisesRegex(ValueError, "seed"):
