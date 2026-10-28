@@ -14,4 +14,4 @@ jobs:
           python-version: '3.11'
       - run: pip install numpy pandas scipy
       - run: python -m compileall -q ai2_nfl_eligibility.py ai2_nfl_candidate_builder.py ai2_nfl_sim_portfolio.py unified_app.py
-      - run: python -m unittest discover -s tests -p 'test_nfl_guardrail_smoke.py' -v
+      - run: python -m unittest discover -s tests -p 'test_nfl_*.py' -v
