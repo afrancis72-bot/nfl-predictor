@@ -155,7 +155,7 @@ else:
     if sport == "NFL":
         st.caption("NFL Classic · Upload a DraftKings salary CSV, optionally change the seed, then build.")
         from ai2_nfl_oneclick import build_oneclick_portfolio
-        import io as _ai2_io
+        import hashlib as _ai2_hashlib
         import pandas as _ai2_pd
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
         saved_one = get_upload("NFL", "DraftKings salaries")
@@ -176,10 +176,18 @@ else:
                         salaries_one, seed=int(seed_one), count=20)
                 st.session_state["ai2_oneclick_result"] = output_one
                 st.session_state["ai2_oneclick_slate"] = salaries_one[0]
+                st.session_state["ai2_oneclick_seed"] = int(seed_one)
+                st.session_state["ai2_oneclick_digest"] = _ai2_hashlib.sha256(salaries_one[1]).hexdigest()
             except (ValueError, KeyError, TypeError, ImportError, OSError) as exc:
                 st.session_state.pop("ai2_oneclick_result", None)
                 st.error(str(exc))
         output_one = st.session_state.get("ai2_oneclick_result")
+        visible_payload = (upload_one.getvalue() if upload_one is not None
+                           else saved_one[1] if saved_one else None)
+        if (visible_payload is None or
+                st.session_state.get("ai2_oneclick_seed") != int(seed_one) or
+                st.session_state.get("ai2_oneclick_digest") != _ai2_hashlib.sha256(visible_payload).hexdigest()):
+            output_one = None
         if output_one:
             st.subheader("Your 20 lineups")
             st.warning(output_one.get("research_warning", "Experimental model: review official active statuses before entry."))
