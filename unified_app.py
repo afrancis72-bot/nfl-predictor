@@ -213,7 +213,7 @@ else:
             value_max = st.number_input("Max low-salary player appearances, all contests", min_value=1, max_value=20, value=int(load_setting(DB, "NFL", "value_max_appearances", 2)), key="nfl_value_max")
             premium_value_max = st.number_input("Max low-salary player appearances in $3 contest", min_value=1, max_value=int(value_max), value=min(int(value_max), int(load_setting(DB, "NFL", "premium_value_max_appearances", 1))), key="nfl_premium_value_max")
             if st.button("Save NFL eligibility limits", key="nfl_save_eligibility"):
-                for key, val in dict(min_wr_salary=int(wr_floor), min_rb_salary=int(rb_floor), require_opportunity=bool(verify_role), value_salary_ceiling=int(value_ceiling), value_max_appearances=int(value_max), premium_value_max_appearances=int(premium_value_max)).items():
+                for key, val in dict(min_wr_salary=int(wr_floor), min_rb_salary=int(rb_floor), require_opportunity=bool(verify_role), value_salary_ceiling=int(value_ceiling), value_max_appearances=int(value_max), premium_value_max_appearances=int(premium_value_max), p90_efficiency_retention=0.95).items():
                     save_setting(DB, "NFL", key, val)
                 st.success("NFL limits saved; rerun optimizer and simulations for updated P90/$1,000.")
             nfl_eligibility_kwargs = dict(min_wr_salary=int(wr_floor), min_rb_salary=int(rb_floor), require_opportunity=bool(verify_role))
