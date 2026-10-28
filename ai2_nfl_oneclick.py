@@ -54,6 +54,14 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     # are audit feedback, not permanent or automatically carried-forward bans.
     # Explicit current-slate exclusions would need to be confirmed separately.
     audit["user_vetoed"] = []
+    # This is a CURRENT WEEK 8, $3-tier-only human veto. It must not
+    # exclude Gray from regular entries or carry forward to other weeks.
+    premium_exclusion_names = {(2026, 8): {"noah gray"}}.get((season, week), set())
+    premium_excluded_ids = frozenset(
+        str(p["ID"]) for p in pool.to_dict("records")
+        if str(p.get("Name", "")).strip().casefold() in premium_exclusion_names)
+    audit["premium_only_exclusions"] = sorted(premium_exclusion_names)
+
     # The game-level simulator already redistributes OUT-player touches and
     # targets. Use unmodified rates with outs to avoid double counting.
     players, draws, stat_draws = run_verified_stat_simulation(
@@ -100,7 +108,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
                 premium_count=5, min_wr_salary=4000, min_rb_salary=4500,
                 value_salary_ceiling=5000, value_max_appearances=2,
                 premium_value_max_appearances=1, require_opportunity=True,
-                p90_efficiency_retention=efficiency)
+                p90_efficiency_retention=efficiency,
+                premium_excluded_ids=premium_excluded_ids)
             break
         except ValueError as exc:
             errors.append(str(exc))
