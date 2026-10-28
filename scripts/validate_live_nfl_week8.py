@@ -58,6 +58,18 @@ def main():
             if p["Position"] in {"QB", "WR", "TE"}})
     assert max(premium_qbs.values()) <= 2, "Premium QB concentration exceeded 2/5"
     assert max(premium_pass_teams.values()) <= 3, "Premium passing-team concentration exceeded 3/5"
+    gray_premium = sum(
+        any(str(p["Name"]).strip().casefold() == "noah gray"
+            for p in entry["candidate"]["players"])
+        for entry in premium)
+    gray_regular = sum(
+        any(str(p["Name"]).strip().casefold() == "noah gray"
+            for p in entry["candidate"]["players"])
+        for entry in result["ranked"] if entry["contest_tier"] != "$3")
+    assert gray_premium == 0, "Noah Gray must not enter Week 8 premium contests"
+    assert result["audit"].get("premium_only_exclusions") == ["noah gray"]
+    print("Noah Gray premium exposures:", gray_premium,
+          "regular exposures:", gray_regular)
     print("Premium quarterback exposures:", dict(premium_qbs))
     print("Premium passing-team exposures:", dict(premium_pass_teams))
 
