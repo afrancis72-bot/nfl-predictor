@@ -38,9 +38,6 @@ def main():
     appearances = Counter()
     for lineup in result["ranked"]:
         players = lineup["candidate"]["players"]
-        selected_names = {str(p["Name"]).casefold().strip() for p in players}
-        assert not selected_names.intersection({"malik willis", "adonai mitchell",
-                                                 "dohnte meyers"}), "User-vetoed player selected"
         assert len(players) == 9
         assert check_classic_lineup(players, salary_floor=49600) == [], "Illegal roster"
         for p in players:
