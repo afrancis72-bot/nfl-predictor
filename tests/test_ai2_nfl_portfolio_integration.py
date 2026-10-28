@@ -44,6 +44,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
             if signature not in seen:
                 seen.add(signature)
                 candidates.append({"players": roster,
+                                   "salary": int(sum(p["Salary"] for p in roster)),
                                    "projected_points": sum(p["proj"] for p in roster)})
         candidates.sort(key=lambda c: c["projected_points"], reverse=True)
         candidates = candidates[:120]
