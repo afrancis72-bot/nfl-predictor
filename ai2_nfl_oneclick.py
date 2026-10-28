@@ -52,17 +52,31 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     pool, raw_rates, outs, audit = create_observed_model_pool(research)
     # The game-level simulator already redistributes OUT-player touches and
     # targets. Use unmodified rates with outs to avoid double counting.
-    players, draws, _ = run_verified_stat_simulation(
+    players, draws, stat_draws = run_verified_stat_simulation(
         pool, raw_rates, n_sims=10000, seed=seed, out_players=outs)
     if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
         raise ValueError("Incomplete NFL simulation; refusing to export lineups")
     means = dict(zip(players["ID"].astype(str), draws.mean(axis=0).tolist()))
     prepared = []
+    from collections import Counter
+    repeated_names = Counter(str(n) for n in pool["Name"])
     for player in pool.to_dict(orient="records"):
         ident = str(player["ID"])
         if ident not in means or not np.isfinite(means[ident]) or means[ident] <= 0:
             continue
         player["proj"] = float(means[ident])
+        # Prefer *simulated* post-injury touch/target estimates over the
+        # pre-simulation screening heuristic. Duplicate names are skipped:
+        # the legacy stats adapter keys its detail by display name.
+        name = str(player["Name"])
+        detail = stat_draws.get(name) if repeated_names[name] == 1 else None
+        if isinstance(detail, dict) and player["Position"] in ("RB", "WR", "TE"):
+            targets = np.asarray(detail.get("targets", []), dtype=float)
+            carries = np.asarray(detail.get("carries", []), dtype=float)
+            if (targets.shape == (10000,) and carries.shape == (10000,)
+                    and np.isfinite(targets).all() and np.isfinite(carries).all()):
+                player["projected_targets"] = float(targets.mean())
+                player["projected_touches"] = float((targets + carries).mean())
         player["projection_source"] += "; 10,000 football-stat scenarios"
         prepared.append(player)
     candidates = build_classic_candidates(
