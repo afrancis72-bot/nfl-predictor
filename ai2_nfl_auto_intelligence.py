@@ -27,7 +27,7 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
     except (ValueError, OSError, TimeoutError) as exc:
         injury_issue = str(exc)
     baseline = baseline.copy()
-    baseline["official_game_status"] = baseline["ID"].astype(str).map(overrides).fillna("")
+    baseline["official_game_status"] = baseline["ID"].astype(str).map(overrides).astype("string").fillna("")
     baseline["current_status"] = baseline["official_game_status"].where(
         baseline["official_game_status"].ne(""),
         baseline["DK Status"].fillna("").astype(str).str.upper().str.strip())
