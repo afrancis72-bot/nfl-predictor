@@ -47,6 +47,20 @@ def main():
     roster_csv = list(csv.reader(io.StringIO(result["csv"])))
     assert len(roster_csv) == 21, "Invalid DraftKings roster CSV"
     assert sum(item["contest_tier"] == "$3" for item in result["ranked"]) == 5
+    premium = [entry for entry in result["ranked"] if entry["contest_tier"] == "$3"]
+    premium_qbs = Counter()
+    premium_pass_teams = Counter()
+    for entry in premium:
+        roster = entry["candidate"]["players"]
+        premium_qbs.update(str(p["ID"]) for p in roster if p["Position"] == "QB")
+        premium_pass_teams.update({
+            str(p["TeamAbbrev"]).upper() for p in roster
+            if p["Position"] in {"QB", "WR", "TE"}})
+    assert max(premium_qbs.values()) <= 2, "Premium QB concentration exceeded 2/5"
+    assert max(premium_pass_teams.values()) <= 3, "Premium passing-team concentration exceeded 3/5"
+    print("Premium quarterback exposures:", dict(premium_qbs))
+    print("Premium passing-team exposures:", dict(premium_pass_teams))
+
     OUTPUT.mkdir(parents=True, exist_ok=True)
     (OUTPUT / "real_week8_lineups_REVIEW_ONLY.csv").write_text(result["csv"])
     (OUTPUT / "real_week8_summary.json").write_text(json.dumps(result["summary"],indent=2))
