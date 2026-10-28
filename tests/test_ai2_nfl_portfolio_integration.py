@@ -25,7 +25,9 @@ class PortfolioIntegrationTests(unittest.TestCase):
             for j in range(n):
                 pool.append({"ID": str(len(pool)+1), "Name": f"{position}{j}",
                              "Position": position, "TeamAbbrev": f"T{j%12:02d}",
-                             "opponent": "ZZZ", "Salary": 5500,
+                             "opponent": "ZZZ",
+                             "Salary": {"QB": 7000, "RB": 6500, "WR": 5500, "TE": 4800, "DST": 3000}[position],
+                             "opportunity_verified": True, "projection_source": "fixture",
                              "proj": rng.uniform(5, 25)})
         by_position = {p: [row for row in pool if row["Position"] == p]
                        for p in ("QB", "RB", "WR", "TE", "DST")}
