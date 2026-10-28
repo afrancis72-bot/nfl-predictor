@@ -18,7 +18,7 @@ def _slate_week(saved_salaries):
     rows = parse_csv_payload(saved_salaries[1])
     dates = []
     for row in rows:
-        match = re.search(r"(\\d{1,2})/(\\d{1,2})/(\\d{4}|\\d{2})", str(row.get("Game Info", "")))
+        match = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})", str(row.get("Game Info", "")))
         if match:
             m, d, year = (int(x) for x in match.groups())
             if year < 100:
