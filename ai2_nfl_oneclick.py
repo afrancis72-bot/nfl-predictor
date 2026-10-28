@@ -50,17 +50,10 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     if any("Official NFL injury feed unavailable" in issue for issue in research["blockers"]):
         raise ValueError("Official game-status data cannot be retrieved; please retry when the source is available")
     pool, raw_rates, outs, audit = create_observed_model_pool(research)
-    # Respect explicit user veto decisions for the target slate. Keep these
-    # inside the model rather than introducing another upload or UI control.
-    slate_vetoes = {
-        (2026, 8): {"malik willis", "adonai mitchell", "dohnte meyers"},
-    }
-    vetoes = slate_vetoes.get((season, week), set())
-    vetoed = pool.loc[pool["Name"].astype(str).str.casefold().str.strip().isin(vetoes),
-                      "Name"].astype(str).tolist()
-    if vetoed:
-        pool = pool.loc[~pool["Name"].astype(str).str.casefold().str.strip().isin(vetoes)].copy()
-    audit["user_vetoed"] = sorted(vetoed)
+    # Player eligibility is evaluated for the current slate. Past human vetoes
+    # are audit feedback, not permanent or automatically carried-forward bans.
+    # Explicit current-slate exclusions would need to be confirmed separately.
+    audit["user_vetoed"] = []
     # The game-level simulator already redistributes OUT-player touches and
     # targets. Use unmodified rates with outs to avoid double counting.
     players, draws, stat_draws = run_verified_stat_simulation(
