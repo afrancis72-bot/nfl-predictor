@@ -884,7 +884,8 @@ else:
                                     st.session_state["nfl_research_draws"],
                                     count=st.session_state.get("nfl_candidate_count", 20),
                                     max_exposure=st.session_state.get("nfl_candidate_exposure", 35) / 100,
-                                    upside_share=0.25)
+                                    upside_share=0.25, premium_count=min(5, st.session_state.get("nfl_candidate_count", 20)),
+                                    **nfl_portfolio_kwargs)
                                 st.session_state["nfl_sim_ranked_candidates"] = ranked
                             except (ValueError, KeyError, TypeError) as exc:
                                 st.session_state.pop("nfl_sim_ranked_candidates", None)
