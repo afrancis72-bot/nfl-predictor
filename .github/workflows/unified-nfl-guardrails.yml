@@ -15,3 +15,19 @@ jobs:
       - run: pip install numpy pandas scipy beautifulsoup4 streamlit
       - run: python -m compileall -q ai2_nfl_eligibility.py ai2_nfl_candidate_builder.py ai2_nfl_sim_portfolio.py unified_app.py
       - run: python -m unittest discover -s tests -p 'test_nfl_*.py' -v
+
+      - name: Check live NFL data sources (informational)
+        continue-on-error: true
+        run: |
+          python - <<'PY'
+          from props_data import fetch_weekly, make_rates
+          from ai2_nfl_official_injuries import fetch_official_injury_statuses
+          history = fetch_weekly([2025, 2026])
+          rates = make_rates(history, 2026, 8)
+          print("Live nflverse historical player rows:", len(rates))
+          print("Latest 2026 week in pregame rates:", rates.loc[
+              rates.latest_observed_season.eq(2026), "latest_observed_week"].max())
+          _, injury_meta = fetch_official_injury_statuses()
+          print("Official NFL injury feed:", injury_meta)
+          PY
+
