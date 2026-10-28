@@ -204,6 +204,20 @@ else:
         else:
             salary_saved = get_upload("NFL", "DraftKings salaries")
             projection_saved = get_upload("NFL", "Projections")
+            st.subheader("NFL Classic eligibility limits")
+            st.caption("Applied before optimization; RB/WR filters include FLEX. Low-salary exposure caps apply during correlated portfolio selection.")
+            wr_floor = st.number_input("Minimum WR salary ($)", min_value=3000, max_value=10000, value=int(load_setting(DB, "NFL", "min_wr_salary", 4000)), step=100, key="nfl_wr_salary_floor")
+            rb_floor = st.number_input("Minimum RB salary ($)", min_value=3000, max_value=10000, value=int(load_setting(DB, "NFL", "min_rb_salary", 4500)), step=100, key="nfl_rb_salary_floor")
+            verify_role = st.checkbox("Require verified weekly opportunity", value=bool(load_setting(DB, "NFL", "require_opportunity", True)), key="nfl_require_opportunity")
+            value_ceiling = st.number_input("Low-salary WR/RB band: below ($)", min_value=4000, max_value=10000, value=int(load_setting(DB, "NFL", "value_salary_ceiling", 5000)), step=100, key="nfl_value_salary_ceiling")
+            value_max = st.number_input("Max low-salary player appearances, all contests", min_value=1, max_value=20, value=int(load_setting(DB, "NFL", "value_max_appearances", 2)), key="nfl_value_max")
+            premium_value_max = st.number_input("Max low-salary player appearances in $3 contest", min_value=1, max_value=int(value_max), value=min(int(value_max), int(load_setting(DB, "NFL", "premium_value_max_appearances", 1))), key="nfl_premium_value_max")
+            if st.button("Save NFL eligibility limits", key="nfl_save_eligibility"):
+                for key, val in dict(min_wr_salary=int(wr_floor), min_rb_salary=int(rb_floor), require_opportunity=bool(verify_role), value_salary_ceiling=int(value_ceiling), value_max_appearances=int(value_max), premium_value_max_appearances=int(premium_value_max)).items():
+                    save_setting(DB, "NFL", key, val)
+                st.success("NFL limits saved; rerun optimizer and simulations for updated P90/$1,000.")
+            nfl_eligibility_kwargs = dict(min_wr_salary=int(wr_floor), min_rb_salary=int(rb_floor), require_opportunity=bool(verify_role))
+            nfl_portfolio_kwargs = dict(**nfl_eligibility_kwargs, value_salary_ceiling=int(value_ceiling), value_max_appearances=int(value_max), premium_value_max_appearances=int(premium_value_max))
             st.subheader("Saved slate readiness")
             status_cols = st.columns(2)
             with status_cols[0]:
@@ -224,7 +238,7 @@ else:
                     if saved_issues:
                         st.error("Slate data issues: " + "; ".join(saved_issues))
                     else:
-                        verified_rows = eligible_nfl_rows(saved_rows)
+                        verified_rows = eligible_nfl_rows(saved_rows, **nfl_eligibility_kwargs)
                         st.caption(f"{len(saved_rows)} matched projection rows · {len(verified_rows)} pass player eligibility checks. Flags are supplied by the data and are not independent certification.")
                         if len(verified_rows) < 9:
                             st.warning("Current saved projections cannot produce a valid nine-player NFL Classic lineup.")
@@ -404,12 +418,12 @@ else:
                     st.caption("Scenario exclusions: Ted Hurst III and Puka Nacua. Tre Tucker remains eligible.")
                     candidates = build_classic_candidates(
                         build_pool.to_dict("records"), count=1200, attempts=120000, max_exposure=1.0,
-                        salary_floor=49600)
+                        salary_floor=49600, **nfl_eligibility_kwargs)
                     if len(candidates) < 20:
                         raise ValueError(f"Only {len(candidates)} legal real-player candidates; need at least 20.")
                     ranked = select_simulated_portfolio(
                         candidates, players, draws, count=20, max_exposure=0.65,
-                        upside_share=0.25)
+                        upside_share=0.25, **nfl_portfolio_kwargs)
                     st.session_state["nfl_real_preview_players"] = players
                     st.session_state["nfl_real_preview_draws"] = draws
                     st.session_state["nfl_real_preview_stat_draws"] = stat_draws
@@ -573,12 +587,13 @@ else:
                                          "opponent": f"T{(team_number + 1) % 12:02d}",
                                          "Salary": 5500,
                                          "proj": float(rng.uniform(8, 23))})
-                    candidates = build_classic_candidates(demo, count=120, attempts=30000, max_exposure=1.0)
+                    candidates = build_classic_candidates(demo, count=120, attempts=30000, max_exposure=1.0,
+                                                           require_opportunity=False)
                     if len(candidates) < 20:
                         raise ValueError(f"Demo produced only {len(candidates)} candidates")
                     draws = rng.normal(15, 7, size=(10000, len(demo))).clip(0)
                     selected = select_simulated_portfolio(candidates, pd.DataFrame(demo), draws,
-                                                          count=20, max_exposure=0.35, upside_share=0.25)
+                                                          count=20, max_exposure=0.35, upside_share=0.25, require_opportunity=False)
                     st.session_state["nfl_demo_export"] = export_classic_candidates(
                         [item["candidate"] for item in selected])
                     st.session_state["nfl_demo_summary"] = pd.DataFrame([
@@ -638,7 +653,7 @@ else:
                     rows, issues = inspect_saved_nfl_inputs(salaries, projections)
                     if issues:
                         raise ValueError("; ".join(issues))
-                    eligible = eligible_nfl_rows(rows)
+                    eligible = eligible_nfl_rows(rows, **nfl_eligibility_kwargs)
                     if len(eligible) < 9:
                         raise ValueError("Too few independently verified, eligible players for a legal lineup.")
                     pool = pd.DataFrame(eligible)
@@ -649,12 +664,12 @@ else:
                     if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
                         raise ValueError("Simulation results are incomplete or nonfinite.")
                     candidates = build_classic_candidates(eligible, count=120, max_exposure=1.0,
-                        salary_floor=49600)
+                        salary_floor=49600, **nfl_eligibility_kwargs)
                     if len(candidates) < 20:
                         raise ValueError(f"Only {len(candidates)} legal candidate lineups were found; 20 required.")
                     ranked = select_simulated_portfolio(
                         candidates, players, draws, count=20,
-                        max_exposure=0.35, upside_share=0.25)
+                        max_exposure=0.35, upside_share=0.25, **nfl_portfolio_kwargs)
                     if len(ranked) != 20:
                         raise ValueError("Simulation did not produce a complete 20-lineup portfolio.")
                     csv_data = export_classic_candidates([entry["candidate"] for entry in ranked])
@@ -930,7 +945,7 @@ else:
                     rows, issues = inspect_saved_nfl_inputs(salaries, projections)
                     if issues:
                         raise ValueError("; ".join(issues))
-                    eligible = eligible_nfl_rows(rows)
+                    eligible = eligible_nfl_rows(rows, **nfl_eligibility_kwargs)
                     if len(eligible) < 9:
                         raise ValueError("Insufficient verified eligible players. Check weekly projections, opportunity flags, and injuries.")
                     candidates = build_classic_candidates(eligible, count=120,
@@ -1052,7 +1067,7 @@ else:
                 rows, issues = [], [str(exc)]
             for issue in issues:
                 st.warning(issue)
-            eligible_rows = eligible_nfl_rows(rows)
+            eligible_rows = eligible_nfl_rows(rows, **nfl_eligibility_kwargs)
             feasibility = find_classic_lineup(eligible_rows)
             st.write(f"Lineup feasibility: {feasibility.reason} ({feasibility.examined:,} checked)")
             check = validate_pool(rows, source_fresh=False,
