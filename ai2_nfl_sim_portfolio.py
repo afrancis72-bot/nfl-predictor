@@ -254,7 +254,8 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             max_exposure=max_exposure, upside_share=upside_share,
             value_salary_ceiling=value_salary_ceiling,
             value_max_appearances=value_max_appearances,
-            premium_value_max_appearances=premium_value_max_appearances)
+            premium_value_max_appearances=premium_value_max_appearances,
+            premium_excluded_ids=premium_excluded_ids)
 
     # Even a complete greedy premium assignment can overconcentrate one QB
     # or one team's passing offense. Re-optimize jointly in that case.
@@ -276,7 +277,8 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             max_exposure=max_exposure, upside_share=upside_share,
             value_salary_ceiling=value_salary_ceiling,
             value_max_appearances=value_max_appearances,
-            premium_value_max_appearances=premium_value_max_appearances)
+            premium_value_max_appearances=premium_value_max_appearances,
+            premium_excluded_ids=premium_excluded_ids)
     if any(str(p["ID"]) in premium_excluded_ids
            for i in premium_ids for p in chosen[i]["candidate"]["players"]):
         raise ValueError("Premium player exclusion violated; refusing to export portfolio")
