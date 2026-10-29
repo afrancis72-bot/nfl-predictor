@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install NFL dependencies
-        run: python -m pip install numpy pandas scipy beautifulsoup4
+        run: python -m pip install numpy pandas scipy beautifulsoup4 openpyxl
       - name: Build real Week 8 portfolio
         run: PYTHONPATH=. python -u scripts/validate_live_nfl_week8.py
       - uses: actions/upload-artifact@v4
