@@ -33,7 +33,16 @@ class OneClickTests(unittest.TestCase):
             self, research, model_pool, simulation, candidates, selection, exporter):
         import numpy as np
         import pandas as pd
-        research.return_value = {"blockers": [], "injury_meta": {"source": "official"}}
+        research.return_value = {
+            "blockers": [], "injury_meta": {"source": "https://www.nfl.com/injuries/",
+                                           "checked_utc": "2026-10-28T22:00:00Z",
+                                           "practice_rows": []},
+            "players": __import__("pandas").DataFrame(
+                [{"Name": "Breece Hall", "Team": "NYJ",
+                  "current_status": "Q", "DK Status": "Q"}]),
+            "questionable_count": 1,
+            "excluded_count": 0
+        }
         players = pd.DataFrame([
             {"ID": str(i), "Name": f"P{i}", "Position": "WR", "Salary": 5000,
              "proj": 10.0, "projection_source": "observed", "TeamAbbrev":"DAL"}
@@ -68,6 +77,11 @@ class OneClickTests(unittest.TestCase):
         self.assertIn("Malik Willis", modeled)
         self.assertIn("Adonai Mitchell", modeled)
         self.assertEqual(output["audit"]["user_vetoed"], [])
+        self.assertEqual(output["pregame_report"]["official_injury_url"],
+                         "https://www.nfl.com/injuries/")
+        self.assertEqual(output["pregame_report"]["injuries"][0]["Player"],
+                         "Breece Hall")
+
 
 
     def test_seed_bounds(self):
