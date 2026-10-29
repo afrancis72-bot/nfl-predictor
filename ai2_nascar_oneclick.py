@@ -190,7 +190,7 @@ def dk_roster_csv(lineups):
 
 def run_oneclick(dk,track,laps,sims=25000,seed=42,portfolio_size=10,
                  max_exposure=.35,max_overlap=4,salary_floor=47000,
-                 practice=None,reference=None):
+                 practice=None,reference=None,excluded_drivers=()):
     if sims not in (1000,10000,25000,50000,100000):
         raise ValueError("Unsupported simulation count.")
     if not 1<=int(portfolio_size)<=50:
@@ -204,16 +204,28 @@ def run_oneclick(dk,track,laps,sims=25000,seed=42,portfolio_size=10,
     if draws.shape!=(int(sims),len(projections)) or not np.allclose(
         draws.mean(0),projections["proj_dk"],atol=.005):
         raise ValueError("Simulation draw/driver alignment failed; no lineups exported.")
+    full_scripts=scenario_summary(projections,draws)
+    skipped={str(name).strip() for name in excluded_drivers}
+    unknown=skipped-set(projections["Name"].astype(str))
+    if unknown:
+        raise ValueError("Unknown excluded NASCAR drivers: "+", ".join(sorted(unknown)[:5]))
+    allowed=~projections["Name"].astype(str).isin(skipped)
+    if int(allowed.sum())<6:
+        raise ValueError("Driver exclusions leave fewer than six eligible racers.")
+    optimizer_pool=projections.loc[allowed].reset_index(drop=True)
+    optimizer_draws=draws[:,allowed.to_numpy()]
+    # Excluded racers still compete in the 40-car simulated races.
+    # They are removed from the DFS optimizer only, preserving race correlations.
     lineups=optimize_scenario_portfolio(
-        projections,draws,n_lineups=int(portfolio_size),max_overlap=int(max_overlap),
+        optimizer_pool,optimizer_draws,n_lineups=int(portfolio_size),max_overlap=int(max_overlap),
         max_exposure=float(max_exposure),salary_cap=50000,roster_size=6,
         candidate_pool=500,seed=int(seed),salary_floor=int(salary_floor))
-    validate_portfolio(lineups,projections,int(portfolio_size),
+    validate_portfolio(lineups,optimizer_pool,int(portfolio_size),
                        float(max_exposure),int(max_overlap),int(salary_floor))
     return {"projections":projections,"lineups":lineups,
-        "exposure":portfolio_exposure(lineups,projections),
-        "scripts":scenario_summary(projections,draws),
+        "exposure":portfolio_exposure(lineups,optimizer_pool),
+        "scripts":full_scripts,
         "roster_csv":dk_roster_csv(lineups),
         "metadata":{**meta,"sims":int(sims),"seed":int(seed),
-                    "drivers":len(projections),
+                    "drivers":len(projections),"excluded":sorted(skipped),
                     "built_at":datetime.now(timezone.utc).isoformat()}}
