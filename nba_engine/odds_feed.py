@@ -5,7 +5,8 @@ remain client-side in Streamlit's password input (or deployment secrets).
 Each explicit refresh may consume API quota; no periodic polling is performed.
 """
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, date
+from zoneinfo import ZoneInfo
 from difflib import SequenceMatcher
 import re
 import unicodedata
@@ -153,7 +154,7 @@ def _api_get(url, api_key, **params):
 
 def load_current_props(projections: pd.DataFrame, teams_map: dict, api_key: str,
                        bookmaker_key: str = "hardrockbet_fl", markets=None,
-                       max_events: int = 10):
+                       target_day: date | None = None, max_events: int = 10):
     """Fetch only matching events, explicitly requested once by the user.
 
     Makes one 'events' request and ONE priced event request per matched matchup.
@@ -175,8 +176,17 @@ def load_current_props(projections: pd.DataFrame, teams_map: dict, api_key: str,
     for ev in raw_events:
         home = NAME_TO_TEAM.get(str(ev.get("home_team","")).lower())
         away = NAME_TO_TEAM.get(str(ev.get("away_team","")).lower())
-        if home and away and frozenset((home,away)) in allowed_pairs:
-            matching.append(ev)
+        if not (home and away and frozenset((home,away)) in allowed_pairs):
+            continue
+        if target_day is not None:
+            try:
+                tip = datetime.fromisoformat(str(ev.get("commence_time","")).replace("Z","+00:00"))
+                local_day = tip.astimezone(ZoneInfo("America/New_York")).date()
+            except (TypeError, ValueError):
+                continue
+            if local_day != target_day:
+                continue
+        matching.append(ev)
     if len(matching) > max_events:
         raise ValueError(f"{len(matching)} events found; select fewer games to control API quota.")
     rows, unresolved = [], set()
@@ -206,4 +216,101 @@ def load_current_props(projections: pd.DataFrame, teams_map: dict, api_key: str,
         "unmatched_player_names":sorted(unresolved)[:30],
         "retrieved_utc":datetime.now().astimezone().isoformat(),
         "quota":credits,
+    }
+
+
+ALIASES = {
+    "playerid":"player_id", "id":"player_id",
+    "player_name":"player", "athlete":"player", "name":"player", "competitor":"player",
+    "player prop":"market", "prop":"market", "bet type":"market", "stat":"market",
+    "point":"line", "points line":"line", "prop_line":"line", "threshold":"line",
+    "american odds":"odds", "american_odds":"odds", "price":"odds",
+    "over_under":"side", "over/under":"side", "outcome":"side", "selection":"side",
+    "bookmaker":"sportsbook", "book":"sportsbook",
+}
+MARKET_ALIASES = {
+    "points":"Points", "pts":"Points", "player_points":"Points",
+    "rebounds":"Rebounds", "reb":"Rebounds", "player_rebounds":"Rebounds",
+    "assists":"Assists", "ast":"Assists", "player_assists":"Assists",
+    "threes":"Threes", "3pm":"Threes", "3 pointers":"Threes", "three pointers":"Threes",
+    "3 pointers made":"Threes", "player_threes":"Threes",
+    "points rebounds assists":"PRA", "player_points_rebounds_assists":"PRA",
+    "pra":"PRA", "pts reb ast":"PRA", "pts+reb+ast":"PRA",
+    "points rebounds":"PR", "pr":"PR", "player_points_rebounds":"PR",
+    "points assists":"PA", "pa":"PA", "player_points_assists":"PA",
+    "rebounds assists":"RA", "ra":"RA", "player_rebounds_assists":"RA",
+    "steals":"Steals", "player_steals":"Steals",
+    "blocks":"Blocks", "player_blocks":"Blocks",
+    "turnovers":"Turnovers", "player_turnovers":"Turnovers",
+    "blocks steals":"Stocks", "stocks":"Stocks","player_blocks_steals":"Stocks",
+}
+
+def normalize_csv_lines(raw: pd.DataFrame, projections: pd.DataFrame):
+    """Accept common sportsbook CSV aliases + player names, preserving actual line/odds.
+
+    Returns: normalized dataframe and an explicit diagnostic. Never guesses lines.
+    """
+    x = raw.copy()
+    x.columns = [ALIASES.get(str(c).strip().lower().replace("-","_"),str(c).strip().lower())
+                 for c in x.columns]
+    if x.columns.duplicated().any():
+        x = x.loc[:,~x.columns.duplicated()].copy()
+    if "market" not in x or "line" not in x:
+        raise ValueError("Actual market lines require market and line/point columns.")
+    if "side" not in x:
+        raise ValueError("Each bet needs a side: Over or Under.")
+    if "player_id" not in x and "player" not in x:
+        raise ValueError("Supply either player_id or player/name in your imported CSV.")
+    if "player_id" not in x:
+        x["player_id"] = ""
+    if "player" not in x:
+        x["player"] = ""
+    if "team" not in x:
+        x["team"] = ""
+    if "odds" not in x:
+        x["odds"] = pd.NA
+
+    x["player_id"] = x["player_id"].fillna("").astype(str).str.strip().str.replace(r"\.0$","",regex=True)
+    x["player"] = x["player"].fillna("").astype(str).str.strip()
+    x["team"] = x["team"].fillna("").astype(str).str.strip().str.upper()
+    x["market"] = x["market"].fillna("").astype(str).str.strip().map(
+        lambda m: MARKET_ALIASES.get(m.lower().replace("_alternate",""),m)
+    )
+    x["side"] = x["side"].fillna("").astype(str).str.strip().str.title()
+    x["line"] = pd.to_numeric(x["line"],errors="coerce")
+    x["odds"] = pd.to_numeric(x["odds"],errors="coerce")
+
+    # An empty prefilled worksheet is a valid upload, but isn't a market feed.
+    with_lines = x["line"].notna()
+    x = x.loc[with_lines].copy()
+    if x.empty:
+        return x, {"rows_received":len(raw), "matched":0,
+                   "unmatched":[],"missing_lines":int((~with_lines).sum())}
+    eligible_ids = set(projections["player_id"].astype(str))
+    matched, unmatched = [], []
+    for row in x.to_dict("records"):
+        pid = row["player_id"]
+        candidate = projections
+        if row["team"]:
+            candidate = candidate[candidate["team"].astype(str).str.upper()==norm_team(row["team"])]
+        if pid not in eligible_ids:
+            pid = player_id_for_name(row["player"],candidate)
+        elif row["player"] and _norm_name(row["player"]) not in (
+             _norm_name(projections.loc[projections["player_id"].astype(str)==pid,"player"].iloc[0]), ""):
+            # An ID/name mismatch can silently attach another player's market.
+            unmatched.append(f"{row['player']} ({pid}: ID/name mismatch)")
+            continue
+        if not pid:
+            unmatched.append(f"{row['player']} ({row['team']})")
+            continue
+        row["player_id"] = str(pid)
+        matched.append(row)
+    normalized = pd.DataFrame(matched,columns=x.columns)
+    if not normalized.empty:
+        normalized = normalized.drop_duplicates(["player_id","market","side","line"],keep="last")
+    return normalized.reset_index(drop=True), {
+        "rows_received":len(raw),
+        "matched":len(normalized),
+        "unmatched":unmatched[:20],
+        "missing_lines":int((~with_lines).sum()),
     }
