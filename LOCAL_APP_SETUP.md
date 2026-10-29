@@ -1,30 +1,49 @@
-# TEAM AI² Pro — local home-computer launch
+# TEAM AI² Pro — launch the unified NFL development app
 
-Run from the repository directory:
+## Streamlit Community Cloud
+
+Choose repository `afrancis72-bot/nfl-predictor`, branch
+`feature/unified-ai2-platform`, and entry point `unified_app.py`
+in your Streamlit app settings. Save/redeploy these settings.
+The existing app configured to use `main/app.py` will not automatically
+run this branch. The development app was tested in GitHub's headless
+Streamlit runtime; a browser acceptance test is still needed.
+
+## Local Windows launch
+
+From the repository's development-branch checkout:
 
 ```powershell
 python -m pip install -r requirements.txt
 python -m streamlit run unified_app.py
 ```
 
-The app opens in your browser. By default, uploaded files persist in
-`%USERPROFILE%\\TEAM_AI2_Pro_Data\\slates.sqlite3` on Windows. This location
-is independent of the Git checkout and survives normal app restarts.
+Open NFL. Upload a DraftKings Classic salary CSV, optionally set the
+simulation seed, and click **BUILD MY 20 LINEUPS**. No projections file
+is necessary. You will see named lineups, a downloadable named Excel,
+named CSV, a roster-ID CSV, official injury/practice details with
+retrieval time, and explicit notices about unverified breaking news.
 
-To use a different storage location, set `AI2_DATA_DIR` before starting
-Streamlit. **Keep this directory private and back it up**: it contains uploaded
-data and previous versions. Do not put it in Git or a public synced folder.
+Review and adjust the $3/$0.50 contest assignments without changing
+the nine players in a lineup. Click **APPROVE AND SAVE THESE 20 LINEUPS**
+to protect the exact roster and contest tiers independently of
+future model builds. The protected approvals section also lets you
+download/restore portable approval JSON, and separately import existing
+DraftKings entry CSVs such as your prior 15 approved lineups.
 
-On the NFL **My Slate** tab, select the file type, upload a file, and click
-**Save / replace file**. Returning later does not require another upload.
-Replacement automatically archives the prior version. Archived versions can
-be downloaded from the same tab.
+## Storage precautions
 
-Important limitations:
-- This is local persistence, not automatic cross-computer synchronization.
-- Files shared in ChatGPT are not automatically copied into the app.
-- A local directory can still be lost if the computer or drive fails.
-- A saved slate is not necessarily a fresh or verified slate.
-- NFL lineup building requires verified current-week projection fields.
-- Correlated simulations, live data certification, DraftKings-ready export,
-  and end-to-end production validation remain unfinished.
+Data is stored at `%USERPROFILE%\\TEAM_AI2_Pro_Data\\slates.sqlite3` on
+Windows unless `AI2_DATA_DIR` is configured. Community Cloud file
+storage is often ephemeral. **Download backup JSON/CSV files before
+restarting or redeploying** if there is no durable storage mount.
+ChatGPT uploads are not automatically present in Streamlit.
+
+## Model qualification
+
+The generated 20-lineup portfolios passed technical real-slate and
+Streamlit smoke checks, but are **not verified to have positive expected
+contest ROI**. Official NFL game designations and published practice
+information are incorporated; Sunday inactives, coaching/news changes
+and depth-chart claims still require a manual check. The one-click
+model never submits a wager or DraftKings entry itself.
