@@ -1,0 +1,21 @@
+name: NFL opponent matchup historical ablation
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'scripts/backtest_nfl_opponent_allowance.py'
+      - '.github/workflows/nfl-opponent-backtest.yml'
+jobs:
+  pregame-holdout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pandas numpy scipy
+      - name: Compare opponent-adjusted and base predictions on 2026 weeks 4 to 7
+        run: PYTHONPATH=. python -u scripts/backtest_nfl_opponent_allowance.py
