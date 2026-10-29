@@ -167,6 +167,49 @@ def simulate_stat_lines(projections: pd.DataFrame, logs: pd.DataFrame,
                 result[(p.player_id, name)] = sum((single[c].astype(np.int32) for c in cols))
     return result
 
+def summarize_simulated_projections(projections: pd.DataFrame, samples: dict,
+                                    markets=None) -> pd.DataFrame:
+    """Describe the Monte Carlo distribution alongside the independent baseline.
+
+    The baseline is deterministic for fixed historical inputs. Simulation
+    sample means, medians, percentiles and standard errors are seed-dependent.
+    Different seeds should converge to similar results as trial count rises.
+    No sportsbook line or odds is referenced anywhere in this function.
+    """
+    selected = tuple(markets if markets is not None else
+                     ("Points", "Rebounds", "Assists", "Threes", "PRA"))
+    if not selected or not set(selected).issubset(MARKETS):
+        raise ValueError("Please select one or more supported NBA stat markets.")
+    records = []
+    for p in projections.itertuples(index=False):
+        for market in selected:
+            key = (str(p.player_id), market)
+            if key not in samples:
+                raise ValueError(f"Missing simulated stat lines for player {p.player_id}, {market}.")
+            draws = np.asarray(samples[key], dtype=np.float64)
+            if draws.ndim != 1 or len(draws) < 1000 or not np.isfinite(draws).all():
+                raise ValueError("Simulated player outcomes must be at least 1,000 finite draws.")
+            sd = float(np.std(draws, ddof=1))
+            q10,q50,q90 = np.quantile(draws, [0.10, 0.50, 0.90])
+            records.append({
+                "player_id": str(p.player_id),
+                "player": str(p.player),
+                "team": str(p.team),
+                "opponent": str(p.opponent),
+                "market": market,
+                "baseline_projection": float(getattr(p, market)),
+                "simulation_mean": float(draws.mean()),
+                "simulation_median": float(q50),
+                "simulation_p10": float(q10),
+                "simulation_p90": float(q90),
+                "simulation_sd": sd,
+                "monte_carlo_se": sd / np.sqrt(len(draws)),
+                "simulated_games": len(draws),
+                "sample_flag": str(p.sample_flag),
+            })
+    return pd.DataFrame.from_records(records)
+
+
 def prepare_bet_lines(lines: pd.DataFrame, projections: pd.DataFrame):
     """Only user-supplied sportsbook lines are scored; no fictional odds."""
     x = lines.copy()
