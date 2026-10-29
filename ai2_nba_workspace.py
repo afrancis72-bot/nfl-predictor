@@ -290,14 +290,42 @@ if run is not None and run["run_key"] == run_key:
                 st.info("Fill in at least one actual sportsbook line to see probabilities.")
             else:
                 report,status = evaluate_bets(bets,samples)
-                st.subheader("Modeled prop outcomes")
-                shown = report[["label","sim_mean","win_probability","push_probability",
-                                "odds","book_implied","model_edge"]].copy()
+                # This is the user's actual decision question: compare OUR independent
+                # expected stat line to the external bookmaker line, then price.
+                proj_lookup = projections.set_index("player_id")
+                report["our_projection"] = [
+                    float(proj_lookup.loc[str(r.player_id),str(r.market)])
+                    for r in report.itertuples(index=False)
+                ]
+                report["projection_minus_book_line"] = report["our_projection"] - report["line"]
+                if "sportsbook" not in report.columns:
+                    report["sportsbook"] = "Manually entered line"
+                st.subheader("Independent model vs. actual sportsbook lines")
+                shown = report[[
+                    "label", "sportsbook", "our_projection", "line",
+                    "projection_minus_book_line", "sim_mean",
+                    "win_probability", "push_probability",
+                    "odds", "book_implied", "model_edge",
+                ]].copy()
                 for c in ["win_probability","push_probability","book_implied","model_edge"]:
                     shown[c] = (100 * shown[c]).round(1)
-                shown["sim_mean"] = shown["sim_mean"].round(2)
+                for c in ["our_projection","line","projection_minus_book_line","sim_mean"]:
+                    shown[c] = shown[c].round(2)
+                shown = shown.rename(columns={
+                    "label":"Player · market · side",
+                    "sportsbook":"Sportsbook",
+                    "our_projection":"Our projected stat",
+                    "line":"Actual sportsbook line",
+                    "projection_minus_book_line":"Projection − line",
+                    "sim_mean":"Simulation average",
+                    "win_probability":"Model win %",
+                    "push_probability":"Push %",
+                    "odds":"Offered American odds",
+                    "book_implied":"Book break-even %",
+                    "model_edge":"Uncalibrated model edge %",
+                })
                 st.dataframe(shown, hide_index=True, use_container_width=True)
-                st.caption("Win, push, and edge are percentages. Sportsbook implied probabilities include bookmaker margin. An apparent edge is NOT evidence of profitability until calibrated.")
+                st.caption("Positive projection-minus-line supports the OVER direction; negative supports UNDER. Sportsbook implied prices include bookmaker margin. A projection difference or model edge is not proof of a profitable bet.")
                 st.download_button("Export prop comparison CSV", report.to_csv(index=False).encode(),
                                    "team_ai2_nba_props_evaluation.csv", mime="text/csv")
                 st.subheader("Correlated parlay research")
