@@ -207,7 +207,7 @@ def run_oneclick(dk,track,laps,sims=25000,seed=42,portfolio_size=10,
     lineups=optimize_scenario_portfolio(
         projections,draws,n_lineups=int(portfolio_size),max_overlap=int(max_overlap),
         max_exposure=float(max_exposure),salary_cap=50000,roster_size=6,
-        candidate_pool=500,seed=int(seed))
+        candidate_pool=500,seed=int(seed),salary_floor=int(salary_floor))
     validate_portfolio(lineups,projections,int(portfolio_size),
                        float(max_exposure),int(max_overlap),int(salary_floor))
     return {"projections":projections,"lineups":lineups,
