@@ -8,6 +8,8 @@ from ai2_nfl_auto_baselines import build_historical_baselines
 from ai2_nfl_official_injuries import fetch_official_injury_statuses, match_injury_statuses
 from props_data import fetch_weekly, make_rates
 from ai2_nfl_workload import redistribute_opportunities
+from ai2_nfl_matchup_diagnostics import defensive_allowance
+import pandas as pd
 
 UNAVAILABLE = frozenset({"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "DOUBTFUL", "D"})
 
@@ -40,6 +42,15 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
     statuses = {(str(row["Name"]), str(row.get("Team", ""))): str(row["current_status"])
                 for _, row in baseline.iterrows()}
     adjusted_rates, opportunity_changes = redistribute_opportunities(rates, statuses)
+    opponent_issue = None
+    try:
+        # Every game used here predates the target slate week.
+        opponent_allowances = defensive_allowance(history, season, week)
+    except (KeyError, ValueError, TypeError) as exc:
+        # Missing data must be neutral, never silently fabricated.
+        opponent_allowances = pd.DataFrame(columns=[
+            "defense", "position", "multiplier", "player_game_observations"])
+        opponent_issue = str(exc)
     missing = baseline[baseline["match_status"].ne("matched")]
     blockers = ["Workload redistribution is estimated from observed rates, not validated against current depth charts",
                 "Independent DST projections not yet connected",
@@ -48,6 +59,7 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         blockers.append("Official NFL injury feed unavailable: " + injury_issue)
     return {
         "players": baseline, "raw_rates": rates, "adjusted_rates": adjusted_rates,
+        "opponent_allowances": opponent_allowances, "opponent_history_issue": opponent_issue,
         "opportunity_changes": opportunity_changes, "source": "nflverse historical stats and NFL official game designations",
         "target_season": season, "target_week": week,
         "matched_count": int(baseline["match_status"].eq("matched").sum()),
