@@ -15,6 +15,8 @@ from ai2_nfl_simulation_adapter import run_verified_stat_simulation
 from ai2_nfl_candidate_builder import build_classic_candidates
 from ai2_nfl_sim_portfolio import select_simulated_portfolio
 from ai2_nfl_export import export_classic_candidates
+from ai2_nfl_opponent_intelligence import make_opponent_report, report_summary
+import pandas as pd
 
 def _slate_week(saved_salaries):
     rows = parse_csv_payload(saved_salaries[1])
@@ -145,6 +147,14 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
                 "Game status": status or str((matched or {}).get("game_status") or "Not yet designated"),
                 "DraftKings status": str(row.get("DK Status") or "").strip(),
                 "Source": "NFL report" if matched else "DK slate status only"})
+    allowance_data = research.get("opponent_allowances")
+    if allowance_data is None:
+        allowance_data = pd.DataFrame(columns=[
+            "defense", "position", "multiplier", "player_game_observations"])
+    opposing_report = make_opponent_report(
+        parse_csv_payload(salaries[1]), allowance_data, meta)
+    opposing_summary = report_summary(opposing_report)
+    opposing_summary["historical_data_issue"] = research.get("opponent_history_issue")
     pregame_report = {
         "official_injury_url": str(meta.get("source") or ""),
         "checked_utc": meta.get("checked_utc"),
@@ -168,6 +178,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "summary": summary, "ranked": ranked,
         "csv": export_classic_candidates([x["candidate"] for x in ranked]),
         "audit": audit, "seed": seed, "pregame_report": pregame_report,
+        "opponent_matchup_report": opposing_report,
+        "opponent_matchup_summary": opposing_summary,
         "research_warning": (
             "Experimental, uncalibrated own-model forecasts based on observed play "
             "rates and official injury designations. Depth-chart changes, late "
