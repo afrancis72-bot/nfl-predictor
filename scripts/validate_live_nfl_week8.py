@@ -14,6 +14,8 @@ import traceback
 
 from ai2_nfl_oneclick import build_oneclick_portfolio, _slate_week
 from ai2_nfl_lineup import check_classic_lineup
+from ai2_nfl_review import (review_tables, named_csv, named_excel,
+                            snapshot_approved, load_approved, premium_risk_checks)
 
 SLATE = Path("tests/fixtures/2026_week8_user_dk_slate.csv")
 OUTPUT = Path("artifacts/nfl_live_week8")
@@ -73,7 +75,24 @@ def main():
     print("Premium quarterback exposures:", dict(premium_qbs))
     print("Premium passing-team exposures:", dict(premium_pass_teams))
 
+    report = result["pregame_report"]
+    assert report["official_injury_url"].startswith("https://www.nfl.com/"), "Injury source missing"
+    assert report["checked_utc"], "Injury retrieval timestamp missing"
+    assert report["injuries"], "Injury dashboard has no player rows"
+    assert "No verified late-breaking news feed" in report["news_feed"], "News coverage overstated"
+    assert not premium_risk_checks(result["ranked"],
+                                  result["audit"].get("premium_only_exclusions", ()))
+    overview, detail, exposure = review_tables(result["ranked"])
+    assert len(overview) == 20 and len(detail) == 180 and not exposure.empty
+    assert "Trevor Lawrence" in named_csv(result["ranked"]).decode("utf-8-sig")
+    approval = snapshot_approved(result["ranked"], hashlib.sha256(contents).hexdigest(), 42)
+    assert len(load_approved(approval)["lineups"]) == 20
     OUTPUT.mkdir(parents=True, exist_ok=True)
+    (OUTPUT / "real_week8_named_review.csv").write_bytes(named_csv(result["ranked"]))
+    (OUTPUT / "real_week8_named_review.xlsx").write_bytes(named_excel(result["ranked"]))
+    (OUTPUT / "sample_approved_20_snapshot_REVIEW_ONLY.json").write_bytes(approval)
+    (OUTPUT / "injury_news_sources.json").write_text(json.dumps(report, indent=2))
+
     (OUTPUT / "real_week8_lineups_REVIEW_ONLY.csv").write_text(result["csv"])
     (OUTPUT / "real_week8_summary.json").write_text(json.dumps(result["summary"],indent=2))
     (OUTPUT / "real_week8_audit.json").write_text(json.dumps(result["audit"],indent=2))
