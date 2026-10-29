@@ -87,7 +87,19 @@ def main():
     assert "Trevor Lawrence" in named_csv(result["ranked"]).decode("utf-8-sig")
     approval = snapshot_approved(result["ranked"], hashlib.sha256(contents).hexdigest(), 42)
     assert len(load_approved(approval)["lineups"]) == 20
+    opposing = result.get("opponent_matchup_report") or []
+    opposing_summary = result.get("opponent_matchup_summary") or {}
+    assert len(opposing) == 22 * 4, "All 22 offense/opponent teams need four position reports"
+    assert opposing_summary["offensive_teams"] == 22
+    assert all(x["Applied simulation boost"] == 1.0 for x in opposing), "Unverified injury boosts must stay disabled"
+    assert all("Unknown" in x["Coverage assignment"] for x in opposing)
+    print("Opponent injury/coverage research:", opposing_summary)
+    print("Opponent report injury alerts:", len([
+        x for x in opposing if x["Defenders ruled out"] != "None verified"
+        or x["Defenders to monitor"] != "None"]))
     OUTPUT.mkdir(parents=True, exist_ok=True)
+    (OUTPUT / "opposing_defense_research.json").write_text(json.dumps(opposing, indent=2))
+
     (OUTPUT / "real_week8_named_review.csv").write_bytes(named_csv(result["ranked"]))
     (OUTPUT / "real_week8_named_review.xlsx").write_bytes(named_excel(result["ranked"]))
     (OUTPUT / "sample_approved_20_snapshot_REVIEW_ONLY.json").write_bytes(approval)
