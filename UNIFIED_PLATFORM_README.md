@@ -37,6 +37,34 @@ There is **no independently verified, comprehensive breaking-player-news
 or depth-chart feed yet**. The app explicitly warns about this gap.
 It is necessary to recheck late-breaking news and final Sunday inactives.
 
+## Opposing defensive injuries and matchup research
+
+The NFL build now joins official team-scoped defensive injury reports (CB/S,
+front seven, pass rush) to the current DK matchup, alongside observed prior-game
+opponent allowance by offensive position. It shows evidence, data timestamps,
+sample sizes and a neutral game-script hypothesis when no trusted defender
+coverage/snap role information is available. Unknown or ambiguous teams are not
+assigned to a defense.
+
+The **Opposing defensive injuries and matchup intelligence** panel allows the
+user to inspect these findings and download a team-by-position CSV. It does not
+invent coverage assignments, a WR's cornerback matchup, or individual target
+increases based on a missing defender.
+
+A chronological 2026 Weeks 4–7 exploratory test of a bounded opponent
+position-allowance adjustment used 1,267 historical player-game observations:
+unadjusted partial-DK MAE **4.6037** versus adjusted **4.6072** (worse by 0.08%).
+**No automatic fantasy-point opponent multipliers are enabled.** This early
+holdout only evaluates one simplified adjustment, not the full proposed
+injury/game-script model and not profitable contest ROI.
+
+A future verified scoring model should combine defensive snap roles, position-
+specific pressure and coverage context, offensive line injuries, QB protection,
+receiver route alignment, game pace and shared team-level script scenarios.
+Historical data must be timestamped before kickoff to avoid look-ahead bias;
+any new adjustments must beat a no-injury opponent baseline in separate
+held-out weeks before affecting the actual optimizer.
+
 ## Human review and approvals
 
 The five $3 lineups and fifteen $0.50 lineups can be reviewed; any proposed
