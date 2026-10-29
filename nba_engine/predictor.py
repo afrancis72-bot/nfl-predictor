@@ -135,10 +135,10 @@ def simulate_stat_lines(projections: pd.DataFrame, logs: pd.DataFrame,
     if projections.empty:
         raise ValueError("Run projections before simulations.")
     rng = np.random.default_rng(int(seed))
-    games = {"-".join(sorted([str(p.team), str(p.opponent)])) for p in projections.itertuples()}
+    games = sorted({"-".join(sorted([str(p.team), str(p.opponent)])) for p in projections.itertuples()})
     game_factors = {g: np.clip(1 + rng.normal(0, 0.045, trials), 0.85, 1.18) for g in games}
     team_factors = {t: np.clip(1 + rng.normal(0, 0.027, trials), 0.90, 1.10)
-                    for t in projections["team"].unique()}
+                    for t in sorted(projections["team"].unique())}
     result = {}
     for p in projections.itertuples(index=False):
         hist = logs.loc[logs["player_id"] == p.player_id].sort_values("date").tail(30)
