@@ -1,0 +1,30 @@
+name: Deployed unified NBA engine acceptance
+
+on:
+  push:
+    branches: [feature/unified-ai2-platform]
+    paths:
+      - 'unified_app.py'
+      - 'ai2_nba_workspace.py'
+      - 'nba_engine/**'
+      - 'tests/test_ai2_nba_integration.py'
+      - '.github/workflows/unified-nba-acceptance.yml'
+  workflow_dispatch:
+
+jobs:
+  nba-ui-and-feeds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: pip install -r requirements.txt
+      - name: Check unified app and NBA syntax
+        run: python -m compileall -q unified_app.py ai2_nba_workspace.py nba_engine
+      - name: Verify game-level model behavior without external feeds
+        run: python -m unittest discover -s tests -p test_ai2_nba_integration.py -v
+      - name: Verify real ESPN schedule + history feeds + 10K NBA simulations
+        run: python -m nba_engine.live_smoke
