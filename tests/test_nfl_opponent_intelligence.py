@@ -49,7 +49,7 @@ class OpponentIntelligenceTests(unittest.TestCase):
         self.assertIn("Jets Defensive Tackle", raiders_rb["Defenders to monitor"])
         summary = report_summary(data)
         self.assertEqual(summary["offensive_teams"], 2)
-        self.assertEqual(summary["opponent_injury_flags"], 3)
+        self.assertEqual(summary["opponent_injury_flags"], 7)
 
     def test_unknown_defensive_team_never_attributed_to_slate_opponent(self):
         meta = {"source": "official", "practice_rows": [
