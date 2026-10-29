@@ -295,6 +295,22 @@ else:
                     st.error(f"Existing approval needs review: {exc}")
             else:
                 st.caption("No 20-lineup portfolio has been approved and saved in this app.")
+            restore_approval = st.file_uploader(
+                "Restore a previously downloaded approved portfolio JSON (optional)",
+                type=["json"], key="nfl_restore_approved_json")
+            if st.button("Restore approved portfolio", key="nfl_restore_approval",
+                         disabled=restore_approval is None):
+                try:
+                    original = restore_approval.getvalue()
+                    restored = load_approved(original)
+                    if len(restored["lineups"]) != 20:
+                        raise ValueError("Only 20-lineup approved portfolio snapshots can be restored")
+                    _ai2_save_file(DATA_DIR, "NFL", "Approved 20-lineup portfolio",
+                                   restore_approval.name, original)
+                    st.success("Saved approved lineups restored separately from automatic builds.")
+                    st.rerun()
+                except (ValueError, OSError, KeyError, sqlite3.Error) as exc:
+                    st.error(f"Could not restore approval: {exc}")
             prior_entries = st.file_uploader(
                 "Import your already-approved DraftKings entries (optional; stored separately)",
                 type=["csv"], key="nfl_existing_approved_entries")
