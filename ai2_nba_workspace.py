@@ -1,8 +1,3 @@
-"""NBA production research workspace for the deployed Team AI² unified Streamlit app.
-
-Reuses the same historical simulator validated in team-ai2-pro, but renders
-INSIDE unified_app.py without changing its home screen or NFL builder.
-"""
 """Team AI² Pro NBA — automatic slate research + actual sportsbook prop analysis."""
 from __future__ import annotations
 from datetime import datetime, date
