@@ -92,4 +92,4 @@ performs legality and exposure checks. It is **experimental**, not
 backtested for profitability or independently calibrated for current
 depth charts, player news, ownership, defense, or fantasy-scoring distributions.
 Browser verification of the deployed Streamlit URL remains a separate acceptance
-step. The other sports tabs retain their prior research/preview behavior.
+step. NBA now routes directly into the one-click NBA Predictor on the same feature branch (not the separate team-ai2-pro repository). It loads the current ESPN schedule and community-maintained NBA game logs, projects minutes/player stats, simulates correlated stat lines and compares actual sportsbook prop lines. No DK salary upload is required. Official injury status and sportsbook prices are not connected; the NBA engine remains experimental and uncalibrated. PGA/NASCAR retain their previous preview behavior.
