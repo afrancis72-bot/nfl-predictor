@@ -115,6 +115,43 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
             errors.append(str(exc))
     else:
         raise ValueError("The model could not produce 20 qualifying lineups: " + errors[-1])
+    # Display the exact official injury source and practice participation
+    # inspected during this build. Neither an empty game-status cell nor a
+    # full practice automatically certifies a player's Sunday workload.
+    meta = research.get("injury_meta") or {}
+    practice = {}
+    duplicate_names = set()
+    for row in meta.get("practice_rows", []):
+        key = str(row.get("normalized_name") or "").strip()
+        if not key:
+            continue
+        if key in practice:
+            duplicate_names.add(key)
+        practice[key] = row
+    injury_review = []
+    for _, row in research["players"].iterrows():
+        name = str(row["Name"])
+        key = "".join(ch for ch in name.casefold() if ch.isalnum())
+        matched = practice.get(key) if key not in duplicate_names else None
+        status = str(row.get("current_status") or "").strip().upper()
+        if status in {"<NA>", "NAN", "NONE"}:
+            status = ""
+        if matched or status:
+            injury_review.append({
+                "Player": name,
+                "Team": str(row.get("Team", "")),
+                "Injury": str((matched or {}).get("injury") or ""),
+                "Practice": str((matched or {}).get("practice_status") or "Not reported"),
+                "Game status": status or str((matched or {}).get("game_status") or "Not yet designated"),
+                "DraftKings status": str(row.get("DK Status") or "").strip(),
+                "Source": "NFL report" if matched else "DK slate status only"})
+    pregame_report = {
+        "official_injury_url": str(meta.get("source") or ""),
+        "checked_utc": meta.get("checked_utc"),
+        "injuries": injury_review,
+        "questionable_count": int(research.get("questionable_count", 0)),
+        "excluded_count": int(research.get("excluded_count", 0)),
+        "news_feed": "No verified late-breaking news feed connected. Official game designations and published practice reports are checked; Sunday inactives and workload limits require a fresh check."}
     summary = []
     for index, entry in enumerate(ranked, 1):
         roster = entry["candidate"]["players"]
@@ -130,7 +167,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     return {
         "summary": summary, "ranked": ranked,
         "csv": export_classic_candidates([x["candidate"] for x in ranked]),
-        "audit": audit, "seed": seed,
+        "audit": audit, "seed": seed, "pregame_report": pregame_report,
         "research_warning": (
             "Experimental, uncalibrated own-model forecasts based on observed play "
             "rates and official injury designations. Depth-chart changes, late "
