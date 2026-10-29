@@ -83,6 +83,23 @@ class NascarUnifiedTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_portfolio(lineup.head(1),projections,2,.5,4,floor=0)
 
+    def test_driver_veto_excludes_portfolio_but_not_race_field(self):
+        dk=load_dk_slate(self.slate(24))
+        veto=str(dk["Name"].iloc[0])
+        def optimized(eligible,sim_matrix,**kwargs):
+            self.assertEqual(len(eligible),23)
+            self.assertNotIn(veto,eligible["Name"].tolist())
+            self.assertEqual(sim_matrix.shape,(1000,23))
+            return optimize_lineups(eligible,n_lineups=2,salary_cap=50000,
+                roster_size=6,max_overlap=4,max_exposure=.5)
+        with patch("ai2_nascar_oneclick.optimize_scenario_portfolio",side_effect=optimized):
+            result=run_oneclick(dk,"Phoenix Raceway",312,
+                sims=1000,seed=13,portfolio_size=2,max_exposure=.5,
+                max_overlap=4,salary_floor=0,excluded_drivers=[veto])
+        self.assertEqual(len(result["projections"]),24)
+        self.assertIn(veto,result["metadata"]["excluded"])
+        self.assertFalse(result["lineups"]["Drivers"].str.contains(veto,regex=False).any())
+
     def test_one_button_runs_actual_engine_with_real_grid_and_mocked_candidate_search(self):
         dk=load_dk_slate(self.slate(24))
         def fast_portfolio(projected,sim_matrix,**kwargs):
