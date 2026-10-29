@@ -1,6 +1,7 @@
 """NASCAR race sim + DraftKings lineups: single screen for Team AI² Pro."""
 from __future__ import annotations
 from io import BytesIO
+import hashlib
 import secrets
 
 import pandas as pd
@@ -117,6 +118,13 @@ st.caption(
 def cached_nascar_reference(records,track):
     return reference_signals(pd.DataFrame(records, columns=["Name","ID","Salary","AvgPointsPerGame"]),track)
 
+current_signature = (
+    hashlib.sha256(salary_file.getvalue()).hexdigest() if salary_file else None,
+    selected_track, laps, sims, lineup_count, exposure_pct, overlap,
+    chosen_seed, seed_mode, salary_floor,
+    hashlib.sha256(practice_file.getvalue()).hexdigest() if practice_file else None,
+)
+
 run_requested=st.button(
     "🏁 Run race simulation + build DraftKings lineups",
     type="primary",use_container_width=True,disabled=dk is None,
@@ -146,16 +154,21 @@ if run_requested:
                 practice=practice,reference=ref_data,
             )
         st.session_state["nascar_unified_result"]=result
+        st.session_state["nascar_result_signature"]=current_signature
         st.success(
             f"Built {len(result['lineups'])} valid DraftKings lineups from "
             f"{sims:,} simulated races. Seed {run_seed}."
         )
     except Exception as exc:
         st.session_state.pop("nascar_unified_result",None)
+        st.session_state.pop("nascar_result_signature",None)
         st.error(f"NASCAR build was blocked: {exc}")
         st.caption("No partial, unverified or illegal lineups will be exported.")
 
 result=st.session_state.get("nascar_unified_result")
+if result is not None and st.session_state.get("nascar_result_signature") != current_signature:
+    result=None
+    st.info("Race, slate, seed, or portfolio settings changed. Click Run again to build for the current configuration.")
 if result:
     meta=result["metadata"]
     # Prevent stale outputs from different track, slate or controls being mistaken
