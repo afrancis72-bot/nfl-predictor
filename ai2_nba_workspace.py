@@ -5,6 +5,7 @@ from io import BytesIO
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import os
+import secrets
 import sys
 
 import pandas as pd
@@ -39,6 +40,30 @@ with col_date:
     target = st.date_input("Game date (Eastern)", value=now)
 with col_sims:
     trials = st.selectbox("Simulations", [5000,10000,25000], index=1)
+
+seed_left, seed_right = st.columns([1.15, 1.85])
+with seed_left:
+    seed_mode = st.radio(
+        "Simulation seed mode",
+        ["Fixed", "Fibonacci preset", "Fresh random"],
+        key="nba_seed_mode",
+    )
+with seed_right:
+    if seed_mode == "Fixed":
+        selected_seed = int(st.number_input(
+            "Seed · repeatable", min_value=0, max_value=2147483647,
+            value=42, step=1, key="nba_fixed_seed",
+        ))
+    elif seed_mode == "Fibonacci preset":
+        selected_seed = int(st.selectbox(
+            "Fibonacci seed · repeatable",
+            [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181, 6765, 10946],
+            index=7, key="nba_fibonacci_seed",
+        ))
+    else:
+        selected_seed = None
+        st.caption("A new random seed is chosen whenever you press Run. The number is displayed for later replay.")
+st.caption("Seeds change the sampled simulation scenarios, not our independent player projections. Fibonacci presets are research choices, not predictive advantages.")
 
 with st.expander("Model transparency and source limitations"):
     st.write(
@@ -98,7 +123,7 @@ else:
 
 st.info("Injury availability is NOT automatically confirmed. Check official reports before evaluating bets; exclude OUT players and adjust teammates' minutes when their roles change.")
 
-run_key = f"{target}-{schedule_key}-{trials}"
+run_key = f"{target}-{schedule_key}-{trials}-{seed_mode}-{selected_seed}"
 if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_width=True):
     if len(teams_map) != len(set(teams_map.values())) and len(teams_map) != 2:
         st.error("Please select a valid slate with one opponent per team.")
@@ -106,17 +131,18 @@ if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_widt
         st.error("Choose two different teams.")
     else:
         try:
+            run_seed = int(selected_seed) if selected_seed is not None else secrets.randbelow(2147483647)
             with st.spinner("Loading recent NBA box scores, projecting minutes and simulating correlated stat lines…"):
                 history, provenance = cached_history(target.isoformat())
                 projections = build_projections(history, teams_map, target, min_minutes=12)
-                samples = simulate_stat_lines(projections, history, trials=trials, seed=20261029)
+                samples = simulate_stat_lines(projections, history, trials=trials, seed=run_seed)
             st.session_state["nba_auto_result"] = {
                 "run_key": run_key, "history":history, "provenance":provenance,
                 "original":projections, "projections":projections,
-                "samples":samples, "teams_map":teams_map,
+                "samples":samples, "teams_map":teams_map, "seed":run_seed,
             }
             st.session_state.pop("nba_auto_bets", None)
-            st.success(f"Engine complete: {len(projections)} player projections and {trials:,} simulations.")
+            st.success(f"Engine complete: {len(projections)} player projections and {trials:,} simulations. Seed: {run_seed}.")
         except Exception as exc:
             st.error(f"NBA data or simulation failed: {exc}")
             st.info("The public data feeds may be unavailable. No synthetic statistics will be substituted.")
@@ -127,6 +153,7 @@ if run is not None and run["run_key"] == run_key:
     history = run["history"]
     provenance = run["provenance"]
     samples = run["samples"]
+    st.caption(f"Active simulation seed: {run['seed']} · Mode: {seed_mode} · {trials:,} scenarios. Reuse the same seed and inputs to reproduce the draws.")
     st.caption(f"Player data as of {provenance['snapshot']} | Latest observed game {provenance['latest_game_date']} | "
                f"{provenance['rows']:,} historical player-game records | {'/'.join(provenance['seasons'])}")
     age_days = (target - date.fromisoformat(provenance["latest_game_date"])).days
@@ -140,7 +167,10 @@ if run is not None and run["run_key"] == run_key:
         display = projections[["player","team","opponent","minutes","Points","Rebounds","Assists",
                                "Threes","PRA","PR","PA","RA","current_season_games","sample_flag"]].copy()
         st.dataframe(display, hide_index=True, use_container_width=True)
-        st.download_button("Export player projections (CSV)", projections.to_csv(index=False).encode(),
+        projections_export = projections.copy()
+        projections_export["simulation_seed"] = int(run["seed"])
+        projections_export["simulation_trials"] = int(trials)
+        st.download_button("Export player projections (CSV)", projections_export.to_csv(index=False).encode(),
                            "team_ai2_nba_projections.csv", mime="text/csv")
         st.caption("Values represent projected means. Limited = fewer than three current-season games or fewer than ten observed prior games.")
 
@@ -326,7 +356,10 @@ if run is not None and run["run_key"] == run_key:
                 })
                 st.dataframe(shown, hide_index=True, use_container_width=True)
                 st.caption("Positive projection-minus-line supports the OVER direction; negative supports UNDER. Sportsbook implied prices include bookmaker margin. A projection difference or model edge is not proof of a profitable bet.")
-                st.download_button("Export prop comparison CSV", report.to_csv(index=False).encode(),
+                report_export = report.copy()
+                report_export["simulation_seed"] = int(run["seed"])
+                report_export["simulation_trials"] = int(trials)
+                st.download_button("Export prop comparison CSV", report_export.to_csv(index=False).encode(),
                                    "team_ai2_nba_props_evaluation.csv", mime="text/csv")
                 st.subheader("Correlated parlay research")
                 legs = st.multiselect("Select 2–8 actual bet legs", list(report["label"]), max_selections=8)
@@ -378,7 +411,7 @@ if run is not None and run["run_key"] == run_key:
                 with st.spinner("Rebuilding player distributions with approved playing time assumptions…"):
                     new_proj = build_projections(history,run["teams_map"],target,min_minutes=12,
                                                  excluded=omit,minute_overrides=overrides)
-                    new_samples = simulate_stat_lines(new_proj,history,trials=trials,seed=20261029)
+                    new_samples = simulate_stat_lines(new_proj,history,trials=trials,seed=int(run["seed"]))
                 run["projections"] = new_proj
                 run["samples"] = new_samples
                 st.success("Updated projections and simulations. Review the other tabs before considering bets.")
