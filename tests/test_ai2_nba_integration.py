@@ -86,6 +86,22 @@ class NBAEngineTests(unittest.TestCase):
         rerun_projections = build_projections(history, {"LAL":"GSW","GSW":"LAL"}, date(2026,10,29))
         pd.testing.assert_frame_equal(projections,rerun_projections)
 
+    def test_seed_changes_market_hit_probabilities_but_not_projected_means(self):
+        history = self.history()
+        p = build_projections(history, {"LAL":"GSW","GSW":"LAL"}, date(2026,10,29))
+        pid = str(p["player_id"].iloc[0])
+        markets = pd.DataFrame([
+            {"player_id":pid, "market":"Points", "line":29.5,"side":"Over","odds":-110},
+            {"player_id":pid, "market":"Points", "line":31.5,"side":"Under","odds":-110},
+            {"player_id":pid, "market":"PRA", "line":40.5,"side":"Over","odds":110},
+        ])
+        lines = prepare_bet_lines(markets, p)
+        a, _ = evaluate_bets(lines,simulate_stat_lines(p,history,trials=10000,seed=42))
+        b, _ = evaluate_bets(lines,simulate_stat_lines(p,history,trials=10000,seed=34))
+        self.assertTrue(np.any(np.abs(a["win_probability"]-b["win_probability"]) > 1e-8))
+        self.assertTrue(np.array_equal(a["line"].to_numpy(),b["line"].to_numpy()))
+        self.assertTrue(np.array_equal(a["odds"].to_numpy(),b["odds"].to_numpy()))
+
     def test_joint_stats_and_parlay_probabilities(self):
         history=self.history()
         p=build_projections(history,{"LAL":"GSW","GSW":"LAL"},date(2026,10,29))
