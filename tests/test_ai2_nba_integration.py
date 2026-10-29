@@ -72,6 +72,20 @@ class NBAEngineTests(unittest.TestCase):
         actual=build_projections(added,{"LAL":"GSW","GSW":"LAL"},date(2026,10,29))
         pd.testing.assert_frame_equal(expected,actual)
 
+    def test_simulation_seed_reproducibility_and_fibonacci_variation(self):
+        history = self.history()
+        projections = build_projections(history, {"LAL":"GSW","GSW":"LAL"}, date(2026,10,29))
+        first = simulate_stat_lines(projections, history, trials=2000, seed=13)
+        repeated = simulate_stat_lines(projections, history, trials=2000, seed=13)
+        next_fib = simulate_stat_lines(projections, history, trials=2000, seed=21)
+        self.assertEqual(set(first), set(repeated))
+        for market in first:
+            np.testing.assert_array_equal(first[market], repeated[market])
+        self.assertTrue(any(not np.array_equal(first[market],next_fib[market]) for market in first))
+        # Using a different seed must NEVER change model means.
+        rerun_projections = build_projections(history, {"LAL":"GSW","GSW":"LAL"}, date(2026,10,29))
+        pd.testing.assert_frame_equal(projections,rerun_projections)
+
     def test_joint_stats_and_parlay_probabilities(self):
         history=self.history()
         p=build_projections(history,{"LAL":"GSW","GSW":"LAL"},date(2026,10,29))
