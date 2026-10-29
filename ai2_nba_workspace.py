@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, date
 from io import BytesIO
 from pathlib import Path
+import hashlib
 from zoneinfo import ZoneInfo
 import os
 import secrets
@@ -357,6 +358,79 @@ if run is not None and run["run_key"] == run_key:
                 })
                 st.dataframe(shown, hide_index=True, use_container_width=True)
                 st.caption("Positive projection-minus-line supports the OVER direction; negative supports UNDER. Sportsbook implied prices include bookmaker margin. A projection difference or model edge is not proof of a profitable bet.")
+                with st.expander("🔬 Compare two simulation seeds on the SAME sportsbook lines", expanded=True):
+                    st.write("Player forecasts and book prices stay fixed. This checks only whether simulated hit rates change when the random seed changes.")
+                    alternate_seed_default = 34 if int(run["seed"]) != 34 else 42
+                    compare_seed = int(st.number_input(
+                        "Comparison seed", min_value=0, max_value=2147483647,
+                        value=alternate_seed_default, step=1,
+                        key=f"nba_compare_seed_{run_key}",
+                    ))
+                    market_fingerprint = hashlib.sha256(
+                        bets[["player_id", "market", "line", "side", "odds"]]
+                        .to_csv(index=False).encode("utf-8")
+                    ).hexdigest()
+                    comparison_key = (run_key, int(run["seed"]), compare_seed, market_fingerprint)
+                    if st.button(
+                        "Compare simulated hit rates",
+                        disabled=(compare_seed == int(run["seed"])),
+                        key=f"nba_compare_go_{run_key}",
+                    ):
+                        with st.spinner("Running independent simulation using comparison seed…"):
+                            other_samples = simulate_stat_lines(
+                                projections, history, trials=int(trials), seed=compare_seed
+                            )
+                            other_report, _ = evaluate_bets(bets, other_samples)
+                        sensitivity = report[["label", "player_id", "market", "side", "line",
+                                              "our_projection", "win_probability"]].copy()
+                        sensitivity["comparison_probability"] = other_report["win_probability"].to_numpy()
+                        sensitivity["delta_percentage_points"] = 100 * (
+                            sensitivity["comparison_probability"] - sensitivity["win_probability"]
+                        )
+                        sensitivity["absolute_delta_pp"] = sensitivity["delta_percentage_points"].abs()
+                        sensitivity["baseline_seed"] = int(run["seed"])
+                        sensitivity["comparison_seed"] = compare_seed
+                        st.session_state["nba_seed_sensitivity"] = {
+                            "key": comparison_key, "results": sensitivity,
+                        }
+                    comparison = st.session_state.get("nba_seed_sensitivity", {})
+                    if comparison.get("key") == comparison_key:
+                        sensitivity = comparison["results"]
+                        changed = int((sensitivity["absolute_delta_pp"] > 1e-8).sum())
+                        avg_delta = float(sensitivity["absolute_delta_pp"].mean())
+                        max_delta = float(sensitivity["absolute_delta_pp"].max())
+                        d1, d2, d3 = st.columns(3)
+                        d1.metric("Legs with changed probabilities", f"{changed}/{len(sensitivity)}")
+                        d2.metric("Avg absolute change", f"{avg_delta:.2f} pp")
+                        d3.metric("Largest change", f"{max_delta:.2f} pp")
+                        preview = sensitivity.sort_values(
+                            "absolute_delta_pp", ascending=False
+                        ).head(15).copy()
+                        preview["win_probability"] *= 100
+                        preview["comparison_probability"] *= 100
+                        preview = preview[[
+                            "label", "our_projection", "line",
+                            "win_probability", "comparison_probability",
+                            "delta_percentage_points",
+                        ]].round(2).rename(columns={
+                            "label":"Player / bet",
+                            "our_projection":"Our forecast (unchanged)",
+                            "line":"Book line (unchanged)",
+                            "win_probability":f"Seed {int(run['seed'])} hit %",
+                            "comparison_probability":f"Seed {compare_seed} hit %",
+                            "delta_percentage_points":"Change (percentage points)",
+                        })
+                        st.dataframe(preview, hide_index=True, use_container_width=True)
+                        st.download_button(
+                            "Export seed sensitivity comparison",
+                            sensitivity.to_csv(index=False).encode("utf-8-sig"),
+                            "team_ai2_nba_seed_comparison.csv", mime="text/csv",
+                        )
+                        st.caption("Different seeds sample different outcomes, but with enough trials hit-rate estimates should be close. Larger seed-to-seed swings point to Monte Carlo uncertainty, not a special predictive seed.")
+                    elif compare_seed == int(run["seed"]):
+                        st.info("Pick a DIFFERENT comparison seed to test simulation sensitivity.")
+                    else:
+                        st.caption("Click Compare simulated hit rates to see numerical differences between the two seeds.")
                 report_export = report.copy()
                 report_export["simulation_seed"] = int(run["seed"])
                 report_export["simulation_trials"] = int(trials)
