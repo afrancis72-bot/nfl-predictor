@@ -153,16 +153,24 @@ else:
     st.title(f"{SPORTS[sport]['icon']} {sport}")
     st.caption("Unified platform development preview · Research-only NFL engine available; no sport engine certified.")
     if sport == "NFL":
-        st.caption("NFL Classic · Upload a DraftKings salary CSV, optionally change the seed, then build.")
+        from hashlib import sha256 as _ai2_sha256
         from ai2_nfl_oneclick import build_oneclick_portfolio
-        import hashlib as _ai2_hashlib
+        from ai2_nfl_review import (review_tables, named_csv, named_excel,
+                                    roster_id_csv, swap_contest_tiers,
+                                    snapshot_approved, load_approved)
+        from ai2_local_storage import save_file as _ai2_save_file
         import pandas as _ai2_pd
+
+        st.caption("NFL Classic · Upload DraftKings salaries, then build 20 lineups. No projections upload required.")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
         saved_one = get_upload("NFL", "DraftKings salaries")
         if saved_one:
-            st.success(f"Current saved slate: {saved_one[0]}")
-        seed_one = st.number_input("Simulation seed (optional)", min_value=0, max_value=2147483647, value=42, step=1, key="nfl_one_seed")
-        if st.button("BUILD MY 20 LINEUPS", type="primary", key="nfl_one_build", use_container_width=True):
+            st.caption(f"Saved salary file: {saved_one[0]}")
+        seed_one = st.number_input("Simulation seed (optional)", min_value=0,
+                                   max_value=2147483647, value=42, step=1,
+                                   key="nfl_one_seed")
+        if st.button("BUILD MY 20 LINEUPS", type="primary",
+                     key="nfl_one_build", use_container_width=True):
             try:
                 if upload_one is not None:
                     from ai2_nfl_inputs import parse_csv_payload
@@ -171,34 +179,140 @@ else:
                 salaries_one = get_upload("NFL", "DraftKings salaries")
                 if not salaries_one:
                     raise ValueError("Upload your DraftKings salary CSV first.")
-                with st.spinner("Validating current slate, player evidence and simulation inputs..."):
-                    output_one = build_oneclick_portfolio(
-                        salaries_one, seed=int(seed_one), count=20)
+                with st.spinner("Checking current NFL injuries and simulating 20 legal lineups..."):
+                    output_one = build_oneclick_portfolio(salaries_one, seed=int(seed_one), count=20)
                 st.session_state["ai2_oneclick_result"] = output_one
-                st.session_state["ai2_oneclick_slate"] = salaries_one[0]
                 st.session_state["ai2_oneclick_seed"] = int(seed_one)
-                st.session_state["ai2_oneclick_digest"] = _ai2_hashlib.sha256(salaries_one[1]).hexdigest()
+                st.session_state["ai2_oneclick_digest"] = _ai2_sha256(salaries_one[1]).hexdigest()
+                # A new build starts a new review, never overwrites approvals.
+                st.session_state["ai2_oneclick_review_ranked"] = output_one["ranked"]
             except (ValueError, KeyError, TypeError, ImportError, OSError) as exc:
                 st.session_state.pop("ai2_oneclick_result", None)
-                st.error(str(exc))
+                st.session_state.pop("ai2_oneclick_review_ranked", None)
+                st.error(f"Build not completed: {exc}")
+
         output_one = st.session_state.get("ai2_oneclick_result")
         visible_payload = (upload_one.getvalue() if upload_one is not None
                            else saved_one[1] if saved_one else None)
-        if (visible_payload is None or
+        current_digest = (_ai2_sha256(visible_payload).hexdigest()
+                          if visible_payload is not None else "")
+        if (not current_digest or
                 st.session_state.get("ai2_oneclick_seed") != int(seed_one) or
-                st.session_state.get("ai2_oneclick_digest") != _ai2_hashlib.sha256(visible_payload).hexdigest()):
+                st.session_state.get("ai2_oneclick_digest") != current_digest):
             output_one = None
+
         if output_one:
-            st.subheader("Your 20 lineups")
-            st.warning(output_one.get("research_warning", "Experimental model: review official active statuses before entry."))
-            st.dataframe(_ai2_pd.DataFrame(output_one["summary"]), use_container_width=True, hide_index=True)
-            st.download_button("Download DraftKings lineup CSV", data=output_one["csv"],
-                               file_name="team_ai2_nfl_20_lineups.csv", mime="text/csv")
-            with st.expander("Why the model selected these players"):
-                for i, entry in enumerate(output_one["ranked"], 1):
-                    st.write(f"Lineup {i} | {entry['contest_tier']} | P90 {entry['simulated_p90']:.1f} | P99 {entry['simulated_p99']:.1f}")
-                    st.write(entry["selection_explanation"])
-        st.caption("Automatic football-stat research runs when you press Build. If reliable data cannot be retrieved, no lineup is exported.")
+            ranked = st.session_state.get("ai2_oneclick_review_ranked") or output_one["ranked"]
+            overview, details, exposures = review_tables(ranked)
+            st.subheader("Your 20 lineups — player names")
+            st.warning(output_one.get("research_warning",
+                       "Experimental projections. Review current injuries before entry."))
+            st.dataframe(overview, use_container_width=True, hide_index=True)
+            st.download_button("Download readable Excel review",
+                               data=named_excel(ranked),
+                               file_name="team_ai2_nfl_20_lineups_NAMED.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               key="nfl_named_xlsx")
+            st.download_button("Download readable CSV review",
+                               data=named_csv(ranked),
+                               file_name="team_ai2_nfl_20_lineups_NAMED.csv",
+                               mime="text/csv", key="nfl_named_csv")
+            st.download_button("Download DraftKings roster-ID CSV",
+                               data=roster_id_csv(ranked),
+                               file_name="team_ai2_nfl_20_lineups_DK_ids.csv",
+                               mime="text/csv", key="nfl_dk_ids")
+            st.caption("Roster-ID CSV contains player IDs, not an official contest-entry template. Verify the DraftKings import format.")
+
+            with st.expander("NFL injuries and news status", expanded=True):
+                report = output_one.get("pregame_report") or {}
+                checked = report.get("checked_utc") or "not available"
+                source = report.get("official_injury_url") or "unknown source"
+                st.caption(f"Official injury source: {source} · Retrieved UTC: {checked}")
+                st.caption("Game designations and practice participation are distinct. Limited or full practice does NOT guarantee a full game workload.")
+                rows = report.get("injuries") or []
+                if rows:
+                    st.dataframe(_ai2_pd.DataFrame(rows),
+                                 use_container_width=True, hide_index=True, height=270)
+                else:
+                    st.info("No player-level injury details were returned in this build.")
+                st.warning(report.get("news_feed",
+                           "Breaking injury and depth-chart news are not independently verified."))
+                st.caption("Refresh by pressing BUILD again with the latest salary slate. Recheck official Sunday inactives before locking entries.")
+
+            with st.expander("Player exposure and lineup explanations"):
+                st.dataframe(exposures, hide_index=True, use_container_width=True)
+                for line_no, entry in enumerate(ranked, 1):
+                    st.write(f"Lineup {line_no} · {entry['contest_tier']} · "
+                             f"Mean {entry['simulated_mean']:.1f} · "
+                             f"P90 {entry['simulated_p90']:.1f} · P99 {entry['simulated_p99']:.1f}")
+                    explanation = entry.get("selection_explanation")
+                    if explanation:
+                        st.write(explanation)
+
+            with st.expander("Review contest assignments · no roster changes"):
+                st.caption("Swap a $3 and a $0.50 lineup without changing any of the nine players. All five $3 entries remain subject to premium-risk and current-slate exclusion rules.")
+                premium_numbers = [i for i, row in enumerate(ranked, 1)
+                                   if row["contest_tier"] == "$3"]
+                regular_numbers = [i for i, row in enumerate(ranked, 1)
+                                   if row["contest_tier"] != "$3"]
+                premium_one = st.selectbox("Existing $3 lineup", premium_numbers,
+                                            key="nfl_premium_swap_from")
+                regular_one = st.selectbox("Existing $0.50 lineup", regular_numbers,
+                                            key="nfl_premium_swap_to")
+                if st.button("Swap contest assignments", key="nfl_confirm_tier_swap"):
+                    try:
+                        st.session_state["ai2_oneclick_review_ranked"] = swap_contest_tiers(
+                            ranked, premium_one, regular_one,
+                            premium_excluded_names=output_one["audit"].get(
+                                "premium_only_exclusions", ()))
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+
+            if st.button("APPROVE AND SAVE THESE 20 LINEUPS", key="nfl_approve_20"):
+                try:
+                    payload = snapshot_approved(ranked, current_digest, int(seed_one))
+                    _ai2_save_file(DATA_DIR, "NFL", "Approved 20-lineup portfolio",
+                                   "ai2_nfl_approved_20.json", payload)
+                    st.success("Approved lineup rosters and contest tiers saved separately. Future model builds cannot overwrite them.")
+                except (ValueError, OSError, sqlite3.Error) as exc:
+                    st.error(f"Could not save approval: {exc}")
+
+        with st.expander("Protected approved lineups and previous entries"):
+            st.caption("The app never silently replaces human-approved lineups. Save a portable backup because Streamlit-hosted local storage may be temporary.")
+            approved_file = get_upload("NFL", "Approved 20-lineup portfolio")
+            if approved_file:
+                try:
+                    snapshot = load_approved(approved_file[1])
+                    st.success(f"Saved approval: {snapshot['approved_utc']}")
+                    approved_table, _, _ = review_tables(snapshot["lineups"])
+                    st.dataframe(approved_table, hide_index=True, use_container_width=True)
+                    st.download_button("Download protected approved lineup snapshot",
+                                       data=approved_file[1],
+                                       file_name="team_ai2_APPROVED_portfolio.json",
+                                       mime="application/json", key="nfl_saved_approval")
+                except (ValueError, KeyError, TypeError) as exc:
+                    st.error(f"Existing approval needs review: {exc}")
+            else:
+                st.caption("No 20-lineup portfolio has been approved and saved in this app.")
+            prior_entries = st.file_uploader(
+                "Import your already-approved DraftKings entries (optional; stored separately)",
+                type=["csv"], key="nfl_existing_approved_entries")
+            if st.button("Protect imported entries", key="nfl_save_existing",
+                         disabled=prior_entries is None):
+                try:
+                    _ai2_save_file(DATA_DIR, "NFL", "Previously approved DraftKings entries",
+                                   prior_entries.name, prior_entries.getvalue())
+                    st.success("Your earlier entries are saved separately and were not modified.")
+                except (ValueError, OSError, sqlite3.Error) as exc:
+                    st.error(str(exc))
+            old = get_upload("NFL", "Previously approved DraftKings entries")
+            if old:
+                st.download_button("Download preserved previous entries",
+                                   old[1], file_name=old[0], mime="text/csv",
+                                   key="nfl_preserved_previous_entries")
+
+        st.caption("One click automatically fetches available NFL research. No lineup is exported when core source or roster checks fail. News reporting and prediction accuracy remain experimental.")
         st.stop()
 
     tab_data,tab_build,tab_market,tab_results,tab_health = st.tabs(
