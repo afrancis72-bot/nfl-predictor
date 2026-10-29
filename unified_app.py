@@ -151,7 +151,7 @@ else:
         go_home()
         st.rerun()
     st.title(f"{SPORTS[sport]['icon']} {sport}")
-    st.caption("Unified platform development preview · Research-only NFL engine available; no sport engine certified.")
+    st.caption("TEAM AI² Pro · NFL portfolio builder and NBA player-prop research engine. Models remain experimental.")
     if sport == "NFL":
         from hashlib import sha256 as _ai2_sha256
         from ai2_nfl_oneclick import build_oneclick_portfolio
@@ -371,6 +371,13 @@ else:
                                    key="nfl_preserved_previous_entries")
 
         st.caption("One click automatically fetches available NFL research. No lineup is exported when core source or roster checks fail. News reporting and prediction accuracy remain experimental.")
+        st.stop()
+
+    if sport == "NBA":
+        # NBA is a native one-click props / parlay engine in the existing unified UI.
+        # Preserve the working NFL and other sport routes verbatim.
+        import runpy as _ai2_runpy
+        _ai2_runpy.run_path(str(Path(__file__).parent / "ai2_nba_workspace.py"), run_name="__main__")
         st.stop()
 
     tab_data,tab_build,tab_market,tab_results,tab_health = st.tabs(
