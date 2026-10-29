@@ -222,9 +222,9 @@ def load_current_props(projections: pd.DataFrame, teams_map: dict, api_key: str,
 ALIASES = {
     "playerid":"player_id", "id":"player_id",
     "player_name":"player", "athlete":"player", "name":"player", "competitor":"player",
-    "player prop":"market", "prop":"market", "bet type":"market", "stat":"market",
+    "player_prop":"market", "prop":"market", "bet_type":"market", "stat":"market",
     "point":"line", "points line":"line", "prop_line":"line", "threshold":"line",
-    "american odds":"odds", "american_odds":"odds", "price":"odds",
+    "american_odds":"odds", "american_odds":"odds", "price":"odds",
     "over_under":"side", "over/under":"side", "outcome":"side", "selection":"side",
     "bookmaker":"sportsbook", "book":"sportsbook",
 }
@@ -251,7 +251,7 @@ def normalize_csv_lines(raw: pd.DataFrame, projections: pd.DataFrame):
     Returns: normalized dataframe and an explicit diagnostic. Never guesses lines.
     """
     x = raw.copy()
-    x.columns = [ALIASES.get(str(c).strip().lower().replace("-","_"),str(c).strip().lower())
+    x.columns = [ALIASES.get(str(c).strip().lower().replace("-","_").replace(" ","_"),str(c).strip().lower().replace(" ","_"))
                  for c in x.columns]
     if x.columns.duplicated().any():
         x = x.loc[:,~x.columns.duplicated()].copy()
