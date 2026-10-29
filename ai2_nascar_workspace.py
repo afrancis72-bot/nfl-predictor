@@ -115,7 +115,7 @@ st.caption(
 
 @st.cache_data(ttl=21600,show_spinner=False)
 def cached_nascar_reference(records,track):
-    return reference_signals(pd.DataFrame(records),track)
+    return reference_signals(pd.DataFrame(records, columns=["Name","ID","Salary","AvgPointsPerGame"]),track)
 
 run_requested=st.button(
     "🏁 Run race simulation + build DraftKings lineups",
