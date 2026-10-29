@@ -8,6 +8,49 @@ branch `feature/unified-ai2-platform`, and main file `unified_app.py`.
 This configuration is **not** deployed automatically by a GitHub commit.
 The repository's original `main/app.py` remains a separate entry point.
 
+## NASCAR one-button workflow — native unified sports tab
+
+The NASCAR sport selector is now connected to a native one-page simulator and
+six-driver DraftKings portfolio builder, using the user's existing NASCAR
+Predictor V2.14 racing/track/DFS engine, not a placeholder or another app.
+
+1. In the **same unified app** select **NASCAR**.
+2. Choose the **race track** (and check scheduled laps).
+3. Upload the **post-qualifying DraftKings salary CSV** with actual driver Name,
+   ID, Salary, and a complete unique Starting grid. This is the only required file.
+4. Choose race simulations (default 25,000), portfolio count (default 10),
+   maximum driver exposure (default 35%), overlap, minimum salary and a
+   reproducible seed. Optional Fibonacci seed presets and a random-seed mode
+   are available. An optional driver veto removes a driver only from fantasy
+   lineup selection, not the simulated NASCAR race.
+5. Click **Run race simulation + build DraftKings lineups** once.
+6. Inspect final lineups, simulation-based driver outcomes, scripts, and driver
+   exposures. Download a readable lineup review, six-slot D/ID CSV, projections
+   and exposure CSV.
+
+Actual practice *speed/ranks* improve single-lap and 5/10/15/20-lap pace
+signals. An optional upload supports those fields, but **it is not required**.
+Neither lap speeds nor starting positions are fabricated. The core attempts
+published NASCAR Reference recent-form and comparable-track research through
+bounded parallel requests. Source unavailability is disclosed; the app can
+produce a **lower-confidence market-based research output** from salary/FPPG,
+track assumptions, and the verified grid but cannot claim verified speed.
+Final position/official roster changes must be reviewed before entry.
+
+The engine corrects a prior race-matrix/driver identity mismatch by reordering
+simulated race matrix columns with sorted driver projections. It rejects
+incomplete qualifying positions, duplicate/missing IDs, incorrect simulation
+column alignment, illegal salary, overlap, excessive exposure, and incomplete
+portfolios. The salary floor applies while optimizing rather than after.
+The resulting six D/ID columns are **not guaranteed to match every DK contest
+entry upload template**; if the user supplies the DKEntries file, match its
+exact schema before submitting. No actual wagering, uploads to DraftKings, or
+live-deployment claim is made.
+
+The separate `afrancis72-bot/NASCAR-predictor` standalone repository remains
+unchanged. All unified functionality lives under
+`afrancis72-bot/nfl-predictor@feature/unified-ai2-platform`.
+
 ## NFL Classic one-button workflow
 
 1. Open NFL from the home screen and upload the DraftKings salaries CSV.
