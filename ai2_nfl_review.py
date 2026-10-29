@@ -142,6 +142,8 @@ def snapshot_approved(ranked, slate_digest, seed):
                     "ID": str(p["ID"]), "Name": str(p["Name"]),
                     "TeamAbbrev": str(p.get("TeamAbbrev", "")),
                     "Position": str(p["Position"]), "Salary": int(p["Salary"]),
+                    "opponent": str(p.get("opponent") or ""),
+                    "Game Info": str(p.get("Game Info") or ""),
                     "proj": float(p.get("proj", 0) or 0)}
                     for p in item["candidate"]["players"]]}})
     return json.dumps({
