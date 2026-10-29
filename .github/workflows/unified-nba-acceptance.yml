@@ -7,6 +7,7 @@ on:
       - 'unified_app.py'
       - 'ai2_nba_workspace.py'
       - 'nba_engine/**'
+      - 'tests/test_ai2_nba_odds.py'
       - 'tests/test_ai2_nba_integration.py'
       - '.github/workflows/unified-nba-acceptance.yml'
   workflow_dispatch:
@@ -26,5 +27,7 @@ jobs:
         run: python -m compileall -q unified_app.py ai2_nba_workspace.py nba_engine
       - name: Verify game-level model behavior without external feeds
         run: python -m unittest discover -s tests -p test_ai2_nba_integration.py -v
+      - name: Verify real sportsbook odds import rules with mocked provider data
+        run: python -m unittest discover -s tests -p test_ai2_nba_odds.py -v
       - name: Verify real ESPN schedule + history feeds + 10K NBA simulations
         run: python -m nba_engine.live_smoke
