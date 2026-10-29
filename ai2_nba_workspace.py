@@ -19,6 +19,7 @@ from nba_engine.data_sources import scoreboard, load_public_logs, norm_team
 from nba_engine.predictor import (
     MARKETS, build_projections, simulate_stat_lines,
     prepare_bet_lines, evaluate_bets, parlay_summary,
+    summarize_simulated_projections,
 )
 from nba_engine.props_sim import expected_net_roi
 from nba_engine.odds_feed import BOOKMAKERS, load_current_props, normalize_csv_lines
@@ -164,17 +165,109 @@ if run is not None and run["run_key"] == run_key:
 
     projection_tab, props_tab, adjustments_tab = st.tabs(["📊 Player projections", "🎯 Props & parlays", "⚙️ Injuries / minutes"])
     with projection_tab:
-        st.subheader("Player statistical predictions")
-        st.write("Sort and filter player projections; these are estimates, not sportsbook offers.")
-        display = projections[["player","team","opponent","minutes","Points","Rebounds","Assists",
-                               "Threes","PRA","PR","PA","RA","current_season_games","sample_flag"]].copy()
+        st.subheader("Simulation-based player projections")
+        st.caption(
+            "Our historical/matchup baseline is calculated BEFORE simulation and should not change with the seed. "
+            "The simulated averages, medians, P10 and P90 come from the actual sampled games and DO change across seeds."
+        )
+        visible_markets = ("Points", "Rebounds", "Assists", "Threes", "PRA")
+        simulated_summary = summarize_simulated_projections(
+            projections, samples, markets=visible_markets
+        )
+        means = simulated_summary.pivot(
+            index="player_id", columns="market", values="simulation_mean"
+        ).reset_index()
+        means = means.rename(columns={
+            "Points":"Sim PTS", "Rebounds":"Sim REB",
+            "Assists":"Sim AST", "Threes":"Sim 3PM", "PRA":"Sim PRA",
+        })
+        display = projections[[
+            "player_id", "player", "team", "opponent",
+            "minutes", "Points", "sample_flag",
+        ]].copy().merge(means, on="player_id", how="left", validate="one_to_one")
+        display = display[[
+            "player", "team", "opponent", "minutes", "Points",
+            "Sim PTS", "Sim REB", "Sim AST", "Sim 3PM", "Sim PRA",
+            "sample_flag",
+        ]].rename(columns={
+            "player":"Player", "team":"Team", "opponent":"Opponent",
+            "minutes":"Expected minutes", "Points":"Baseline PTS",
+            "sample_flag":"Sample quality",
+        })
+        for col in ("Baseline PTS", "Sim PTS", "Sim REB", "Sim AST",
+                    "Sim 3PM", "Sim PRA"):
+            display[col] = display[col].round(3)
         st.dataframe(display, hide_index=True, use_container_width=True)
+        st.caption(
+            f"Simulation seed: {run['seed']}. The simulated mean columns change slightly with the seed; "
+            "the independent baseline is fixed. Small differences between seeds reflect Monte Carlo sampling noise."
+        )
+        detail_market = st.selectbox(
+            "Explore simulated distribution for one stat",
+            list(visible_markets), key=f"nba_distribution_market_{run_key}",
+        )
+        detail = simulated_summary.loc[
+            simulated_summary["market"] == detail_market,
+            ["player","team","baseline_projection","simulation_mean",
+             "simulation_median","simulation_p10","simulation_p90",
+             "monte_carlo_se","sample_flag"],
+        ].copy()
+        detail = detail.rename(columns={
+            "player":"Player", "team":"Team",
+            "baseline_projection":"Historical baseline",
+            "simulation_mean":"Simulation mean",
+            "simulation_median":"Simulation median",
+            "simulation_p10":"P10",
+            "simulation_p90":"P90",
+            "monte_carlo_se":"Monte Carlo std error",
+            "sample_flag":"Sample quality",
+        })
+        for col in ("Historical baseline", "Simulation mean",
+                    "Simulation median", "P10", "P90", "Monte Carlo std error"):
+            detail[col] = detail[col].round(3)
+        st.dataframe(detail, hide_index=True, use_container_width=True)
+        st.caption(
+            "P10/P90 are 10th/90th percentile simulated game outcomes, not confidence intervals "
+            "for our forecast. Monte Carlo std error measures uncertainty from finite simulation draws; "
+            "it does not capture player-model errors, injuries or unmodeled matchups."
+        )
+
         projections_export = projections.copy()
+        for market in visible_markets:
+            per_market = simulated_summary.loc[
+                simulated_summary["market"] == market
+            ].set_index("player_id")
+            label = {
+                "Points":"points", "Rebounds":"rebounds",
+                "Assists":"assists", "Threes":"threes", "PRA":"pra",
+            }[market]
+            indices = projections_export["player_id"].astype(str)
+            for attr, suffix in (
+                ("simulation_mean","mean"),("simulation_median","median"),
+                ("simulation_p10","p10"),("simulation_p90","p90"),
+                ("monte_carlo_se","mc_se"),
+            ):
+                projections_export[f"sim_{label}_{suffix}"] = (
+                    indices.map(per_market[attr]).round(4)
+                )
         projections_export["simulation_seed"] = int(run["seed"])
         projections_export["simulation_trials"] = int(trials)
-        st.download_button("Export player projections (CSV)", projections_export.to_csv(index=False).encode(),
-                           "team_ai2_nba_projections.csv", mime="text/csv")
-        st.caption("Values represent projected means. Limited = fewer than three current-season games or fewer than ten observed prior games.")
+        st.download_button(
+            "Export player projections — baseline + simulated outcomes (CSV)",
+            projections_export.to_csv(index=False).encode("utf-8-sig"),
+            "team_ai2_nba_projections.csv", mime="text/csv",
+        )
+        detail_export = simulated_summary.copy()
+        detail_export["simulation_seed"] = int(run["seed"])
+        st.download_button(
+            "Export full simulated stat distributions (CSV)",
+            detail_export.to_csv(index=False).encode("utf-8-sig"),
+            "team_ai2_nba_simulated_distributions.csv", mime="text/csv",
+        )
+        st.caption(
+            "Limited history means fewer than three current-season games or fewer than ten "
+            "prior observations. Seed sensitivity does not establish a betting advantage."
+        )
 
     with props_tab:
         st.subheader("Enter real sportsbook prop lines")
