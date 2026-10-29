@@ -366,7 +366,11 @@ def simulate(features, config=Config()):
     out["exp_laps_led"] = laps_led.mean(axis=0)
     out["exp_fastest_laps"] = fastest.mean(axis=0)
     out["value_per_1k"] = out["proj_dk"]/(out["Salary"]/1000)
-    return out.sort_values("proj_dk",ascending=False).reset_index(drop=True), dkpts
+    # The optimizer indexes the simulation matrix by projection-row order.
+    # Sorting projections without sorting columns silently attributes one
+    # driver's simulation outcome to another driver's salary/identity.
+    order = np.argsort(-out["proj_dk"].to_numpy(float), kind="stable")
+    return out.iloc[order].reset_index(drop=True), dkpts[:, order]
 
 def optimize_lineups(proj, n_lineups=10, salary_cap=50000, roster_size=6, max_overlap=4, objective="ceiling", max_exposure=1.0):
     try:
