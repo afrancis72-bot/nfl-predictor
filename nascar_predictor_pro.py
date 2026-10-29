@@ -372,7 +372,7 @@ def simulate(features, config=Config()):
     order = np.argsort(-out["proj_dk"].to_numpy(float), kind="stable")
     return out.iloc[order].reset_index(drop=True), dkpts[:, order]
 
-def optimize_lineups(proj, n_lineups=10, salary_cap=50000, roster_size=6, max_overlap=4, objective="ceiling", max_exposure=1.0):
+def optimize_lineups(proj, n_lineups=10, salary_cap=50000, roster_size=6, max_overlap=4, objective="ceiling", max_exposure=1.0, salary_floor=0):
     try:
         from scipy.optimize import milp, LinearConstraint, Bounds
     except Exception as e:
@@ -394,7 +394,7 @@ def optimize_lineups(proj, n_lineups=10, salary_cap=50000, roster_size=6, max_ov
     driver_caps[med]=np.minimum(driver_caps[med],max(1,int(np.floor(n_lineups*0.45+1e-9))))
     exposure_counts=np.zeros(n,dtype=int)
     constraints=[LinearConstraint(np.ones((1,n)),[roster_size],[roster_size]),
-                 LinearConstraint(sal.reshape(1,-1),[-np.inf],[salary_cap])]
+                 LinearConstraint(sal.reshape(1,-1),[salary_floor],[salary_cap])]
     for _ in range(n_lineups):
         cons=list(constraints)
         capped=np.where(exposure_counts>=driver_caps)[0]
@@ -425,7 +425,7 @@ def optimize_lineups(proj, n_lineups=10, salary_cap=50000, roster_size=6, max_ov
 
 def optimize_race_sim_lineups(proj, sim_matrix, n_lineups=10, salary_cap=50000,
                               roster_size=6, max_overlap=4, candidate_pool=2500,
-                              seed=42, risk_mode="gpp"):
+                              seed=42, risk_mode="gpp", salary_floor=0):
     """
     V1.1 optimizer. Generates legal candidate rosters, then evaluates each roster by
     summing its six drivers inside EACH SAME simulated race. This preserves NASCAR
@@ -453,7 +453,7 @@ def optimize_race_sim_lineups(proj, sim_matrix, n_lineups=10, salary_cap=50000,
             score=base+noise
         cons=[
             LinearConstraint(np.ones((1,n)),[roster_size],[roster_size]),
-            LinearConstraint(salary.reshape(1,-1),[-np.inf],[salary_cap])
+            LinearConstraint(salary.reshape(1,-1),[salary_floor],[salary_cap])
         ]
         res=milp(c=-score,integrality=np.ones(n),
                  bounds=Bounds(np.zeros(n),np.ones(n)),constraints=cons)
@@ -464,7 +464,7 @@ def optimize_race_sim_lineups(proj, sim_matrix, n_lineups=10, salary_cap=50000,
 
     # Always include mean-optimal lineup.
     cons=[LinearConstraint(np.ones((1,n)),[roster_size],[roster_size]),
-          LinearConstraint(salary.reshape(1,-1),[-np.inf],[salary_cap])]
+          LinearConstraint(salary.reshape(1,-1),[salary_floor],[salary_cap])]
     res=milp(c=-base,integrality=np.ones(n),bounds=Bounds(np.zeros(n),np.ones(n)),constraints=cons)
     if res.success:candidates.add(tuple(np.where(res.x>0.5)[0].tolist()))
 
@@ -558,7 +558,7 @@ def _candidate_lineup_matrix(lineups, features):
 
 def optimize_scenario_portfolio(features, sim_matrix, n_lineups=10, salary_cap=50000,
                                 roster_size=6, max_overlap=4, candidate_pool=1800, seed=42,
-                                max_exposure=1.0):
+                                max_exposure=1.0, salary_floor=0):
     """
     V1.3: build many legal candidates, score them inside coherent races, then
     reward portfolios that cover empirically occurring race scripts. No driver
@@ -567,13 +567,13 @@ def optimize_scenario_portfolio(features, sim_matrix, n_lineups=10, salary_cap=5
     base=optimize_race_sim_lineups(features,sim_matrix,n_lineups=max(250,min(candidate_pool,900)),
                                   salary_cap=salary_cap,roster_size=roster_size,
                                   max_overlap=roster_size,candidate_pool=candidate_pool,
-                                  seed=seed,risk_mode="gpp")
+                                  seed=seed,risk_mode="gpp",salary_floor=salary_floor)
     # Seed the candidate bank with a guaranteed-feasible portfolio under the
     # requested exposure/overlap rules. The scenario search can improve on it,
     # but will not get trapped with fewer than the requested number of lineups.
     seed_port=optimize_lineups(features,n_lineups=n_lineups,salary_cap=salary_cap,
                               roster_size=roster_size,max_overlap=max_overlap,
-                              objective="ceiling",max_exposure=max_exposure)
+                              objective="ceiling",max_exposure=max_exposure,salary_floor=salary_floor)
     if len(seed_port):
         base=pd.concat([base,seed_port],ignore_index=True,sort=False).drop_duplicates("Drivers").reset_index(drop=True)
     idxs, valid=_candidate_lineup_matrix(base,features)
