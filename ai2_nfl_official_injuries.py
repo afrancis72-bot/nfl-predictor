@@ -22,6 +22,7 @@ def fetch_official_injury_statuses(timeout=12):
     statuses = {}
     conflicts = set()
     table_count = 0
+    practice_rows = []
     for table in soup.select("table"):
         headers = [h.get_text(" ", strip=True).lower() for h in table.select("thead th")]
         if not headers:
@@ -32,6 +33,8 @@ def fetch_official_injury_statuses(timeout=12):
         status_col = next((i for i, h in enumerate(headers) if "game status" in h), None)
         if name_col is None or status_col is None:
             continue
+        practice_col = next((i for i, h in enumerate(headers) if "practice status" in h), None)
+        injury_col = next((i for i, h in enumerate(headers) if h == "injuries"), None)
         table_count += 1
         for tr in table.select("tbody tr"):
             cells = tr.find_all(["td", "th"], recursive=False)
@@ -39,9 +42,19 @@ def fetch_official_injury_statuses(timeout=12):
                 continue
             name = cells[name_col].get_text(" ", strip=True)
             status = cells[status_col].get_text(" ", strip=True).upper()
-            if not name or status not in GAME_STATUSES:
+            if not name:
                 continue
             key = "".join(ch for ch in name.casefold() if ch.isalnum())
+            practice = (cells[practice_col].get_text(" ", strip=True)
+                        if practice_col is not None and len(cells) > practice_col else "")
+            injury = (cells[injury_col].get_text(" ", strip=True)
+                      if injury_col is not None and len(cells) > injury_col else "")
+            if injury or practice or status:
+                practice_rows.append({"name": name, "normalized_name": key,
+                                      "injury": injury, "practice_status": practice,
+                                      "game_status": status if status in GAME_STATUSES else ""})
+            if status not in GAME_STATUSES:
+                continue
             if key in statuses and statuses[key] != status:
                 conflicts.add(key)
             statuses[key] = status
@@ -51,7 +64,7 @@ def fetch_official_injury_statuses(timeout=12):
         raise ValueError("Official NFL injury page has no recognizable player/game-status tables")
     return statuses, {"source": SOURCE_URL, "checked_utc": datetime.now(timezone.utc).isoformat(),
                       "tables": table_count, "designated_players": len(statuses),
-                      "conflicts": len(conflicts)}
+                      "conflicts": len(conflicts), "practice_rows": practice_rows}
 
 def match_injury_statuses(salary_rows, statuses):
     """Match only unambiguous normalized names to DK player IDs."""
