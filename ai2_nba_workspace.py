@@ -173,8 +173,42 @@ if run is not None and run["run_key"] == run_key:
                 },
                 key=f"nba_lines_{run_key}",
             )
-        st.download_button("Download importable empty lines template",
-                           b"player_id,market,line,side,odds\n", "nba_real_lines_template.csv", mime="text/csv")
+        # Give the user a player-populated worksheet instead of an empty header-only
+        # CSV. These are MODEL projections, not sportsbook lines or quoted odds.
+        roster_lookup = projections.set_index("player_id")
+        worksheet_rows = []
+        for display_name in chosen:
+            player_id = names[display_name]
+            player_row = roster_lookup.loc[player_id]
+            for market in market_choices:
+                worksheet_rows.append({
+                    "player_id": player_id,
+                    "player": str(player_row["player"]),
+                    "team": str(player_row["team"]),
+                    "market": market,
+                    "model_projection": float(player_row[market]),
+                    "line": None,
+                    "side": "Over",
+                    "odds": None,
+                })
+        worksheet = pd.DataFrame(
+            worksheet_rows,
+            columns=["player_id", "player", "team", "market",
+                     "model_projection", "line", "side", "odds"]
+        )
+        st.download_button(
+            "Download prefilled player-prop worksheet",
+            worksheet.to_csv(index=False).encode("utf-8-sig"),
+            "team_ai2_nba_player_props_prefilled.csv",
+            mime="text/csv",
+            disabled=worksheet.empty,
+            help="Player IDs and model projections are included. Enter your real sportsbook line and odds before uploading."
+        )
+        st.caption("Prefilled worksheet: player names, IDs, and our model projections are included. **Actual sportsbook lines and odds remain blank.** You can also enter those directly in the table above—no download required.")
+        with st.expander("Advanced: blank CSV format"):
+            st.download_button("Download header-only CSV",
+                               b"player_id,market,line,side,odds\n",
+                               "nba_real_lines_template.csv", mime="text/csv")
         try:
             bets = prepare_bet_lines(bet_grid, projections)
             if bets.empty:
