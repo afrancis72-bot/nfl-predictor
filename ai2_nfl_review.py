@@ -84,7 +84,33 @@ def named_excel(ranked):
     return out.getvalue()
 
 
-def swap_contest_tiers(ranked, premium_lineup, regular_lineup):
+def premium_risk_checks(ranked, premium_excluded_names=()):
+    """Return human-readable premium concentration violations, if any."""
+    from math import ceil
+    premium = [item for item in ranked if item["contest_tier"] == "$3"]
+    errors = []
+    if len(premium) != 5:
+        errors.append("Expected exactly five $3 lineups")
+    qbs, passing = Counter(), Counter()
+    excluded = {str(x).casefold().strip() for x in premium_excluded_names}
+    for item in premium:
+        roster = item["candidate"]["players"]
+        for p in roster:
+            if str(p.get("Name", "")).casefold().strip() in excluded:
+                errors.append(f"Premium-only player exclusion: {p.get('Name')}")
+        qbs.update(str(p["ID"]) for p in roster
+                   if str(p.get("Position", "")).upper() == "QB")
+        passing.update({str(p.get("TeamAbbrev", "")).upper() for p in roster
+                        if str(p.get("Position", "")).upper() in {"QB", "WR", "TE"}
+                        and str(p.get("TeamAbbrev", "")).strip()})
+    if qbs and max(qbs.values()) > max(1, ceil(len(premium) * .35)):
+        errors.append("Premium QB exposure exceeds 35% rounded up")
+    if passing and max(passing.values()) > max(1, ceil(len(premium) * .60)):
+        errors.append("Premium passing-team exposure exceeds 60%")
+    return errors
+
+
+def swap_contest_tiers(ranked, premium_lineup, regular_lineup, *, premium_excluded_names=()):
     """Swap stakes, without changing any roster or the original lineup order."""
     import copy
     if not 1 <= premium_lineup <= len(ranked) or not 1 <= regular_lineup <= len(ranked):
@@ -94,6 +120,9 @@ def swap_contest_tiers(ranked, premium_lineup, regular_lineup):
     if new[i]["contest_tier"] != "$3" or new[j]["contest_tier"] != "$0.50":
         raise ValueError("Choose one current $3 lineup and one current $0.50 lineup")
     new[i]["contest_tier"], new[j]["contest_tier"] = "$0.50", "$3"
+    errors = premium_risk_checks(new, premium_excluded_names)
+    if errors:
+        raise ValueError("Contest swap exceeds premium rules: " + "; ".join(errors))
     return new
 
 
