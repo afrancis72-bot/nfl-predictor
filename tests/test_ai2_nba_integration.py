@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from nba_engine.data_sources import norm_team, season_key, normalize_logs, scoreboard, discover_game_log_files
-from nba_engine.predictor import build_projections, simulate_stat_lines, prepare_bet_lines, evaluate_bets, parlay_summary
+from nba_engine.predictor import build_projections, simulate_stat_lines, summarize_simulated_projections, prepare_bet_lines, evaluate_bets, parlay_summary
 
 class NBAEngineTests(unittest.TestCase):
     @staticmethod
@@ -119,6 +119,31 @@ class NBAEngineTests(unittest.TestCase):
         self.assertAlmostEqual(ticket["all_win"]+ticket["any_push_no_loss"]+ticket["any_loss"],1,places=4)
         self.assertFalse(ticket["has_push"])
         self.assertTrue(((report["win_probability"]>=0)&(report["win_probability"]<=1)).all())
+
+
+    def test_simulated_projections_change_with_seed_while_baselines_remain_fixed(self):
+        history = self.history()
+        baseline = build_projections(history, {"LAL":"GSW","GSW":"LAL"}, date(2026,10,29))
+        a = simulate_stat_lines(baseline, history, trials=10000, seed=42)
+        b = simulate_stat_lines(baseline, history, trials=10000, seed=34)
+        repeated = simulate_stat_lines(baseline, history, trials=10000, seed=42)
+        first = summarize_simulated_projections(baseline, a)
+        second = summarize_simulated_projections(baseline, b)
+        replay = summarize_simulated_projections(baseline, repeated)
+        pd.testing.assert_frame_equal(first, replay)
+        np.testing.assert_array_equal(
+            first["baseline_projection"].to_numpy(), second["baseline_projection"].to_numpy()
+        )
+        self.assertTrue(np.any(np.abs(
+            first["simulation_mean"].to_numpy() - second["simulation_mean"].to_numpy()
+        ) > 1e-6))
+        self.assertTrue((first["simulation_p10"] <= first["simulation_median"]).all())
+        self.assertTrue((first["simulation_median"] <= first["simulation_p90"]).all())
+        self.assertTrue((first["monte_carlo_se"] >= 0).all())
+        self.assertEqual(len(first), len(baseline)*5)
+        pid = str(baseline["player_id"].iloc[0])
+        mean = first.loc[(first["player_id"]==pid)&(first["market"]=="PRA"), "simulation_mean"].iloc[0]
+        self.assertAlmostEqual(float(mean), float(np.mean(a[(pid, "PRA")])), places=8)
 
     def test_integer_line_pushes_are_not_counted_as_losses(self):
         history=self.history()
