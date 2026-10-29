@@ -68,7 +68,7 @@ class NascarUnifiedTests(unittest.TestCase):
         features,_=build_input_features(dk,"Phoenix Raceway",312)
         projections,_=simulate(features,Config(sims=1000,seed=42,laps=312))
         # Create two low-salary legal 6-driver groups with unique IDs.
-        ids=projections["ID"].astype(str).tolist()
+        ids=projections.sort_values("Salary")["ID"].astype(str).tolist()
         groups=[ids[:6],ids[6:12]]
         rows=[]
         for ix, group in enumerate(groups,1):
