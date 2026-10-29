@@ -1,31 +1,67 @@
-# TEAM AI² Pro — unified development prototype
+# TEAM AI² Pro — unified development app
 
-**Not production-ready.** Existing NFL `app.py` is unchanged.
+## Run the NFL development version
 
-## Run
-```bash
-pip install -r requirements.txt
-streamlit run unified_app.py
-```
+Install requirements and launch `streamlit run unified_app.py`.
+In Streamlit Community Cloud, select repository `afrancis72-bot/nfl-predictor`,
+branch `feature/unified-ai2-platform`, and main file `unified_app.py`.
+This configuration is **not** deployed automatically by a GitHub commit.
+The repository's original `main/app.py` remains a separate entry point.
 
-The existing four-sport logo is shown on the home screen. Each quadrant links to its sport (PGA top left, NFL top right, NASCAR bottom left, NBA bottom right). Navigation buttons provide a fallback.
+## NFL Classic one-button workflow
 
-## Persistent uploads
-The new UI stores one current file per sport and category in SQLite. Uploading a replacement overwrites that sport/category's active file. Other sports/categories remain untouched. A saved file can be downloaded.
+1. Open NFL from the home screen and upload the DraftKings salaries CSV.
+2. Optionally set the simulation seed (default 42).
+3. Click **BUILD MY 20 LINEUPS**.
 
-**Hosting warning:** SQLite is persistent only when the database directory is on a durable disk. Streamlit Community Cloud and many similar hosts have ephemeral local storage. Set `AI2_DATA_DIR` to a persistent mounted volume before using this feature with important slate files. For a multi-instance deployment, migrate to managed object storage and a database. No backups, upload history, or authentication are implemented yet.
+The experimental model fetches nflverse observed player history and official NFL
+game-status designations, builds a game-level 10,000-scenario simulation, and
+generates 20 checked NFL Classic roster combinations. No projection CSV needed.
 
-## Current engine status
-All four engine interfaces are **disabled**. This intentionally prevents the unified prototype from presenting experimental lineups as verified outputs. NFL Classic requires an upstream `role_confidence` feed before its experimental optimizer can work. Existing sport apps remain independent and are not yet migrated.
+The app displays **human-readable names, team, position and scores** and has
+separate downloadable named Excel, named CSV, and DraftKings roster-slot ID CSV.
+The roster-ID CSV is **not a verified contest-entry upload template**: match
+it against your DraftKings contest entry requirements before submitting.
 
-## Acceptance checks before release
-1. Browser-test logo quadrants and navigation buttons on desktop/mobile.
-2. Restart app and confirm saved uploads persist on the target hosting service.
-3. Upload a replacement slate and confirm only the selected sport/category changes.
-4. Validate salary/entry file schemas and record data freshness.
-5. Connect each sport engine through a versioned adapter; do not import the full legacy Streamlit UI.
-6. Run historical and failure-mode tests, including absent injury/role evidence.
-7. Enable exports only when all validation gates pass.
+## News and injury handling
 
-## Deployment note
-The Streamlit app entry point must be changed to `unified_app.py` **only after** these checks are completed. Keep the existing `app.py` production entry point for now.
+The same build retrieves the official NFL injury table, including practice
+participation, injury note, official game designation, source URL and UTC
+retrieval time where available. Current-week questionable and otherwise
+unverified players are conservatively excluded. Confirmed unavailable
+players have their observed workloads redistributed in the simulation
+once. Practice participation **is not** a final game designation,
+and active status alone does not confirm workload.
+
+There is **no independently verified, comprehensive breaking-player-news
+or depth-chart feed yet**. The app explicitly warns about this gap.
+It is necessary to recheck late-breaking news and final Sunday inactives.
+
+## Human review and approvals
+
+The five $3 lineups and fifteen $0.50 lineups can be reviewed; any proposed
+contest-tier swap must comply with QB/team diversification and
+current-slate premium-only exclusions. Swaps change **contest assignments only**
+and cannot alter rosters. A one-click "Approve and save" action stores a
+separate JSON lineup snapshot, without overwriting it when new simulations
+are run. JSON snapshots are downloadable for backup. Previously approved
+DK entries can also be imported and saved separately. Historical
+vetoes are **not** automatically carried forward to new slates.
+
+## Data storage
+
+SQLite upload storage lives under `AI2_DATA_DIR` or
+`~/TEAM_AI2_Pro_Data/slates.sqlite3`. Replacement archives prior
+versions. Streamlit Community Cloud storage may be ephemeral; download
+portable backups, or use a durable mounted volume, before relying
+on saved files through redeployments. Nothing uploaded in ChatGPT is
+automatically copied into Streamlit.
+
+## Release limits
+
+The NFL engine passed controlled and real 2026 Week 8 data tests and
+performs legality and exposure checks. It is **experimental**, not
+backtested for profitability or independently calibrated for current
+depth charts, player news, ownership, defense, or fantasy-scoring distributions.
+Browser verification of the deployed Streamlit URL remains a separate acceptance
+step. The other sports tabs retain their prior research/preview behavior.
