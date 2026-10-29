@@ -1,4 +1,5 @@
 import re, unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from urllib.request import Request, urlopen
 from bs4 import BeautifulSoup
 import numpy as np, pandas as pd
@@ -146,20 +147,24 @@ def parse_profile_text(html):
 
 def build_reference_dna(dk, selected_track):
     atl="Atlanta" in selected_track
-    rows=[]
-    for name in dk["Name"].astype(str):
+    def one_driver(name):
         row={"Name":name}
         try:
-            html=driver_page(name)
-            q=parse_profile_text(html)
-            row.update(q)
-            row["comparable_track_avg_finish"]=q["superspeedway_avg_finish"] if atl else q["intermediate_avg_finish"]
+            parsed=parse_profile_text(driver_page(name))
+            row.update(parsed)
+            row["comparable_track_avg_finish"]=(parsed["superspeedway_avg_finish"]
+                if atl else parsed["intermediate_avg_finish"])
             row["reference_ok"]=True
         except Exception:
             row.update({"recent_races":0,"recent_avg_finish":np.nan,"recent_avg_start":np.nan,
                         "recent_place_diff":np.nan,"season_avg_finish":np.nan,"last5_avg_finish":np.nan,
-                        "comparable_track_avg_finish":np.nan,"superspeedway_elo":np.nan,"reference_ok":False})
-        rows.append(row)
+                        "comparable_track_avg_finish":np.nan,"superspeedway_elo":np.nan,
+                        "reference_ok":False})
+        return row
+    # Parallelized driver requests with bounded concurrency; failed requests
+    # are visibly marked and never silently treated as measured evidence.
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        rows=list(pool.map(one_driver,dk["Name"].astype(str)))
     x=pd.DataFrame(rows)
 
     # Current form: blend recent-10 (or last-5 fallback) and season finish.
