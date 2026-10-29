@@ -1,0 +1,31 @@
+name: Unified NASCAR one-click acceptance
+
+on:
+  push:
+    branches: [feature/unified-ai2-platform]
+    paths:
+      - 'unified_app.py'
+      - 'ai2_nascar_workspace.py'
+      - 'ai2_nascar_oneclick.py'
+      - 'nascar_predictor_pro.py'
+      - 'nascar_reference_dna.py'
+      - 'track_catalog.csv'
+      - 'tests/test_ai2_nascar_unified.py'
+      - '.github/workflows/unified-nascar-acceptance.yml'
+  workflow_dispatch:
+
+jobs:
+  nascar-simulation-and-roster-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install unified runtime
+        run: pip install -r requirements.txt
+      - name: Verify unified app and NASCAR file syntax
+        run: python -m compileall -q unified_app.py ai2_nascar_workspace.py ai2_nascar_oneclick.py nascar_predictor_pro.py nascar_reference_dna.py
+      - name: Validate qualifying grid, practice import, deterministic simulation and 6-driver portfolios
+        run: python -m unittest discover -s tests -p test_ai2_nascar_unified.py -v
