@@ -155,6 +155,7 @@ else:
     if sport == "NFL":
         from hashlib import sha256 as _ai2_sha256
         from ai2_nfl_oneclick import build_oneclick_portfolio
+        from ai2_nfl_portfolio_diversity import portfolio_overlap_audit
         from ai2_nfl_review import (review_tables, named_csv, named_excel,
                                     roster_id_csv, swap_contest_tiers,
                                     snapshot_approved, load_approved)
@@ -260,6 +261,25 @@ else:
                 st.caption(matchup_summary.get("coverage_matchup_status",
                     "Exact receiver-cornerback routes and shadow coverages not verified."))
                 st.caption("An OUT defender is a clue, not proof of a particular WR matchup. No automatic positive player projections are credited without measured alignment and calibrated evidence.")
+
+            with st.expander("Portfolio overlap and distinct winning paths", expanded=True):
+                diversity = portfolio_overlap_audit(ranked)
+                summary = diversity["summary"]
+                st.caption(
+                    f"{summary['distinct_qbs']} distinct quarterbacks across {summary['lineups']} lineups · "
+                    f"{summary['pairs_at_least_alert']} of {summary['pairs']} lineup pairs share at least seven players."
+                )
+                st.info(summary["concentration_policy"])
+                if diversity["near_duplicate_pairs"]:
+                    st.subheader("Highly similar lineup pairs")
+                    st.dataframe(_ai2_pd.DataFrame(diversity["near_duplicate_pairs"]),
+                                 hide_index=True, use_container_width=True)
+                else:
+                    st.success("No lineup pairs share seven or more players.")
+                st.subheader("Quarterback exposure and stack scripts")
+                st.dataframe(_ai2_pd.DataFrame(diversity["lineup_scripts"]),
+                             hide_index=True, use_container_width=True)
+                st.caption("High overlap is a risk/return decision, not automatically a defect. Game totals, market ownership and receiver coverage matchups are not yet validated inputs to this optimizer.")
 
             with st.expander("Player exposure and lineup explanations"):
                 st.dataframe(exposures, hide_index=True, use_container_width=True)
