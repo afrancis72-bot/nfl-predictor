@@ -60,6 +60,12 @@ with st.expander("Optional practice data and model controls",expanded=False):
         "Optional practice CSV: driver name + actual speed or rank columns",
         type=["csv"],key="nascar_practice_optional",
     )
+    excluded=st.multiselect(
+        "Driver exclusions / human veto (optional)",
+        dk["Name"].tolist() if dk is not None else [],
+        key="nascar_exclusions",
+        help="Excluded drivers still participate in the simulated race but cannot appear in your fantasy portfolio.",
+    )
     template=pd.DataFrame(columns=["Name"]+list(PRACTICE_COLS))
     st.download_button("Practice template (optional)",template.to_csv(index=False).encode(),
                        "nascar_optional_practice.csv",mime="text/csv")
@@ -121,7 +127,7 @@ def cached_nascar_reference(records,track):
 current_signature = (
     hashlib.sha256(salary_file.getvalue()).hexdigest() if salary_file else None,
     selected_track, laps, sims, lineup_count, exposure_pct, overlap,
-    chosen_seed, seed_mode, salary_floor,
+    chosen_seed, seed_mode, salary_floor, tuple(sorted(excluded)),
     hashlib.sha256(practice_file.getvalue()).hexdigest() if practice_file else None,
 )
 
@@ -152,6 +158,7 @@ if run_requested:
                 portfolio_size=lineup_count,max_exposure=exposure_pct/100,
                 max_overlap=overlap,salary_floor=salary_floor,
                 practice=practice,reference=ref_data,
+                excluded_drivers=excluded,
             )
         st.session_state["nascar_unified_result"]=result
         st.session_state["nascar_result_signature"]=current_signature
