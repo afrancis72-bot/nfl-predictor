@@ -123,7 +123,8 @@ else:
 
 st.info("Injury availability is NOT automatically confirmed. Check official reports before evaluating bets; exclude OUT players and adjust teammates' minutes when their roles change.")
 
-run_key = f"{target}-{schedule_key}-{trials}-{seed_mode}-{selected_seed}"
+market_key = f"{target}-{schedule_key}"  # Current bookmaker lines are independent of RNG seed.
+run_key = f"{market_key}-{trials}-{seed_mode}-{selected_seed}"
 if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_width=True):
     if len(teams_map) != len(set(teams_map.values())) and len(teams_map) != 2:
         st.error("Please select a valid slate with one opponent per team.")
@@ -200,7 +201,7 @@ if run is not None and run["run_key"] == run_key:
             st.caption("The fetch button is intentional: each request may consume your provider's API credits. No automatic or repeated polling occurs. You can start with a free key, but verify your plan's prop-market availability.")
             if st.button("Import current actual sportsbook prop lines",
                          type="secondary", disabled=not provided_api_key.strip(),
-                         key=f"nba_fetch_props_{run_key}"):
+                         key=f"nba_fetch_props_{market_key}"):
                 try:
                     with st.spinner("Retrieving quoted NBA player props for the selected games…"):
                         incoming, provenance = load_current_props(
@@ -209,7 +210,7 @@ if run is not None and run["run_key"] == run_key:
                             target_day=target,
                         )
                     st.session_state["nba_odds_snapshot"] = {
-                        "run_key":run_key, "book":book_title,
+                        "market_key":market_key, "book":book_title,
                         "data":incoming, "details":provenance,
                     }
                     if incoming.empty:
@@ -219,7 +220,7 @@ if run is not None and run["run_key"] == run_key:
                 except Exception as exc:
                     st.error(f"Unable to retrieve actual sportsbook odds: {exc}")
             latest_odds = st.session_state.get("nba_odds_snapshot")
-            if latest_odds and latest_odds["run_key"] == run_key:
+            if latest_odds and latest_odds.get("market_key") == market_key:
                 details = latest_odds["details"]
                 st.caption(
                     f"Last fetch: {details.get('retrieved_utc','unknown')} · "
@@ -255,7 +256,7 @@ if run is not None and run["run_key"] == run_key:
                     st.warning("Unmatched player rows: " + ", ".join(imported["unmatched"][:10]))
             except Exception as exc:
                 st.error(f"Could not import prop CSV: {exc}")
-        elif (st.session_state.get("nba_odds_snapshot") or {}).get("run_key") == run_key:
+        elif (st.session_state.get("nba_odds_snapshot") or {}).get("market_key") == market_key:
             bet_grid = st.session_state["nba_odds_snapshot"]["data"].copy()
             if not bet_grid.empty:
                 st.caption("Using actual lines imported from " +
@@ -276,7 +277,7 @@ if run is not None and run["run_key"] == run_key:
                     "odds": st.column_config.NumberColumn("Actual American odds", step=5),
                     "side": st.column_config.SelectboxColumn("Bet side", options=["Over","Under"]),
                 },
-                key=f"nba_lines_{run_key}",
+                key=f"nba_lines_{market_key}",
             )
         # Give the user a player-populated worksheet instead of an empty header-only
         # CSV. These are MODEL projections, not sportsbook lines or quoted odds.
