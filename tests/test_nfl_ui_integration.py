@@ -12,7 +12,7 @@ class UnifiedNFLUITests(unittest.TestCase):
             old = os.environ.get("AI2_DATA_DIR")
             os.environ["AI2_DATA_DIR"] = directory
             try:
-                app = AppTest.from_file("unified_app.py", default_timeout=45)
+                app = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "unified_app.py"), default_timeout=45)
                 app.run()
                 self.assertFalse(app.exception, [str(e.message) for e in app.exception])
                 app.session_state["sport"] = "NFL"
