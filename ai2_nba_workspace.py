@@ -4,6 +4,7 @@ from datetime import datetime, date
 from io import BytesIO
 from pathlib import Path
 from zoneinfo import ZoneInfo
+import os
 import sys
 
 import pandas as pd
@@ -18,6 +19,7 @@ from nba_engine.predictor import (
     prepare_bet_lines, evaluate_bets, parlay_summary,
 )
 from nba_engine.props_sim import expected_net_roi
+from nba_engine.odds_feed import BOOKMAKERS, load_current_props, normalize_csv_lines
 
 
 st.subheader("NBA Predictor · Player Props & Parlays")
@@ -150,12 +152,85 @@ if run is not None and run["run_key"] == run_key:
         chosen = st.multiselect("Players to compare", list(names), default=defaults)
         market_choices = st.multiselect("Markets", list(MARKETS),
                                         default=["Points","Rebounds","Assists","Threes","PRA"])
-        upload = st.file_uploader("Optional: upload sportsbook lines CSV (player_id, market, line, side, odds)",
-                                  type=["csv"], key=f"nba_market_{schedule_key}_{target}")
+        # Our projections are calculated independently. Real sportsbook markets
+        # are ingested only when explicitly requested with an API key or upload.
+        with st.expander("Automatic sportsbook lines — Hard Rock Bet FL and others", expanded=True):
+            st.caption("Compare our independent forecasts against LIVE quoted markets. The Odds API supports Hard Rock Bet (Florida), subject to currently listed events, markets, and API quota. Quotes may differ from your Hard Rock Bet app.")
+            book_title = st.selectbox("Sportsbook to retrieve", list(BOOKMAKERS),
+                                     key="nba_odds_book")
+            try:
+                saved_api_key = str(st.secrets.get("THE_ODDS_API_KEY",""))
+            except Exception:
+                saved_api_key = ""
+            provided_api_key = st.text_input(
+                "The Odds API key (password input; not saved by this app)",
+                value=os.environ.get("THE_ODDS_API_KEY", saved_api_key),
+                type="password", key="nba_odds_access_key"
+            )
+            st.caption("The fetch button is intentional: each request may consume your provider's API credits. No automatic or repeated polling occurs. You can start with a free key, but verify your plan's prop-market availability.")
+            if st.button("Import current actual sportsbook prop lines",
+                         type="secondary", disabled=not provided_api_key.strip(),
+                         key=f"nba_fetch_props_{run_key}"):
+                try:
+                    with st.spinner("Retrieving quoted NBA player props for the selected games…"):
+                        incoming, provenance = load_current_props(
+                            projections, run["teams_map"], provided_api_key.strip(),
+                            bookmaker_key=BOOKMAKERS[book_title], markets=market_choices,
+                            target_day=target,
+                        )
+                    st.session_state["nba_odds_snapshot"] = {
+                        "run_key":run_key, "book":book_title,
+                        "data":incoming, "details":provenance,
+                    }
+                    if incoming.empty:
+                        st.warning("This bookmaker returned no matching player props for the selected games. No prices or lines have been substituted.")
+                    else:
+                        st.success(f"Imported {len(incoming)} actual quoted Over/Under rows from {book_title}.")
+                except Exception as exc:
+                    st.error(f"Unable to retrieve actual sportsbook odds: {exc}")
+            latest_odds = st.session_state.get("nba_odds_snapshot")
+            if latest_odds and latest_odds["run_key"] == run_key:
+                details = latest_odds["details"]
+                st.caption(
+                    f"Last fetch: {details.get('retrieved_utc','unknown')} · "
+                    f"{details.get('event_count',0)} matching events · "
+                    f"{len(latest_odds['data'])} quoted lines"
+                )
+                if details.get("quota"):
+                    st.caption("API quota: " + ", ".join(f"{k}: {v}" for k,v in details["quota"].items()))
+                if details.get("unmatched_player_names"):
+                    st.warning("Unmatched player names (not silently assigned): " +
+                               ", ".join(details["unmatched_player_names"][:10]))
+                if not latest_odds["data"].empty:
+                    st.download_button(
+                        "Export imported sportsbook odds (CSV)",
+                        latest_odds["data"].to_csv(index=False).encode("utf-8-sig"),
+                        "team_ai2_nba_actual_sportsbook_odds.csv", mime="text/csv"
+                    )
+        st.caption("**No API key?** You can still upload a sportsbook CSV or type real lines directly below.")
+        upload = st.file_uploader(
+            "Optional: upload existing sportsbook CSV (accepts player names or IDs)",
+            type=["csv"], key=f"nba_market_{schedule_key}_{target}"
+        )
+        bet_grid = None
         if upload is not None:
-            bet_grid = pd.read_csv(BytesIO(upload.getvalue()))
-            st.caption("Using the sportsbook-line CSV you supplied.")
-        else:
+            try:
+                uploaded_lines = pd.read_csv(BytesIO(upload.getvalue()))
+                bet_grid, imported = normalize_csv_lines(uploaded_lines, projections)
+                st.caption(
+                    f"Imported file: {imported['matched']} matched prop lines, "
+                    f"{imported['missing_lines']} rows without sportsbook lines."
+                )
+                if imported["unmatched"]:
+                    st.warning("Unmatched player rows: " + ", ".join(imported["unmatched"][:10]))
+            except Exception as exc:
+                st.error(f"Could not import prop CSV: {exc}")
+        elif (st.session_state.get("nba_odds_snapshot") or {}).get("run_key") == run_key:
+            bet_grid = st.session_state["nba_odds_snapshot"]["data"].copy()
+            if not bet_grid.empty:
+                st.caption("Using actual lines imported from " +
+                           st.session_state["nba_odds_snapshot"]["book"] + ".")
+        if bet_grid is None:
             grid = [{"player_id": names[n], "player": n, "market": market,
                      "side": "Over", "line": None, "odds": None}
                     for n in chosen for market in market_choices]
