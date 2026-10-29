@@ -239,6 +239,28 @@ else:
                            "Breaking injury and depth-chart news are not independently verified."))
                 st.caption("Refresh by pressing BUILD again with the latest salary slate. Recheck official Sunday inactives before locking entries.")
 
+            with st.expander("Opposing defensive injuries and matchup intelligence"):
+                matchup_rows = output_one.get("opponent_matchup_report") or []
+                matchup_summary = output_one.get("opponent_matchup_summary") or {}
+                st.caption("Opposing defensive injuries, recent position-by-position allowance and potential game-script implications. Historical opponent observations exclude the current game.")
+                st.info(matchup_summary.get("game_script_status",
+                        "Hypotheses only — not a calibrated fantasy-point adjustment."))
+                if matchup_rows:
+                    st.dataframe(_ai2_pd.DataFrame(matchup_rows),
+                                 use_container_width=True, hide_index=True, height=400)
+                    st.download_button("Download opponent matchup research CSV",
+                                       data=_ai2_pd.DataFrame(matchup_rows).to_csv(index=False).encode("utf-8-sig"),
+                                       file_name="ai2_nfl_opponent_matchups.csv",
+                                       mime="text/csv", key="nfl_opponent_research_download")
+                else:
+                    st.warning("Opponent defensive coverage evidence not available for this slate.")
+                if matchup_summary.get("historical_data_issue"):
+                    st.warning("Historical opponent data unavailable: " +
+                               str(matchup_summary["historical_data_issue"]))
+                st.caption(matchup_summary.get("coverage_matchup_status",
+                    "Exact receiver-cornerback routes and shadow coverages not verified."))
+                st.caption("An OUT defender is a clue, not proof of a particular WR matchup. No automatic positive player projections are credited without measured alignment and calibrated evidence.")
+
             with st.expander("Player exposure and lineup explanations"):
                 st.dataframe(exposures, hide_index=True, use_container_width=True)
                 for line_no, entry in enumerate(ranked, 1):
