@@ -210,6 +210,56 @@ def summarize_simulated_projections(projections: pd.DataFrame, samples: dict,
     return pd.DataFrame.from_records(records)
 
 
+def build_prefilled_prop_worksheet(projections: pd.DataFrame, simulated_summary: pd.DataFrame,
+                                   player_ids, markets) -> pd.DataFrame:
+    """One ready-to-use props sheet: model baseline, P10/P90, editable book fields.
+
+    Uses the EXISTING correlated Monte Carlo draws rather than estimating a
+    percentile from the sportsbook line. Works without uploading a book file.
+    DraftKings or Hard Rock line/odds are left blank until user or feed provides
+    the actual offered quote; no implied odds or bookmaker lines are invented.
+    """
+    fields=["player_id","player","team","market","model_projection",
+            "sim_mean","sim_p10","sim_p90","line","side","odds"]
+    chosen_ids=list(dict.fromkeys(str(pid) for pid in player_ids))
+    chosen_markets=list(dict.fromkeys(str(m) for m in markets))
+    if not chosen_ids or not chosen_markets:
+        return pd.DataFrame(columns=fields)
+    if not set(chosen_markets).issubset(MARKETS):
+        raise ValueError("Unsupported NBA prop market for P10/P90 worksheet.")
+    if not set(chosen_ids).issubset(set(projections["player_id"].astype(str))):
+        raise ValueError("Unknown NBA player requested for P10/P90 worksheet.")
+    required={"player_id","player","team","market","baseline_projection",
+              "simulation_mean","simulation_p10","simulation_p90"}
+    if not required.issubset(simulated_summary.columns):
+        raise ValueError("The NBA simulated summary is missing P10/P90 data.")
+    lookup=simulated_summary.copy()
+    lookup["player_id"]=lookup["player_id"].astype(str)
+    lookup=lookup.loc[
+        lookup["player_id"].isin(chosen_ids)&lookup["market"].isin(chosen_markets),
+        ["player_id","player","team","market","baseline_projection",
+         "simulation_mean","simulation_p10","simulation_p90"],
+    ].copy()
+    if lookup.duplicated(["player_id","market"]).any():
+        raise ValueError("Duplicate player/market in simulated NBA summary.")
+    actual={(str(r.player_id),str(r.market)):r for r in lookup.itertuples(index=False)}
+    rows=[]
+    for pid in chosen_ids:
+        for market in chosen_markets:
+            sample=actual.get((pid,market))
+            if sample is None:
+                raise ValueError(f"Missing simulated range for {pid}: {market}.")
+            rows.append({
+                "player_id":pid,"player":str(sample.player),"team":str(sample.team),
+                "market":market,"model_projection":round(float(sample.baseline_projection),2),
+                "sim_mean":round(float(sample.simulation_mean),2),
+                "sim_p10":round(float(sample.simulation_p10),2),
+                "sim_p90":round(float(sample.simulation_p90),2),
+                "line":None,"side":"Over","odds":None,
+            })
+    return pd.DataFrame(rows,columns=fields)
+
+
 def prepare_bet_lines(lines: pd.DataFrame, projections: pd.DataFrame):
     """Only user-supplied sportsbook lines are scored; no fictional odds."""
     x = lines.copy()
