@@ -198,9 +198,16 @@ if run is not None and run["run_key"] == run_key:
             "sample_flag":"Sample quality",
         })
         for col in ("Baseline PTS", "Sim PTS", "Sim REB", "Sim AST",
-                    "Sim 3PM", "Sim PRA"):
-            display[col] = display[col].round(3)
-        st.dataframe(display, hide_index=True, use_container_width=True)
+                    "Sim 3PM", "Sim PRA", "Expected minutes"):
+            display[col] = display[col].round(2)
+        st.dataframe(
+            display, hide_index=True, use_container_width=True,
+            column_config={
+                col: st.column_config.NumberColumn(format="%.2f")
+                for col in ("Baseline PTS", "Sim PTS", "Sim REB", "Sim AST",
+                            "Sim 3PM", "Sim PRA", "Expected minutes")
+            },
+        )
         st.caption(
             f"Simulation seed: {run['seed']}. The simulated mean columns change slightly with the seed; "
             "the independent baseline is fixed. Small differences between seeds reflect Monte Carlo sampling noise."
@@ -225,10 +232,17 @@ if run is not None and run["run_key"] == run_key:
             "monte_carlo_se":"Monte Carlo std error",
             "sample_flag":"Sample quality",
         })
-        for col in ("Historical baseline", "Simulation mean",
-                    "Simulation median", "P10", "P90", "Monte Carlo std error"):
-            detail[col] = detail[col].round(3)
-        st.dataframe(detail, hide_index=True, use_container_width=True)
+        detail_stat_cols = ("Historical baseline", "Simulation mean",
+                            "Simulation median", "P10", "P90", "Monte Carlo std error")
+        for col in detail_stat_cols:
+            detail[col] = detail[col].round(2)
+        st.dataframe(
+            detail, hide_index=True, use_container_width=True,
+            column_config={
+                col: st.column_config.NumberColumn(format="%.2f")
+                for col in detail_stat_cols
+            },
+        )
         st.caption(
             "P10/P90 are 10th/90th percentile simulated game outcomes, not confidence intervals "
             "for our forecast. Monte Carlo std error measures uncertainty from finite simulation draws; "
@@ -251,20 +265,20 @@ if run is not None and run["run_key"] == run_key:
                 ("monte_carlo_se","mc_se"),
             ):
                 projections_export[f"sim_{label}_{suffix}"] = (
-                    indices.map(per_market[attr]).round(4)
+                    indices.map(per_market[attr]).round(2)
                 )
         projections_export["simulation_seed"] = int(run["seed"])
         projections_export["simulation_trials"] = int(trials)
         st.download_button(
             "Export player projections — baseline + simulated outcomes (CSV)",
-            projections_export.to_csv(index=False).encode("utf-8-sig"),
+            projections_export.to_csv(index=False, float_format="%.2f").encode("utf-8-sig"),
             "team_ai2_nba_projections.csv", mime="text/csv",
         )
         detail_export = simulated_summary.copy()
         detail_export["simulation_seed"] = int(run["seed"])
         st.download_button(
             "Export full simulated stat distributions (CSV)",
-            detail_export.to_csv(index=False).encode("utf-8-sig"),
+            detail_export.to_csv(index=False, float_format="%.2f").encode("utf-8-sig"),
             "team_ai2_nba_simulated_distributions.csv", mime="text/csv",
         )
         st.caption(
@@ -301,7 +315,13 @@ if run is not None and run["run_key"] == run_key:
                     "model_projection":"Projected mean",
                     "sim_p10":"P10","sim_p90":"P90",
                 })
-                st.dataframe(quick_view,hide_index=True,use_container_width=True,height=285)
+                st.dataframe(
+                    quick_view,hide_index=True,use_container_width=True,height=285,
+                    column_config={
+                        col: st.column_config.NumberColumn(format="%.2f")
+                        for col in ("Projected mean","P10","P90")
+                    },
+                )
         # Our projections are calculated independently. Real sportsbook markets
         # are ingested only when explicitly requested with an API key or upload.
         with st.expander("Optional automatic sportsbook lines — Hard Rock Bet FL and others", expanded=False):
@@ -403,7 +423,7 @@ if run is not None and run["run_key"] == run_key:
 
         st.download_button(
             "Download prefilled player-prop worksheet",
-            worksheet.to_csv(index=False).encode("utf-8-sig"),
+            worksheet.to_csv(index=False, float_format="%.2f").encode("utf-8-sig"),
             "team_ai2_nba_player_props_prefilled.csv",
             mime="text/csv",
             disabled=worksheet.empty,
@@ -465,7 +485,16 @@ if run is not None and run["run_key"] == run_key:
                     "book_implied":"Book break-even %",
                     "model_edge":"Uncalibrated model edge %",
                 })
-                st.dataframe(shown, hide_index=True, use_container_width=True)
+                st.dataframe(
+                    shown,hide_index=True,use_container_width=True,
+                    column_config={
+                        col: st.column_config.NumberColumn(format="%.2f")
+                        for col in (
+                            "Our projected stat","Actual sportsbook line",
+                            "Projection − line","Simulation average","P10","P90"
+                        )
+                    },
+                )
                 st.caption("Positive projection-minus-line supports the OVER direction; negative supports UNDER. Sportsbook implied prices include bookmaker margin. A projection difference or model edge is not proof of a profitable bet.")
                 with st.expander("🔬 Compare two simulation seeds on the SAME sportsbook lines", expanded=True):
                     st.write("Player forecasts and book prices stay fixed. This checks only whether simulated hit rates change when the random seed changes.")
