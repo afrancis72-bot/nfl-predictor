@@ -77,6 +77,27 @@ now opens a native workspace with four tabs:
   SG vs salary-market-only baseline, hole template provenance, weather,
   and player-specific skill assumptions.
 
+**Optional RickRunGood Course Fit / Player Fit CSV:** Under PGA → Tournament DFS
+→ Optional golfer research, upload the **separate Course Fit** export (not the
+Stats Bank SG export). Accepted fields include `Player`, `FIT`, and optionally
+the observed course-fit categories `OTT`, `APP`, `ARG`, `PUTT`, and
+`SCORING`. Player names are matched to the current DraftKings slate; at
+least 70% of the field must have usable fit data. No file is required.
+
+The app uses its **own** category weights: APP 35%, OTT 25%, SCORING 18%,
+PUTT 14%, ARG 8%. Components are standardized within the matched field,
+and the resulting per-round adjustment is shrunk and capped at **0.22
+strokes**. If only the vendor's overall `FIT` score exists, the
+composite-only adjustment is half-strength. RRG rankings and salaries
+are kept out of the course-fit adjustment. The Course DNA / Data Quality
+tab shows matched-field coverage, fitted component values, signal,
+the exact per-golfer adjustment and before/after projections, plus a
+downloadable audit. This is **not** a validated golf prediction edge;
+the default weights and magnitude are provisional, and the original
+Stats Bank SG inputs continue to anchor skill when available. Without
+Stats Bank or OTIS, DK salary is still the golfer-quality baseline even
+if an RRG FIT export provides a course-specific tilt.
+
 **Measured golfer data is optional, but it matters.** A single DK salary
 upload enables a **lower-confidence market-prior experiment** that derives
 expected skill solely from the DK salary distribution; it is not
