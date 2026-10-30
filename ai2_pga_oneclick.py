@@ -142,6 +142,125 @@ def normalize_independent_stats(raw,dk):
         raise ValueError(f"Only {covered}/{len(dk)} golfers have measured SG data in the independent export; need 70% or more.")
     return aligned,covered
 
+
+# RRG Player Fit is a course-correlation signal, NOT raw strokes gained.
+# We use our own category weighting instead of blindly copying RRG's FIT score.
+RRG_FIT_WEIGHTS={"rrg_fit_app":.35,"rrg_fit_ott":.25,
+                 "rrg_fit_putt":.14,"rrg_fit_arg":.08,"rrg_fit_scoring":.18}
+
+def normalize_rrg_course_fit(raw,dk):
+    """Match RRG Course Key Stats / Player Fit exports to the current DK field."""
+    empty_meta={"matched":0,"components":0,"overall_only":0,"used":[]}
+    if raw is None:
+        return pd.DataFrame(),empty_meta
+    if raw.empty:
+        raise ValueError("RickRunGood Course Fit CSV is empty.")
+    frame=raw.copy()
+    columns={key(c):c for c in frame.columns}
+    def find(*names):
+        return next((columns[key(n)] for n in names if key(n) in columns),None)
+    name=find("Player","Name","Golfer","Golfer Name","Player Name")
+    if name is None:
+        raise ValueError("RRG Course Fit needs a Player/Name column.")
+    aliases={
+        "rrg_fit_app":("APP","Approach","Fit APP","APP Fit","Fit: APP","Course APP","Approach Fit"),
+        "rrg_fit_ott":("OTT","Driving","Fit OTT","OTT Fit","Fit: OTT","Off the Tee","Driving Fit"),
+        "rrg_fit_arg":("ARG","Around Green","Fit ARG","ARG Fit","Fit: ARG","Around the Green"),
+        "rrg_fit_putt":("PUTT","Putting","Fit PUTT","PUTT Fit","Fit: PUTT","Putting Fit"),
+        "rrg_fit_scoring":("SCORING","Scoring","Scoring Fit","Fit: SCORING"),
+        "rrg_fit_overall":("FIT","Course Fit","Course Fit Score","Player Fit","Player Fit Score"),
+        "rrg_fit_rank_audit":("Fit Rank","Course Fit Rank","Rank"),
+        "rrg_fit_rounds":("Rounds","Measured Rounds","Sample Rounds"),
+    }
+    sources={k:find(*v) for k,v in aliases.items()}
+    evidence=list(RRG_FIT_WEIGHTS)+["rrg_fit_overall"]
+    if not any(sources[x] for x in evidence):
+        raise ValueError("RRG Course Fit needs FIT or category columns: OTT, APP, ARG, PUTT, SCORING. Rank or salary is not enough.")
+    values=pd.DataFrame({"player":frame[name].astype(str).str.strip()})
+    values["_key"]=values["player"].map(key)
+    if values["_key"].duplicated().any() or values["_key"].isin(["","nan","none"]).any():
+        raise ValueError("RRG Course Fit golfer names must be nonblank and unique.")
+    for target,original in sources.items():
+        if original:
+            cleaned=(frame[original].astype(str).str.strip()
+                    .str.replace(",","",regex=False)
+                    .str.replace("%","",regex=False)
+                    .str.replace("−","-",regex=False))
+            values[target]=pd.to_numeric(cleaned,errors="coerce")
+    names=dk[["player"]].copy()
+    names["_key"]=names.player.map(key)
+    aligned=names.merge(values.drop(columns=["player"]),on="_key",
+                        how="left",validate="one_to_one").drop(columns="_key")
+    cols=[c for c in evidence if c in aligned]
+    matched=int(aligned[cols].notna().any(axis=1).sum())
+    if matched/len(dk)<.70:
+        raise ValueError(f"Only {matched}/{len(dk)} DK golfers have usable RRG Course Fit; require >=70% matching the current tournament.")
+    comps=[c for c in RRG_FIT_WEIGHTS if c in aligned]
+    comp=int(aligned[comps].notna().any(axis=1).sum()) if comps else 0
+    return aligned,{"matched":matched,"components":comp,
+                    "overall_only":matched-comp,
+                    "used":[x for x in cols if aligned[x].notna().any()]}
+
+def apply_rrg_course_fit(base,fit):
+    """Conservative, reproducible within-field RRG fit tilt, capped in strokes.
+
+    Per-skill components take priority. Vendor-composite FIT only is half-weight,
+    to prevent blindly trusting a separate weighting system.
+    """
+    result=base.copy()
+    result["rrg_fit_adjustment_strokes"]=0.
+    result["rrg_fit_signal_z"]=np.nan
+    result["rrg_fit_evidence"]="not provided"
+    if fit is None or fit.empty:
+        return result
+    result=result.merge(fit,on="player",how="left",validate="one_to_one")
+    values=np.zeros(len(result))
+    weights=np.zeros(len(result))
+    for c,w in RRG_FIT_WEIGHTS.items():
+        if c not in result:
+            continue
+        col=pd.to_numeric(result[c],errors="coerce")
+        present=col.notna().to_numpy()
+        if int(present.sum())<2:
+            continue
+        avg=float(col[present].mean())
+        std=float(col[present].std(ddof=0))
+        z=np.zeros(len(result)) if std<1e-10 else np.clip(
+            (col.fillna(avg).to_numpy(float)-avg)/std,-2.5,2.5)
+        values[present]+=w*z[present]
+        weights[present]+=w
+    has_comp=weights>0
+    score=np.divide(values,weights,out=np.zeros(len(result)),where=has_comp)
+    overall_known=np.zeros(len(result),bool)
+    overall_z=np.zeros(len(result))
+    if "rrg_fit_overall" in result:
+        col=pd.to_numeric(result["rrg_fit_overall"],errors="coerce")
+        overall_known=col.notna().to_numpy()
+        if int(overall_known.sum())>=2:
+            avg=float(col[overall_known].mean())
+            std=float(col[overall_known].std(ddof=0))
+            if std>1e-10:
+                overall_z=np.clip((col.fillna(avg).to_numpy(float)-avg)/std,-2.5,2.5)
+    fallback=~has_comp & overall_known
+    chosen=np.where(has_comp,score,np.where(fallback,overall_z,0.))
+    # Missing measured-round sample => shrink to 65% of nominal influence.
+    reliability=np.full(len(result),.65)
+    if "rrg_fit_rounds" in result:
+        rounds=pd.to_numeric(result["rrg_fit_rounds"],errors="coerce")
+        available=rounds.notna() & rounds.ge(0)
+        reliability[available.to_numpy()]=np.sqrt(
+            (rounds[available].clip(0,48)/48).to_numpy(float))
+    change=np.clip(.12*chosen,-.22,.22)*reliability
+    change[fallback]*=.5
+    result["rrg_fit_signal_z"]=np.where(has_comp|fallback,chosen,np.nan)
+    result["rrg_fit_adjustment_strokes"]=np.where(has_comp|fallback,-change,0.)
+    result["rrg_fit_evidence"]=np.select([has_comp,fallback],
+        ["Our weighting of RRG skill-fit categories","RRG overall FIT only (reduced weight)"],
+        default="no measured course-fit input")
+    result["expected_round_before_rrg_fit"]=pd.to_numeric(result.expected_round,errors="coerce")
+    result["expected_round"]=result["expected_round_before_rrg_fit"]+result["rrg_fit_adjustment_strokes"]
+    return result
+
 def market_baseline(dk):
     """Observable salary ranking only; *not* measured SG or official world rank."""
     d=dk[["player","salary"]].copy()
@@ -180,6 +299,13 @@ def _ensure_coverage_for_optimizer(df):
 def group_ratings_source(model):
     """Market-only fallbacks are visibly flagged and not disguised as OTIS."""
     otis=model["otis"]
+    if model.get("metadata",{}).get("rrg_fit_match",0):
+        p=model["projections"][["player","expected_round","rrg_fit_signal_z"]].copy()
+        z=(p.expected_round-p.expected_round.mean())/max(float(p.expected_round.std(ddof=0)),.01)
+        p["otis_true_skill"]=(50.-9.*z).clip(20,80)
+        p["otis_course_fit"]=(50.+8.*p.rrg_fit_signal_z.fillna(0)).clip(20,80)
+        p["otis_form"]=50.
+        return p[["player","otis_true_skill","otis_course_fit","otis_form"]], "Independent model + RRG skill-fit course tilt; estimated, not calibrated"
     if int(model.get("metadata",{}).get("independent_sg_match",0))>0:
         p=model["projections"][["player","expected_round"]].copy()
         z=(p["expected_round"]-p["expected_round"].mean())/max(float(p["expected_round"].std(ddof=0)),.01)
@@ -197,7 +323,7 @@ def group_ratings_source(model):
     return p[["player","otis_true_skill","otis_course_fit","otis_form"]], "DK salary-derived proxy ONLY, not observed SG or independent course fit"
 
 def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
-                   otis_raw=None,independent_raw=None,weather_raw=None,sims=3000,seed=42,lineup_count=10,
+                   otis_raw=None,independent_raw=None,course_fit_raw=None,weather_raw=None,sims=3000,seed=42,lineup_count=10,
                    max_exposure=.35,salary_floor=46500,min_unique=3,
                    strategy="Balanced / Single Entry",locks=(),excludes=()):
     if not str(tournament).strip():
@@ -214,6 +340,7 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
     holes=validated_holes(hole_frame,int(course_par))
     otis,matched=normalize_otis(otis_raw,dk)
     independent,observed_match=normalize_independent_stats(independent_raw,dk)
+    course_fit,course_fit_meta=normalize_rrg_course_fit(course_fit_raw,dk)
     weather=(weather_raw.copy() if isinstance(weather_raw,pd.DataFrame) else pd.DataFrame())
     if not independent.empty:
         base=predict_from_dataframes(
@@ -242,6 +369,7 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
     )
     if base[["expected_round","round_sd"]].isna().any().any():
         raise ValueError("PGA forecast contains missing golfer baseline. No portfolio exported.")
+    base=apply_rrg_course_fit(base,course_fit)
     predicted,draws,diagnostics=simulate_golf_first(
         base,sims=int(sims),seed=int(seed),course_par=int(course_par),
         no_cut=bool(no_cut),cut_size=int(cut_size),hole_pars=holes
@@ -276,12 +404,16 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
             "sim_lineup_p95":round(float(np.quantile(v,.95)),2)})
     summary=summary.merge(pd.DataFrame(same_world),on="lineup",how="left",validate="one_to_one")
     return {"projections":predicted,"lineups":portfolio,"summary":summary,
-        "exposure":exposure,"otis":otis,"independent":independent,"raw_draws":draws,
+        "exposure":exposure,"otis":otis,"independent":independent,"course_fit":course_fit,"raw_draws":draws,
         "diagnostics":diagnostics,
         "metadata":{"tournament":str(tournament),"course_par":int(course_par),
             "hole_pars_verified":holes is not None,"field_size":len(dk),
             "simulations":int(sims),"seed":int(seed),
             "otis_match":matched,"independent_sg_match":observed_match,
+            "rrg_fit_match":course_fit_meta["matched"],
+            "rrg_fit_components":course_fit_meta["components"],
+            "rrg_fit_overall_only":course_fit_meta["overall_only"],
+            "rrg_fit_columns":course_fit_meta["used"],
             "weather_hours":len(weather),"weather_wind_mph":(
                 round(float(pd.to_numeric(weather["wind_mph"],errors="coerce").mean()),1)
                 if "wind_mph" in weather and weather["wind_mph"].notna().any() else None),
