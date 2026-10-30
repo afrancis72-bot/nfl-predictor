@@ -140,7 +140,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                                require_opportunity=True, p90_efficiency_retention=0.95,
                                premium_excluded_ids=frozenset()):
     premium_excluded_ids = frozenset(str(x) for x in premium_excluded_ids)
-    if not 1 <= count <= 20 or not 0 < max_exposure <= 1 or not 0 <= upside_share <= 1:
+    if not 1 <= count <= 150 or not 0 < max_exposure <= 1 or not 0 <= upside_share <= 1:
         raise ValueError("Invalid portfolio parameters")
     if not 0 < p90_efficiency_retention <= 1:
         raise ValueError("P90 efficiency retention must be in (0,1]")
