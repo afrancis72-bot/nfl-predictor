@@ -64,13 +64,19 @@ now opens a native workspace with four tabs:
   tournaments and 10 lineups. Settings include exposure, minimum unique
   golfers, minimum salary, balanced vs GPP vs cut-equity objectives,
   fixed/Fibonacci/random seed, golfer locks/vetoes.
-- **Round 3-Balls & 6-Leg Research:** retrieves official round
-  groupings and verified prior round scores from the existing PGA TOUR
-  adapter, or user-provided CSV fallbacks. Runs within-group simulations
-  and produces push-aware six-leg research candidates; clearly **not**
-  actual sportsbook odds or calibrated real-world hit probabilities.
-  Round 2+ requires observed completed-round scores. No forced bets
-  with fewer than six fully matched groups.
+- **Round Group Matchups (2-Ball / 3-Ball) & 6-Leg Research:** retrieves
+  official round groupings and verified prior round scores from the PGA TOUR
+  adapter, or user-provided CSV fallbacks. Recognizes weekend two-person
+  tee groups alongside three-person groups and can construct a mixed six-leg
+  matchup shortlist. For **2-ball 3-way head-to-head markets**, score ties
+  lose a golfer pick, and a separate Tie outcome is reported; for **2-ball
+  2-way markets**, ties push. Users select the settlement convention shown
+  on their sportsbook. Three-ball ties use the original push convention.
+  Six-leg candidate generation prioritizes named golfer picks, not
+  automatically the Tie outcome, and refuses to force a six-leg ticket
+  when fewer than six fully matched groups exist. Round 2+ requires
+  verified completed-round scoring. Modeled probabilities are **not**
+  actual sportsbook prices, calibrated win rates, or validated profit edges.
 - **Round Showdown:** imports round-specific DK salaries and uses
   completed-round evidence to construct 6-golfer showdown lineups.
 - **Course DNA / Data Quality:** reports actual input coverage, measured
