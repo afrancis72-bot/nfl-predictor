@@ -6,7 +6,9 @@ import numpy as np
 import pandas as pd
 
 from nba_engine.data_sources import norm_team, season_key, normalize_logs, scoreboard, discover_game_log_files
-from nba_engine.predictor import build_projections, simulate_stat_lines, summarize_simulated_projections, prepare_bet_lines, evaluate_bets, parlay_summary
+from nba_engine.predictor import (build_projections, simulate_stat_lines,
+                                  summarize_simulated_projections, build_prefilled_prop_worksheet,
+                                  prepare_bet_lines, evaluate_bets, parlay_summary)
 
 class NBAEngineTests(unittest.TestCase):
     @staticmethod
@@ -144,6 +146,46 @@ class NBAEngineTests(unittest.TestCase):
         pid = str(baseline["player_id"].iloc[0])
         mean = first.loc[(first["player_id"]==pid)&(first["market"]=="PRA"), "simulation_mean"].iloc[0]
         self.assertAlmostEqual(float(mean), float(np.mean(a[(pid, "PRA")])), places=8)
+
+    def test_prefilled_worksheet_includes_actual_simulated_p10_p90_not_book_lines(self):
+        history=self.history()
+        p=build_projections(history,{"LAL":"GSW","GSW":"LAL"},date(2026,10,29))
+        samples=simulate_stat_lines(p,history,trials=2000,seed=55)
+        summary=summarize_simulated_projections(p,samples,
+                                                 markets=["Points","PRA","Assists"])
+        ids=[str(p["player_id"].iloc[1]),str(p["player_id"].iloc[0])]
+        worksheet=build_prefilled_prop_worksheet(
+            p,summary,ids,["PRA","Points"])
+        self.assertEqual(len(worksheet),4)
+        self.assertEqual(worksheet["player_id"].tolist(),[ids[0],ids[0],ids[1],ids[1]])
+        self.assertEqual(worksheet["market"].tolist(),["PRA","Points","PRA","Points"])
+        self.assertTrue(worksheet["line"].isna().all())
+        self.assertTrue(worksheet["odds"].isna().all())
+        self.assertIn("sim_p10",worksheet)
+        self.assertIn("sim_p90",worksheet)
+        for r in worksheet.itertuples(index=False):
+            arr=samples[(r.player_id,r.market)]
+            self.assertAlmostEqual(r.sim_p10,round(float(np.quantile(arr,.10)),2))
+            self.assertAlmostEqual(r.sim_p90,round(float(np.quantile(arr,.90)),2))
+            self.assertAlmostEqual(r.sim_mean,round(float(np.mean(arr)),2))
+            model_row=p.loc[p["player_id"]==r.player_id].iloc[0]
+            self.assertAlmostEqual(r.model_projection,round(float(model_row[r.market]),2))
+            self.assertLessEqual(r.sim_p10,r.sim_p90)
+
+    def test_prefilled_ranges_reject_missing_or_wrong_market_but_allow_no_selections(self):
+        history=self.history()
+        p=build_projections(history,{"LAL":"GSW","GSW":"LAL"},date(2026,10,29))
+        samples=simulate_stat_lines(p,history,trials=1000,seed=42)
+        summary=summarize_simulated_projections(p,samples,markets=["Points"])
+        empty=build_prefilled_prop_worksheet(p,summary,[],["PRA"])
+        self.assertEqual(len(empty),0)
+        self.assertEqual(list(empty.columns)[-3:],["line","side","odds"])
+        with self.assertRaises(ValueError):
+            build_prefilled_prop_worksheet(p,summary,["unlisted"],["Points"])
+        with self.assertRaises(ValueError):
+            build_prefilled_prop_worksheet(p,summary,[str(p["player_id"].iloc[0])],["PRA"])
+        with self.assertRaises(ValueError):
+            build_prefilled_prop_worksheet(p,summary,[str(p["player_id"].iloc[0])],["NotAMarket"])
 
     def test_integer_line_pushes_are_not_counted_as_losses(self):
         history=self.history()
