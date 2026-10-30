@@ -43,8 +43,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     """Build from the salary file; legacy projections argument is ignored."""
     if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed < 2**31:
         raise ValueError("Simulation seed must be an integer from 0 to 2147483647")
-    if count != 20:
-        raise ValueError("NFL Classic one-click build requires 20 lineups")
+    if count not in (15, 20, 50, 150):
+        raise ValueError("Choose 15, 20, 50, or 150 lineups")
     if not salaries:
         raise ValueError("Upload a DraftKings salary CSV to build lineups")
     season, week = _slate_week(salaries)
@@ -94,7 +94,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         player["projection_source"] += "; 10,000 football-stat scenarios"
         prepared.append(player)
     candidates = build_classic_candidates(
-        prepared, count=1200, attempts=200000, seed=seed,
+        prepared, count=(1200 if count <= 20 else 3500), attempts=(200000 if count <= 20 else 400000), seed=seed,
         salary_floor=49600, salary_cap=50000, max_exposure=0.35,
         min_wr_salary=4000, min_rb_salary=4500, require_opportunity=True)
     if len(candidates) < count:
@@ -105,10 +105,10 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     for efficiency in (0.95, 0.90, 0.85):
         try:
             ranked = select_simulated_portfolio(
-                candidates, players, draws, count=20,
+                candidates, players, draws, count=count,
                 max_exposure=0.35, upside_share=0.25,
-                premium_count=5, min_wr_salary=4000, min_rb_salary=4500,
-                value_salary_ceiling=5000, value_max_appearances=2,
+                premium_count=(5 if count == 20 else 0), min_wr_salary=4000, min_rb_salary=4500,
+                value_salary_ceiling=5000, value_max_appearances=(2 if count <= 20 else max(2, int(count*0.35))),
                 premium_value_max_appearances=1, require_opportunity=True,
                 p90_efficiency_retention=efficiency,
                 premium_excluded_ids=premium_excluded_ids)
@@ -116,7 +116,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         except ValueError as exc:
             errors.append(str(exc))
     else:
-        raise ValueError("The model could not produce 20 qualifying lineups: " + errors[-1])
+        raise ValueError("The model could not produce qualifying lineups: " + errors[-1])
     # Display the exact official injury source and practice participation
     # inspected during this build. Neither an empty game-status cell nor a
     # full practice automatically certifies a player's Sunday workload.
