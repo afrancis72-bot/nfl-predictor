@@ -1,0 +1,32 @@
+name: Unified PGA V11 acceptance
+on:
+  push:
+    branches: [feature/unified-ai2-platform]
+    paths:
+      - 'unified_app.py'
+      - 'ai2_pga_workspace.py'
+      - 'ai2_pga_oneclick.py'
+      - 'pga_predictor_pro.py'
+      - 'golf_first_v11.py'
+      - 'portfolio_optimizer.py'
+      - 'round_parlay.py'
+      - 'round_showdown.py'
+      - 'international_ingestion.py'
+      - 'tests/test_ai2_pga_unified.py'
+      - '.github/workflows/unified-pga-acceptance.yml'
+  workflow_dispatch:
+jobs:
+  pga-oneclick-v11:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: pip install -r requirements.txt
+      - name: Verify syntax and native unified routing
+        run: python -m compileall -q unified_app.py ai2_pga_workspace.py ai2_pga_oneclick.py golf_first_v11.py pga_predictor_pro.py portfolio_optimizer.py round_parlay.py round_showdown.py
+      - name: Test PGA DFS, real IDs and one-click 3-ball research
+        run: python -m unittest discover -s tests -p test_ai2_pga_unified.py -v
