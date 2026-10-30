@@ -373,6 +373,12 @@ else:
         st.caption("One click automatically fetches available NFL research. No lineup is exported when core source or roster checks fail. News reporting and prediction accuracy remain experimental.")
         st.stop()
 
+    if sport == "PGA":
+        # Same app, one native V11 PGA workspace (DFS, round 3-balls, Showdown).
+        import runpy as _ai2_pga_runpy
+        _ai2_pga_runpy.run_path(str(Path(__file__).parent / "ai2_pga_workspace.py"), run_name="__main__")
+        st.stop()
+
     if sport == "NASCAR":
         # NASCAR uses the V2.14 race engine on one consolidated surface.
         # NFL and NBA routing remains unchanged.
