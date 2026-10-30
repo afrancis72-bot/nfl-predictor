@@ -70,12 +70,12 @@ def _api_groupings(tournament, year, round_no, tournament_id=''):
         if int(rnd.get("roundInt") or 0)!=int(round_no): continue
         for g in rnd.get("groups") or []:
             players=g.get("players") or []
-            if len(players)!=3: continue
+            if len(players) not in (2,3): continue
             names=[(x.get("displayName") or (str(x.get("firstName") or '')+' '+str(x.get("lastName") or '')).strip()).strip() for x in players]
             ts=g.get("teeTime")
             tee_time=pd.to_datetime(ts,unit='ms',utc=True).strftime('%Y-%m-%d %H:%M UTC') if ts else ''
             rec.append({"group":g.get("groupNumber"),"tee_time":tee_time,"tee":g.get("startTee",''),
-                        "player1":names[0],"player2":names[1],"player3":names[2],"round":round_no})
+                        "player1":names[0],"player2":names[1],"player3":names[2] if len(names)==3 else "", "round":round_no})
     out=_validate_groups(pd.DataFrame(rec),round_no)
     return out,tid,(f'official PGA TOUR TeeTimes API ({len(out)} groups)' if not out.empty else f'PGA TOUR API has no valid R{round_no} groups yet')
 
@@ -106,23 +106,42 @@ def parse_groupings_text(text, round_no=1):
     return pd.DataFrame(out)
 
 def _validate_groups(df, round_no):
-    """Accept only plausible 3-player groups; never silently guess pairings."""
-    if df is None or df.empty:
-        return pd.DataFrame()
-    need=['player1','player2','player3']
-    if not set(need).issubset(df.columns):
+    """Only verified pairs and three-golfer tee groups; no inferred pairings.
+
+    The normalized contract always contains player3 (blank for pairs) and
+    group_size. Preserve one group per source tee time without fake third
+    golfers. Reject duplicate players, singletons, and groups of 4+.
+    """
+    if df is None or df.empty or not {'player1','player2'}.issubset(df.columns):
         return pd.DataFrame()
     w=df.copy()
-    for c in need:
-        w[c]=w[c].astype(str).str.strip()
-    w=w[(w[need].apply(lambda r: all(2 <= len(x) <= 55 for x in r),axis=1)) &
-        (w[need].apply(lambda r: len(set(x.casefold() for x in r))==3,axis=1))].copy()
-    if w.empty: return w
-    w=w.drop_duplicates(subset=need).reset_index(drop=True)
-    w['group']=range(1,len(w)+1); w['round']=round_no
-    if 'tee_time' not in w: w['tee_time']=''
-    if 'tee' not in w: w['tee']=''
-    return w[['group','tee_time','tee','player1','player2','player3','round']]
+    if 'player3' not in w:
+        w['player3']=''
+    for c in ('player1','player2','player3'):
+        w[c]=w[c].fillna('').astype(str).str.strip()
+        w[c]=w[c].replace({'nan':'','NaN':'','None':'','null':''})
+    w['group_size']=w['player3'].ne('').map({True:3,False:2}).astype(int)
+    valid=[]
+    for _,r in w.iterrows():
+        names=[str(r.player1),str(r.player2)]
+        if int(r.group_size)==3:
+            names.append(str(r.player3))
+        valid.append(all(2<=len(n)<=55 for n in names) and
+                     len({_norm(n) for n in names})==len(names))
+    w=w.loc[valid].copy()
+    if w.empty:
+        return w
+    w=w.drop_duplicates(subset=['player1','player2','player3']).reset_index(drop=True)
+    # Provider group labels can repeat or contain non-integer tokens; allocate
+    # a stable unique sequential ID only after validating real tee group rows.
+    w['group']=range(1,len(w)+1)
+    w['round']=int(round_no)
+    if 'tee_time' not in w:
+        w['tee_time']=''
+    if 'tee' not in w:
+        w['tee']=''
+    return w[['group','tee_time','tee','player1','player2','player3','group_size','round']]
+
 
 def _parse_pgatour_tables(html, round_no):
     """Parse PGA TOUR public tee-time HTML tables. Handles a Players cell containing 3 names."""
@@ -146,10 +165,10 @@ def _parse_pgatour_tables(html, round_no):
                 part=re.sub(r'\s+',' ',part).strip(' ,')
                 if re.match(r"^[A-Za-zÀ-ÖØ-öø-ÿ .’'\-]+$",part) and ' ' in part and 3<=len(part)<=55:
                     if not names or _norm(part)!=_norm(names[-1]): names.append(part)
-            if len(names)!=3:
+            if len(names) not in (2,3):
                 continue
             rec.append({'tee_time':str(row[time_col]).strip(),'tee':str(row[tee_col]).strip() if tee_col else '',
-                        'player1':names[0],'player2':names[1],'player3':names[2]})
+                        'player1':names[0],'player2':names[1],'player3':names[2] if len(names)==3 else ''})
         out=_validate_groups(pd.DataFrame(rec),round_no)
         if not out.empty: return out
     return pd.DataFrame()
@@ -175,20 +194,22 @@ def fetch_groupings(tournament, year, round_no, source_url="", tournament_id="")
                 if not df.empty: return df,u,f'PGA TOUR rendered table ({len(df)} groups)'
             df=_validate_groups(parse_groupings_text(html,round_no),round_no)
             if not df.empty: return df,u,f'validated article text ({len(df)} groups)'
-            errors.append(f'No valid 3-player groups parsed from {u}')
+            errors.append(f'No valid 2- or 3-player groups parsed from {u}')
         except Exception as e: errors.append(f'{u}: {e}')
     return pd.DataFrame(),'', '; '.join(errors[-4:])
 
 def normalize_groupings_upload(df, round_no):
-    if df is None or df.empty: return pd.DataFrame()
-    w=df.copy(); w.columns=[_norm(c).replace(' ','_') for c in w.columns]
-    aliases={"time":"tee_time","tee":"tee_time","golfer1":"player1","golfer2":"player2","golfer3":"player3","player_1":"player1","player_2":"player2","player_3":"player3"}
+    """Read verified grouping CSV with player1/player2 and optional player3."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    w=df.copy()
+    w.columns=[_norm(c).replace(' ','_') for c in w.columns]
+    aliases={"time":"tee_time","tee":"tee_time","golfer1":"player1",
+             "golfer2":"player2","golfer3":"player3",
+             "player_1":"player1","player_2":"player2","player_3":"player3"}
     w=w.rename(columns={c:aliases.get(c,c) for c in w.columns})
-    if not {'player1','player2','player3'}.issubset(w.columns): return pd.DataFrame()
-    if 'group' not in w: w['group']=range(1,len(w)+1)
-    if 'tee_time' not in w: w['tee_time']=''
-    w['round']=round_no
-    return w[['group','tee_time','player1','player2','player3','round']].copy()
+    return _validate_groups(w,round_no)
+
 
 def normalize_live_results(df):
     """Accept player plus round score / SG components. Lower score is better."""
@@ -321,38 +342,104 @@ def build_round_ratings(otis, live_results, round_no, tournament_name='', use_co
               'live_form_adj','live_rounds','live_weight','live_data_quality',
               'scenario','pressure_adj','pressure_samples','pressure_data_quality','round_rating']]
 
-def simulate_groups(groupings, ratings, n_sims=100000, seed=42, tie_band=0.22):
-    rng=np.random.default_rng(seed); rmap=ratings.set_index('key').to_dict('index') if not ratings.empty else {}
+def simulate_groups(groupings, ratings, n_sims=100000, seed=42,
+                    tie_band=0.22, two_ball_tie_rule="loss"):
+    """Simulate *both* 2- and 3-player groups.
+
+    Three-ball: legacy near-tie proxy is treated as sportsbook push.
+    Two-ball 'loss': 3-way head-to-head, where a score tie is a loss for
+      either chosen golfer; a Tie is a separate outcome in the model.
+    Two-ball 'push': 2-way head-to-head; a score tie pushes either pick.
+    Exact tie likelihood for pairs uses discrete whole-round stroke scores.
+    These are provisional modeled odds; check actual sportsbook rules.
+    """
+    if two_ball_tie_rule not in ("loss","push"):
+        raise ValueError("2-ball tie rule must be 'loss' (3-way) or 'push' (2-way).")
+    if int(n_sims)<100:
+        raise ValueError("Group simulations require at least 100 trials.")
+    validated=_validate_groups(groupings,int(groupings.iloc[0]['round']) if
+        groupings is not None and not groupings.empty and 'round' in groupings else 1)
+    if validated.empty:
+        return pd.DataFrame(),{}
+    if ratings.empty or 'key' not in ratings or 'round_rating' not in ratings:
+        raise ValueError("Round ratings must include golfer key and rating.")
+    rmap=ratings.set_index('key').to_dict('index')
+    rng=np.random.default_rng(seed)
     rows=[]; sim_store={}
-    for _,g in groupings.iterrows():
-        names=[str(g.player1),str(g.player2),str(g.player3)]; keys=[_norm(x) for x in names]
-        if any(k not in rmap for k in keys):
-            missing=[n for n,k in zip(names,keys) if k not in rmap];
-            for n in missing: rows.append({'group':g['group'],'tee_time':g.get('tee_time',''),'player':n,'status':'UNMATCHED'})
+    for _,g in validated.iterrows():
+        names=[str(g.player1),str(g.player2)]
+        if int(g.group_size)==3:
+            names.append(str(g.player3))
+        keys=[_norm(n) for n in names]
+        kind="3-ball" if len(names)==3 else "2-ball"
+        settlement=("tie pushes" if len(names)==3 or two_ball_tie_rule=="push" else
+                    "tie loses (separate Tie outcome)")
+        missing=[n for n,k in zip(names,keys) if k not in rmap]
+        if missing:
+            for n in names:
+                rows.append({'group':int(g['group']),'tee_time':g.get('tee_time',''),
+                             'player':n,'status':'UNMATCHED',
+                             'matchup_type':kind,'tie_settlement':settlement,
+                             'group_size':len(names)})
             continue
         rt=np.array([rmap[k]['round_rating'] for k in keys],float)
-        # Convert rating edge to strokes; common group/weather shock cancels head-to-head but preserves coherent round worlds.
-        # V10.9.8 provisional calibration. A single-round three-ball should retain
-        # meaningful upset probability even across large rating gaps.
-        RATING_TO_STROKES=0.045
-        ROUND_COMMON_SD=0.85
+        # Shared group weather has no independent matchup advantage; retain it
+        # so each simulated matchup is one coherent scoring world.
+        RATING_TO_STROKES=.045
+        ROUND_COMMON_SD=.85
         ROUND_INDIV_SD=2.80
         mu=71.0-(rt-50.0)*RATING_TO_STROKES
-        common=rng.normal(0,ROUND_COMMON_SD,n_sims)
-        indiv=rng.normal(0,ROUND_INDIV_SD,(n_sims,3))
-        scores=mu[None,:]+common[:,None]+indiv
-        # Continuous tie band approximates integer-score ties without discretizing all latent performance.
-        mins=scores.min(axis=1)
-        for j,n in enumerate(names):
-            diff=scores[:,j]-mins
-            tied=(diff<=tie_band) & ((scores<=mins[:,None]+tie_band).sum(axis=1)>1)
-            win=(scores[:,j] < np.min(np.delete(scores,j,axis=1),axis=1)-tie_band)
-            loss=~win & ~tied
-            rows.append({'group':int(g['group']),'tee_time':g.get('tee_time',''),'player':n,'status':'OK','round_rating':rt[j],
-                         'win_pct':100*win.mean(),'push_pct':100*tied.mean(),'loss_pct':100*loss.mean(),'non_loss_pct':100*(win|tied).mean(),
-                         'sim_mean_score':scores[:,j].mean(),'sim_sd':scores[:,j].std()})
+        common=rng.normal(0,ROUND_COMMON_SD,int(n_sims))
+        indiv=rng.normal(0,ROUND_INDIV_SD,(int(n_sims),len(names)))
+        latent_scores=mu[None,:]+common[:,None]+indiv
+        if len(names)==2:
+            scores=np.rint(latent_scores)
+            ties=(scores[:,0]==scores[:,1])
+            for j,n in enumerate(names):
+                win=(scores[:,j]<scores[:,1-j])
+                push=ties if two_ball_tie_rule=="push" else np.zeros(len(ties),bool)
+                lose=~win & ~push
+                rows.append({'group':int(g['group']),'tee_time':g.get('tee_time',''),
+                    'player':n,'status':'OK','group_size':2,
+                    'matchup_type':kind,'tie_settlement':settlement,
+                    'round_rating':rt[j], 'win_pct':100*win.mean(),
+                    'push_pct':100*push.mean(),'loss_pct':100*lose.mean(),
+                    'non_loss_pct':100*(win|push).mean(),
+                    'tie_outcome_pct':100*ties.mean(),
+                    'sim_mean_score':scores[:,j].mean(),'sim_sd':scores[:,j].std()})
+            if two_ball_tie_rule=="loss":
+                # In a 3-way 2-ball market the bookmaker can offer a third
+                # "Tie" outcome. Keep this visible, but automatic candidate
+                # selection prefers golfer picks: tie bets need explicit odds.
+                rows.append({'group':int(g['group']),'tee_time':g.get('tee_time',''),
+                    'player':'Tie','status':'TIE_OUTCOME','group_size':2,
+                    'matchup_type':kind,'tie_settlement':settlement,
+                    'round_rating':np.nan,'win_pct':100*ties.mean(),
+                    'push_pct':0.,'loss_pct':100*(~ties).mean(),
+                    'non_loss_pct':100*ties.mean(),
+                    'tie_outcome_pct':100*ties.mean(),
+                    'sim_mean_score':np.nan,'sim_sd':np.nan})
+        else:
+            scores=latent_scores
+            # Retain existing three-ball provisional tie-band model.
+            mins=scores.min(axis=1)
+            for j,n in enumerate(names):
+                tied=((scores[:,j]-mins<=tie_band) &
+                      ((scores<=mins[:,None]+tie_band).sum(axis=1)>1))
+                win=scores[:,j]<np.min(np.delete(scores,j,axis=1),axis=1)-tie_band
+                loss=~win & ~tied
+                rows.append({'group':int(g['group']),'tee_time':g.get('tee_time',''),
+                    'player':n,'status':'OK','group_size':3,
+                    'matchup_type':kind,'tie_settlement':settlement,
+                    'round_rating':rt[j],
+                    'win_pct':100*win.mean(),'push_pct':100*tied.mean(),
+                    'loss_pct':100*loss.mean(),
+                    'non_loss_pct':100*(win|tied).mean(),
+                    'tie_outcome_pct':np.nan,
+                    'sim_mean_score':scores[:,j].mean(),'sim_sd':scores[:,j].std()})
         sim_store[int(g['group'])]=(names,scores)
     return pd.DataFrame(rows),sim_store
+
 
 def build_six_leg_tickets(probs, ticket_count=5, max_player_overlap=4):
     p=probs[probs.status.eq('OK')].copy()
@@ -381,10 +468,14 @@ def build_six_leg_tickets(probs, ticket_count=5, max_player_overlap=4):
         if len(chosen)>=ticket_count: break
     summary=[]; legs=[]
     for t,c in enumerate(chosen,1):
-        summary.append({'ticket':t,'strict_6_of_6_pct':100*c[1],'all_legs_non_loss_pct':100*c[2],'weakest_leg_win_pct':c[3],'legs':6})
+        summary.append({'ticket':t,'strict_6_of_6_pct':100*c[1],'all_legs_non_loss_pct':100*c[2],'weakest_leg_win_pct':c[3],'legs':6,
+                        'two_ball_legs':int((p[(p.player.isin(c[4])) &
+                            (p.group.isin(c[5]))].group_size==2).sum()) if 'group_size' in p else 0})
         for leg,(player,grp) in enumerate(zip(c[4],c[5]),1):
             row=p[(p.player==player)&(p.group==grp)].iloc[0]
-            legs.append({'ticket':t,'leg':leg,'group':grp,'player':player,'win_pct':row.win_pct,'push_pct':row.push_pct,'loss_pct':row.loss_pct,'tee_time':row.tee_time})
+            legs.append({'ticket':t,'leg':leg,'group':grp,'player':player,'win_pct':row.win_pct,'push_pct':row.push_pct,'loss_pct':row.loss_pct,'tee_time':row.tee_time,
+                             'matchup_type':row.get('matchup_type','3-ball'),
+                             'tie_settlement':row.get('tie_settlement','tie pushes')})
     return pd.DataFrame(summary),pd.DataFrame(legs)
 
 def fetch_live_results(source_url, round_no):
