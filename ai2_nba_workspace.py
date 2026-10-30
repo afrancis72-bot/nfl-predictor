@@ -19,7 +19,7 @@ from nba_engine.data_sources import scoreboard, load_public_logs, norm_team
 from nba_engine.predictor import (
     MARKETS, build_projections, simulate_stat_lines,
     prepare_bet_lines, evaluate_bets, parlay_summary,
-    summarize_simulated_projections,
+    summarize_simulated_projections, build_prefilled_prop_worksheet,
 )
 from nba_engine.props_sim import expected_net_roi
 from nba_engine.odds_feed import BOOKMAKERS, load_current_props, normalize_csv_lines
@@ -277,9 +277,31 @@ if run is not None and run["run_key"] == run_key:
         chosen = st.multiselect("Players to compare", list(names), default=defaults)
         market_choices = st.multiselect("Markets", list(MARKETS),
                                         default=["Points","Rebounds","Assists","Threes","PRA"])
+        worksheet = build_prefilled_prop_worksheet(
+            projections, simulated_summary,
+            [names[n] for n in chosen], market_choices,
+        )
+        with st.expander("📊 P10 / P90 — selected player props", expanded=True):
+            st.caption(
+                "One quick view of OUR simulated outcomes: independent projected mean, "
+                "simulated P10 and P90. A P90 is a high-end single-game outcome "
+                "(90% of sampled outcomes are at or below it), not a prediction "
+                "that a player reaches it 90% of the time. No bookmaker line needed."
+            )
+            if worksheet.empty:
+                st.info("Select a player and market to see model ranges.")
+            else:
+                quick_view=worksheet[[
+                    "player","team","market","model_projection","sim_p10","sim_p90",
+                ]].rename(columns={
+                    "player":"Player","team":"Team","market":"Stat",
+                    "model_projection":"Projected mean",
+                    "sim_p10":"P10","sim_p90":"P90",
+                })
+                st.dataframe(quick_view,hide_index=True,use_container_width=True,height=285)
         # Our projections are calculated independently. Real sportsbook markets
         # are ingested only when explicitly requested with an API key or upload.
-        with st.expander("Automatic sportsbook lines — Hard Rock Bet FL and others", expanded=True):
+        with st.expander("Optional automatic sportsbook lines — Hard Rock Bet FL and others", expanded=False):
             st.caption("Compare our independent forecasts against LIVE quoted markets. The Odds API supports Hard Rock Bet (Florida), subject to currently listed events, markets, and API quota. Quotes may differ from your Hard Rock Bet app.")
             book_title = st.selectbox("Sportsbook to retrieve", list(BOOKMAKERS),
                                      key="nba_odds_book")
@@ -373,38 +395,18 @@ if run is not None and run["run_key"] == run_key:
                 },
                 key=f"nba_lines_{market_key}",
             )
-        # Give the user a player-populated worksheet instead of an empty header-only
-        # CSV. These are MODEL projections, not sportsbook lines or quoted odds.
-        roster_lookup = projections.set_index("player_id")
-        worksheet_rows = []
-        for display_name in chosen:
-            player_id = names[display_name]
-            player_row = roster_lookup.loc[player_id]
-            for market in market_choices:
-                worksheet_rows.append({
-                    "player_id": player_id,
-                    "player": str(player_row["player"]),
-                    "team": str(player_row["team"]),
-                    "market": market,
-                    "model_projection": float(player_row[market]),
-                    "line": None,
-                    "side": "Over",
-                    "odds": None,
-                })
-        worksheet = pd.DataFrame(
-            worksheet_rows,
-            columns=["player_id", "player", "team", "market",
-                     "model_projection", "line", "side", "odds"]
-        )
+        # Reuse the same simulator-derived ranges from the quick view above.
+        # CSV includes model mean and P10/P90, plus optional editable book fields.
+
         st.download_button(
             "Download prefilled player-prop worksheet",
             worksheet.to_csv(index=False).encode("utf-8-sig"),
             "team_ai2_nba_player_props_prefilled.csv",
             mime="text/csv",
             disabled=worksheet.empty,
-            help="Player IDs and model projections are included. Enter your real sportsbook line and odds before uploading."
+            help="Includes our independent mean, simulated mean and P10/P90. Book lines and odds are optional and never invented."
         )
-        st.caption("Prefilled worksheet: player names, IDs, and our model projections are included. **Actual sportsbook lines and odds remain blank.** You can also enter those directly in the table above—no download required.")
+        st.caption("Prefilled CSV includes the projected mean and sampled P10/P90 for each selected player/market. Sportsbook lines and odds remain blank until you choose to compare a specific bet. No extra upload required.")
         with st.expander("Advanced: blank CSV format"):
             st.download_button("Download header-only CSV",
                                b"player_id,market,line,side,odds\n",
@@ -423,18 +425,28 @@ if run is not None and run["run_key"] == run_key:
                     for r in report.itertuples(index=False)
                 ]
                 report["projection_minus_book_line"] = report["our_projection"] - report["line"]
+                report=report.merge(
+                    simulated_summary[[
+                        "player_id","market","simulation_p10","simulation_p90"
+                    ]],
+                    on=["player_id","market"],how="left",validate="many_to_one",
+                )
+                if report[["simulation_p10","simulation_p90"]].isna().any().any():
+                    raise ValueError("Simulated P10/P90 missing for a selected NBA bet.")
                 if "sportsbook" not in report.columns:
                     report["sportsbook"] = "Manually entered line"
                 st.subheader("Independent model vs. actual sportsbook lines")
                 shown = report[[
                     "label", "sportsbook", "our_projection", "line",
                     "projection_minus_book_line", "sim_mean",
+                    "simulation_p10","simulation_p90",
                     "win_probability", "push_probability",
                     "odds", "book_implied", "model_edge",
                 ]].copy()
                 for c in ["win_probability","push_probability","book_implied","model_edge"]:
                     shown[c] = (100 * shown[c]).round(1)
-                for c in ["our_projection","line","projection_minus_book_line","sim_mean"]:
+                for c in ["our_projection","line","projection_minus_book_line","sim_mean",
+                          "simulation_p10","simulation_p90"]:
                     shown[c] = shown[c].round(2)
                 shown = shown.rename(columns={
                     "label":"Player · market · side",
@@ -443,6 +455,7 @@ if run is not None and run["run_key"] == run_key:
                     "line":"Actual sportsbook line",
                     "projection_minus_book_line":"Projection − line",
                     "sim_mean":"Simulation average",
+                    "simulation_p10":"P10","simulation_p90":"P90",
                     "win_probability":"Model win %",
                     "push_probability":"Push %",
                     "odds":"Offered American odds",
