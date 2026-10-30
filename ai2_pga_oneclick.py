@@ -452,6 +452,33 @@ def evaluate_groups(groups,model,round_no,live=None,seed=42,sims=25000,tickets=5
         "ticket_legs":legs,"source":provenance,
         "two_ball_tie_rule":two_ball_tie_rule}
 
+def bookmaker_filtered_tickets(probs,groups,offered_ids,ticket_count=3):
+    """Build tickets only from user-confirmed, actually offered sportsbook groups.
+
+    Tee-time availability DOES NOT establish sportsbook market availability.
+    A golfer from an unavailable group must never be offered as a parlay leg.
+    Unknown IDs are errors, not silently ignored; no picks until market
+    availability has been explicitly provided for this event and round.
+    """
+    if groups is None or groups.empty or 'group' not in groups:
+        raise ValueError("Verified tee groups are required before sportsbook filtering.")
+    available={int(x) for x in groups['group']}
+    chosen=set()
+    for raw in offered_ids or []:
+        if isinstance(raw,bool):
+            raise ValueError("Invalid offered group ID.")
+        gid=int(raw)
+        if gid not in available:
+            raise ValueError(f"Sportsbook group {gid} is not in this round's official tee groups.")
+        chosen.add(gid)
+    subset=probs.loc[probs['group'].isin(chosen)].copy()
+    if len(chosen)<6:
+        return subset,pd.DataFrame(),pd.DataFrame()
+    summary,legs=build_six_leg_tickets(subset,ticket_count=int(ticket_count))
+    if not legs.empty and not set(legs['group']).issubset(chosen):
+        raise ValueError("A generated pick was not in the sportsbook availability list.")
+    return subset,summary,legs
+
 def build_round_showdown(dk,model,round_no,live,seed=42,count=4,exposure=.5,salary_floor=46500):
     if int(round_no) not in (2,3,4):
         raise ValueError("Showdown requires round 2, 3, or 4.")
