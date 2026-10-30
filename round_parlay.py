@@ -99,11 +99,28 @@ def parse_groupings_text(text, round_no=1):
     # tee-time pattern followed by three comma-separated names. Supports 7:45 p.m./8:45 a.m. -- A, B, C
     pat=re.compile(r"(?P<time>\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.)?(?:\s*/\s*\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.)?)?)\s*(?:--|—|–|-)?\s*(?P<a>[A-Z][A-Za-z .’'\-]+?),\s*(?P<b>[A-Z][A-Za-z .’'\-]+?),\s*(?P<c>[A-Z][A-Za-z .’'\-]+?)(?=\s+\d{1,2}:\d{2}|\s+(?:First|10th|Tenth) tee|$)")
     out=[]
-    for i,m in enumerate(pat.finditer(clean),1):
+    for m in pat.finditer(clean):
         names=[m.group('a').strip(),m.group('b').strip(),m.group('c').strip()]
         if all(2 <= len(x) <= 45 for x in names):
-            out.append({"group":i,"tee_time":m.group('time').strip(),"player1":names[0],"player2":names[1],"player3":names[2],"round":round_no})
-    return pd.DataFrame(out)
+            out.append({"tee_time":m.group('time').strip(),"player1":names[0],
+                        "player2":names[1],"player3":names[2],"round":round_no})
+    # Weekend article text can describe two golfers, e.g.
+    # "9:35 a.m. — Golfer One, Golfer Two".
+    # Require an end-of-record delimiter so a three-person group is not
+    # misread as a two-person wager.
+    pair_pat=re.compile(
+        r"(?P<time>\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?)"
+        r"\s*(?:--|—|–|-)?\s*"
+        r"(?P<a>[A-Z][A-Za-z .’'\-]+?),\s*"
+        r"(?P<b>[A-Z][A-Za-z .’'\-]+?)"
+        r"(?=\s+\d{1,2}:\d{2}|\s+(?:First|10th|Tenth)\s+tee|$)"
+    )
+    for m in pair_pat.finditer(clean):
+        names=[m.group('a').strip(),m.group('b').strip()]
+        if all(2<=len(x)<=45 for x in names):
+            out.append({"tee_time":m.group('time').strip(),"player1":names[0],
+                        "player2":names[1],"player3":"","round":round_no})
+    return _validate_groups(pd.DataFrame(out),round_no)
 
 def _validate_groups(df, round_no):
     """Only verified pairs and three-golfer tee groups; no inferred pairings.
@@ -117,6 +134,10 @@ def _validate_groups(df, round_no):
     w=df.copy()
     if 'player3' not in w:
         w['player3']=''
+    if 'player4' in w:
+        # Four-person tee slots are NOT two-/three-ball markets and must not
+        # be truncated into invented three-player sportsbook groupings.
+        w=w[w['player4'].isna() | w['player4'].astype(str).str.strip().isin(['','nan','None'])]
     for c in ('player1','player2','player3'):
         w[c]=w[c].fillna('').astype(str).str.strip()
         w[c]=w[c].replace({'nan':'','NaN':'','None':'','null':''})
@@ -469,8 +490,9 @@ def build_six_leg_tickets(probs, ticket_count=5, max_player_overlap=4):
     summary=[]; legs=[]
     for t,c in enumerate(chosen,1):
         summary.append({'ticket':t,'strict_6_of_6_pct':100*c[1],'all_legs_non_loss_pct':100*c[2],'weakest_leg_win_pct':c[3],'legs':6,
-                        'two_ball_legs':int((p[(p.player.isin(c[4])) &
-                            (p.group.isin(c[5]))].group_size==2).sum()) if 'group_size' in p else 0})
+                        'two_ball_legs':sum(
+                            int(best.loc[best.group==grp,'group_size'].iloc[0])==2
+                            for grp in c[5]) if 'group_size' in p else 0})
         for leg,(player,grp) in enumerate(zip(c[4],c[5]),1):
             row=p[(p.player==player)&(p.group==grp)].iloc[0]
             legs.append({'ticket':t,'leg':leg,'group':grp,'player':player,'win_pct':row.win_pct,'push_pct':row.push_pct,'loss_pct':row.loss_pct,'tee_time':row.tee_time,
