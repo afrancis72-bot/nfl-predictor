@@ -13,6 +13,7 @@ from ai2_pga_oneclick import (
     build_round_showdown,normalize_groupings_upload,normalize_live_results,
 )
 from round_parlay import fetch_groupings,fetch_official_prior_rounds
+from international_ingestion import geocode_course, location_detail, fetch_weather
 
 st.subheader("PGA · Tournament DFS, Round Showdown & 3-Ball Parlays")
 st.caption(
@@ -67,6 +68,42 @@ with tab_tournament:
         holes_file=st.file_uploader("Verified 18-hole par CSV (optional)",
                                  type=["csv"],key="ai2_pga_holes")
         st.caption("If hole pars are missing, the V11 engine uses a generic par-matched layout. It is provisional.")
+        st.markdown("#### Optional automatic course weather")
+        country_hint=st.text_input("Course country / region hint",key="pga_country_hint",
+                                   placeholder="Mexico, Japan, Florida, etc.")
+        @st.cache_data(ttl=21600,show_spinner=False)
+        def _cached_course_search(q,hint):
+            return geocode_course(q,hint,limit=5)
+        @st.cache_data(ttl=3600,show_spinner=False)
+        def _cached_verified_weather(selected,tournament_name,tournament_date):
+            return fetch_weather(selected,tournament_name,tournament_date,days=4)
+        if st.button("Find course / weather coordinates",key="pga_find_course",
+                     disabled=not course.strip()):
+            try:
+                with st.spinner("Checking course location matches…"):
+                    matches=_cached_course_search(course,country_hint)
+                st.session_state["ai2_pga_course_matches"]=matches
+                st.session_state["ai2_pga_course_matches_query"]=(course,country_hint)
+                if not matches:
+                    st.warning("Could not verify the course location. Weather will remain unavailable.")
+            except Exception as exc:
+                st.session_state["ai2_pga_course_matches"]=[]
+                st.warning("Course geocoding unavailable: "+str(exc))
+        matches=(st.session_state.get("ai2_pga_course_matches",[])
+                 if st.session_state.get("ai2_pga_course_matches_query")==(course,country_hint)
+                 else [])
+        selected_location=None
+        if matches:
+            selected_index=int(st.selectbox(
+                "Verify actual course location before using forecast",
+                list(range(len(matches))),
+                format_func=lambda n:(str(matches[n].get("display_name")
+                                         or matches[n].get("name") or "Unknown course")),
+                key="pga_course_location_choice"))
+            selected_location=location_detail(matches[selected_index])
+            st.caption("Wind/temperature come from Open-Meteo for this explicitly selected location. "
+                       "Geocoded locations and weather are not proof of actual tournament tee waves.")
+
         lineup_count=int(st.number_input("Number of DFS lineups",1,30,10,step=1,key="pga_lineup_count"))
         exposure_pct=int(st.slider("Maximum golfer exposure (%)",10,100,35,5,key="pga_exp"))
         min_unique=int(st.slider("Minimum unique golfers between lineups",1,5,3,key="pga_unique"))
@@ -102,6 +139,7 @@ with tab_tournament:
         hashlib.sha256(otis_file.getvalue()).hexdigest() if otis_file else None,
         hashlib.sha256(independent_file.getvalue()).hexdigest() if independent_file else None,
         hashlib.sha256(holes_file.getvalue()).hexdigest() if holes_file else None,
+        tuple(sorted(selected_location.items())) if selected_location else None,
     )
     do_run=st.button("⛳ Run PGA simulation + build DFS lineups",
                      type="primary",use_container_width=True,disabled=dk is None,
@@ -115,10 +153,19 @@ with tab_tournament:
                 independent_raw=pd.read_csv(BytesIO(independent_file.getvalue())) if independent_file else None
                 holes=pd.read_csv(BytesIO(holes_file.getvalue())) if holes_file else None
                 seed=int(chosen_seed) if chosen_seed is not None else secrets.randbelow(2147483647)
+                forecast=pd.DataFrame()
+                if selected_location is not None:
+                    try:
+                        with st.spinner("Retrieving the selected course's Open-Meteo weather forecast…"):
+                            forecast=_cached_verified_weather(selected_location,tournament,start_date)
+                    except Exception as weather_error:
+                        st.warning("Verified course weather unavailable; treating weather effect as unknown: "
+                                   +str(weather_error))
                 with st.spinner(f"Simulating {sims:,} 72-hole tournament worlds and optimizing DFS portfolio…"):
                     result=run_tournament(dk,tournament,course_par,
                         no_cut=cut_type.startswith("No cut"),
-                        cut_size=cut_size,hole_frame=holes,otis_raw=otis_raw,independent_raw=independent_raw,
+                        cut_size=cut_size,hole_frame=holes,otis_raw=otis_raw,
+                        independent_raw=independent_raw,weather_raw=forecast,
                         sims=sims,seed=seed,lineup_count=lineup_count,
                         max_exposure=exposure_pct/100,
                         salary_floor=salary_floor,min_unique=min_unique,
@@ -156,6 +203,12 @@ with tab_tournament:
             )
         if not meta["hole_pars_verified"]:
             st.info("Generic provisional hole pars were used; verify actual course layout to strengthen the model.")
+        if meta["weather_hours"]:
+            st.caption(f"Selected-course Open-Meteo forecast loaded: {meta['weather_hours']} hourly readings; "
+                       f"mean wind {meta['weather_wind_mph']} mph. "
+                       "No individual tee-wave assignments were inferred.")
+        else:
+            st.caption("No verified location-specific current weather was loaded.")
         st.dataframe(result["summary"],hide_index=True,use_container_width=True)
         st.dataframe(result["lineups"],hide_index=True,use_container_width=True)
         st.download_button("Download lineup review CSV",
@@ -304,7 +357,8 @@ with tab_audit:
         meta=result["metadata"]
         st.write(f"Model source: **{meta['source_mode']}**")
         st.write(f"Verified 18 hole pars: **{'Yes' if meta['hole_pars_verified'] else 'No — generic provisional layout'}**")
-        st.write("Weather / tee wave: **Not connected to current venue in this unified workflow.**")
+        st.write(f"Selected-course Open-Meteo weather: **{meta['weather_hours']} hourly observations**; "
+                 "individual tee wave impacts: **not inferred**.")
         st.write("Observed independent golfer strokes gained: "
                  f"**{meta['independent_sg_match']}/{meta['field_size']} matched golfers**. "
                  "Measured input overrides OTIS model scores; no invented SG.")
