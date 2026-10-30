@@ -174,6 +174,8 @@ with tab_tournament:
                 result["metadata"]["start_date"]=str(start_date)
                 st.session_state["ai2_pga_result"]=result
                 st.session_state["ai2_pga_signature"]=setup_signature
+                st.session_state.pop("ai2_pga_3ball",None)
+                st.session_state.pop("ai2_pga_showdown",None)
                 st.success(f"Built {len(result['summary'])} lineups using seed {seed}.")
             except Exception as exc:
                 st.session_state.pop("ai2_pga_result",None)
@@ -206,6 +208,7 @@ with tab_tournament:
         if meta["weather_hours"]:
             st.caption(f"Selected-course Open-Meteo forecast loaded: {meta['weather_hours']} hourly readings; "
                        f"mean wind {meta['weather_wind_mph']} mph. "
+                       "The original V10 model can use aggregate weather only when measured golfer inputs are present. "
                        "No individual tee-wave assignments were inferred.")
         else:
             st.caption("No verified location-specific current weather was loaded.")
@@ -243,6 +246,10 @@ with tab_parlay:
         tournament_id=st.text_input("PGA TOUR tournament ID (if known)",key="pga_tid")
         groups_upload=st.file_uploader("Verified tee groupings CSV",type=["csv"],key="pga_group_csv")
         results_upload=st.file_uploader("Completed earlier rounds CSV",type=["csv"],key="pga_prior_results_csv")
+    group_signature=(result["metadata"]["created_utc"] if result else None,
+                     round_no,group_sims,ticket_count,run_seed,tournament,tournament_id,
+                     hashlib.sha256(groups_upload.getvalue()).hexdigest() if groups_upload else None,
+                     hashlib.sha256(results_upload.getvalue()).hexdigest() if results_upload else None)
     do_groups=st.button("Research this round's 3-balls",type="primary",
                         key="pga_research_group",use_container_width=True,
                         disabled=result is None)
@@ -277,13 +284,14 @@ with tab_parlay:
                 "tournament":tournament,"seed":run_seed,
             }
             analyzed["live"]=live
+            analyzed["signature"]=group_signature
             st.session_state["ai2_pga_3ball"]=analyzed
             st.success(f"Evaluated {len(groupings)} groups for Round {round_no}.")
         except Exception as exc:
             st.session_state.pop("ai2_pga_3ball",None)
             st.error(str(exc))
     grp=st.session_state.get("ai2_pga_3ball")
-    if grp and result and grp["metadata"]["round"]==round_no and grp["metadata"]["tournament"]==tournament:
+    if grp and result and grp.get("signature")==group_signature:
         st.caption(f"Groupings: {grp['metadata']['groupings_source']} · "
                    f"Prior scores: {grp['metadata']['completed_rounds_source']} · "
                    f"Ratings: {grp['source']}")
@@ -319,6 +327,9 @@ with tab_showdown:
         sd_floor=int(st.number_input("Showdown minimum salary",0,50000,46500,100,key="pga_showdown_floor"))
         sd_prior=st.file_uploader("Optional verified completed-round scores CSV",
                                  type=["csv"],key="pga_showdown_live")
+        sd_signature=(result["metadata"]["created_utc"],sd_round,sd_count,sd_exp,sd_floor,
+                      hashlib.sha256(sd_file.getvalue()).hexdigest() if sd_file else None,
+                      hashlib.sha256(sd_prior.getvalue()).hexdigest() if sd_prior else None)
         if st.button("Build round Showdown",type="primary",disabled=sd_file is None,key="pga_run_showdown"):
             try:
                 if sd_prior is not None:
@@ -337,12 +348,13 @@ with tab_showdown:
                 )
                 st.session_state["ai2_pga_showdown"]=sd
                 st.session_state["ai2_pga_showdown_round"]=sd_round
+                st.session_state["ai2_pga_showdown_signature"]=sd_signature
                 st.success(f"Built {len(sd['lineups'])} round-{sd_round} lineups.")
             except Exception as exc:
                 st.session_state.pop("ai2_pga_showdown",None)
                 st.error(str(exc))
         sd=st.session_state.get("ai2_pga_showdown")
-        if sd is not None and st.session_state.get("ai2_pga_showdown_round")==sd_round:
+        if sd is not None and st.session_state.get("ai2_pga_showdown_signature")==sd_signature:
             st.dataframe(sd["lineups"],hide_index=True,use_container_width=True)
             st.dataframe(sd["exposure"],hide_index=True,use_container_width=True)
             st.download_button("Download Showdown lineup review",
