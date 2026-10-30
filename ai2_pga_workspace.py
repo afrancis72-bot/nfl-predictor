@@ -56,6 +56,16 @@ with tab_tournament:
         independent_file=st.file_uploader(
             "RickRunGood / independent SG Stats Bank CSV (preferred measured golfer input)",
             type=["csv"],key="ai2_pga_independent")
+        rrg_fit_file=st.file_uploader(
+            "RickRunGood Course Fit / Player Fit CSV (optional, separate from SG)",
+            type=["csv"],key="ai2_pga_rrg_fit")
+        st.caption(
+            "RRG course-fit exports: Player plus FIT, or the OTT / APP / ARG / PUTT / "
+            "SCORING skill-fit columns. When components exist, Team AI² Pro uses "
+            "its own category weights (APP 35%, OTT 25%, scoring 18%, putting 14%, "
+            "ARG 8%) rather than copying the site's overall weighting. "
+            "The adjustment is deliberately small and shown per golfer."
+        )
         otis_file=st.file_uploader("OTIS Advanced Course-Fit CSV (optional comparison and fallback)",
                                 type=["csv"],key="ai2_pga_otis")
         st.caption(
@@ -138,6 +148,7 @@ with tab_tournament:
         tuple(locks),tuple(exclusions),seed_mode,chosen_seed,
         hashlib.sha256(otis_file.getvalue()).hexdigest() if otis_file else None,
         hashlib.sha256(independent_file.getvalue()).hexdigest() if independent_file else None,
+        hashlib.sha256(rrg_fit_file.getvalue()).hexdigest() if rrg_fit_file else None,
         hashlib.sha256(holes_file.getvalue()).hexdigest() if holes_file else None,
         tuple(sorted(selected_location.items())) if selected_location else None,
     )
@@ -151,6 +162,7 @@ with tab_tournament:
             try:
                 otis_raw=pd.read_csv(BytesIO(otis_file.getvalue())) if otis_file else None
                 independent_raw=pd.read_csv(BytesIO(independent_file.getvalue())) if independent_file else None
+                rrg_fit_raw=pd.read_csv(BytesIO(rrg_fit_file.getvalue())) if rrg_fit_file else None
                 holes=pd.read_csv(BytesIO(holes_file.getvalue())) if holes_file else None
                 seed=int(chosen_seed) if chosen_seed is not None else secrets.randbelow(2147483647)
                 forecast=pd.DataFrame()
@@ -165,7 +177,8 @@ with tab_tournament:
                     result=run_tournament(dk,tournament,course_par,
                         no_cut=cut_type.startswith("No cut"),
                         cut_size=cut_size,hole_frame=holes,otis_raw=otis_raw,
-                        independent_raw=independent_raw,weather_raw=forecast,
+                        independent_raw=independent_raw,course_fit_raw=rrg_fit_raw,
+                        weather_raw=forecast,
                         sims=sims,seed=seed,lineup_count=lineup_count,
                         max_exposure=exposure_pct/100,
                         salary_floor=salary_floor,min_unique=min_unique,
@@ -194,14 +207,23 @@ with tab_tournament:
         if meta["otis_match"]==0 and meta["independent_sg_match"]==0:
             st.warning(
                 "LOW-CONFIDENCE RESEARCH: golfer quality is inferred only from DraftKings salary. "
-                "Real recent SG, course fit, weather, injuries and ownership are NOT available in this run. "
+                "Independent measured SG, injuries and ownership are NOT available in this run. "
+                "An optional RRG course-fit tilt alone does not establish golfer skill. "
                 "Do not treat the modeled probabilities as verified edge."
             )
         else:
             st.caption(
                 f"Observed independent SG: {meta['independent_sg_match']}/{meta['field_size']} golfers. "
                 f"OTIS course-fit available: {meta['otis_match']}/{meta['field_size']}. "
+                f"RRG course fit: {meta['rrg_fit_match']}/{meta['field_size']} "
+                f"({meta['rrg_fit_components']} with skill categories). "
                 "V11 scoring probabilities remain experimental and have not been calibrated."
+            )
+        if meta["rrg_fit_match"]:
+            st.caption(
+                "RickRunGood course-fit tilt is a *provisional* capped adjustment "
+                "to per-round scoring expectation, not an independently validated prediction. "
+                "Its FIT-only fallback receives reduced weight."
             )
         if not meta["hole_pars_verified"]:
             st.info("Generic provisional hole pars were used; verify actual course layout to strengthen the model.")
@@ -374,6 +396,26 @@ with tab_audit:
         st.write("Observed independent golfer strokes gained: "
                  f"**{meta['independent_sg_match']}/{meta['field_size']} matched golfers**. "
                  "Measured input overrides OTIS model scores; no invented SG.")
+        st.write(
+            f"Optional RickRunGood Course Fit: **{meta['rrg_fit_match']}/{meta['field_size']} matched** "
+            f"({meta['rrg_fit_components']} component-based, "
+            f"{meta['rrg_fit_overall_only']} FIT-only fallback)."
+        )
+        if meta["rrg_fit_match"]:
+            st.caption("Independent Team AI² Pro category weights: APP 35%, OTT 25%, "
+                       "SCORING 18%, PUTT 14%, ARG 8%; small capped per-round tilts.")
+            fitcols=[c for c in ["player","rrg_fit_app","rrg_fit_ott",
+                  "rrg_fit_arg","rrg_fit_putt","rrg_fit_scoring","rrg_fit_overall",
+                  "rrg_fit_signal_z","rrg_fit_adjustment_strokes",
+                  "rrg_fit_evidence","expected_round_before_rrg_fit",
+                  "expected_round"] if c in result["projections"].columns]
+            st.dataframe(result["projections"][fitcols],
+                         use_container_width=True,hide_index=True)
+            st.download_button(
+                "Download RRG course-fit impact audit",
+                result["projections"][fitcols].to_csv(index=False).encode("utf-8-sig"),
+                "team_ai2_pga_rrg_course_fit_impact.csv",mime="text/csv"
+            )
         show=["player","salary","expected_round","round_sd","v11_mean_dk",
               "v11_median_dk","v11_p90_dk","v11_p95_dk",
               "v11_make_cut_pct","otis_true_skill","otis_form","otis_course_fit"]
