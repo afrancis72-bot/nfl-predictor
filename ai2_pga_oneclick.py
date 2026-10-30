@@ -432,7 +432,8 @@ def dk_roster_ids(portfolio,projections):
         fields.append([ids[n] for n in chosen])
     return pd.DataFrame(fields,columns=["G"]*6).to_csv(index=False).encode("utf-8-sig")
 
-def evaluate_groups(groups,model,round_no,live=None,seed=42,sims=25000,tickets=5):
+def evaluate_groups(groups,model,round_no,live=None,seed=42,sims=25000,tickets=5,
+                    two_ball_tie_rule="loss"):
     if groups.empty:
         raise ValueError("No verified round groups available.")
     if round_no>1 and (live is None or live.empty):
@@ -444,10 +445,12 @@ def evaluate_groups(groups,model,round_no,live=None,seed=42,sims=25000,tickets=5
         covered=int((ratings["live_rounds"]>0).sum())
         if covered < max(3,int(len(ratings)*.5)):
             raise ValueError(f"Only {covered}/{len(ratings)} golfers matched completed-round scoring evidence.")
-    probs,_=simulate_groups(groups,ratings,n_sims=int(sims),seed=int(seed))
+    probs,_=simulate_groups(groups,ratings,n_sims=int(sims),seed=int(seed),
+                            two_ball_tie_rule=two_ball_tie_rule)
     summary,legs=build_six_leg_tickets(probs,ticket_count=int(tickets))
     return {"ratings":ratings,"probabilities":probs,"ticket_summary":summary,
-        "ticket_legs":legs,"source":provenance}
+        "ticket_legs":legs,"source":provenance,
+        "two_ball_tie_rule":two_ball_tie_rule}
 
 def build_round_showdown(dk,model,round_no,live,seed=42,count=4,exposure=.5,salary_floor=46500):
     if int(round_no) not in (2,3,4):
