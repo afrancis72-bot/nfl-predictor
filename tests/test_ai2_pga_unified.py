@@ -2,6 +2,10 @@
 import unittest
 import pandas as pd
 import numpy as np
+from unittest.mock import patch
+
+from round_parlay import (simulate_groups, build_six_leg_tickets,
+                          parse_groupings_text, _api_groupings)
 
 from ai2_pga_oneclick import (
     parse_dk, normalize_otis, market_baseline, run_tournament,
@@ -167,6 +171,125 @@ class TestPGAOneclick(unittest.TestCase):
             "G,G,G,G,G,G"
         )
         self.assertEqual(a["metadata"]["otis_match"],0)
+
+    def test_mixed_2_ball_3_ball_group_csv_and_invalid_rosters(self):
+        names=[f"Golfer {i:02d}" for i in range(20)]
+        source=pd.DataFrame([
+            {"tee_time":"9:00","golfer1":names[0],"golfer2":names[1],
+             "golfer3":np.nan},
+            {"tee_time":"9:10","golfer1":names[2],"golfer2":names[3],
+             "golfer3":names[4]},
+            {"tee_time":"9:20","golfer1":names[5],"golfer2":names[5],
+             "golfer3":""},
+            {"tee_time":"9:30","golfer1":names[6],"golfer2":"","golfer3":""},
+        ])
+        g=normalize_groupings_upload(source,round_no=3)
+        self.assertEqual(g["group_size"].tolist(),[2,3])
+        self.assertEqual(g["player3"].tolist()[0],"")
+        self.assertEqual(g["round"].tolist(),[3,3])
+        self.assertEqual(len(g),2)
+
+    def test_official_tee_time_feed_accepts_true_two_ball_and_three_ball(self):
+        mock_rounds={"rounds":[
+            {"roundInt":3,"groups":[
+                {"groupNumber":12,"teeTime":1793466000000,
+                 "players":[{"displayName":"Pair One"},{"displayName":"Pair Two"}]},
+                {"groupNumber":13,"teeTime":1793466000000,
+                 "players":[{"displayName":"Trio One"},{"displayName":"Trio Two"},
+                            {"displayName":"Trio Three"}]},
+                {"groupNumber":14,"teeTime":1793466000000,
+                 "players":[{"displayName":"Solo"}]},
+                {"groupNumber":15,"teeTime":1793466000000,
+                 "players":[{"displayName":"Four One"},{"displayName":"Four Two"},
+                            {"displayName":"Four Three"},{"displayName":"Four Four"}]},
+            ]},
+        ]}
+        with patch("round_parlay._pga_graphql",return_value={"teeTimesCompressedV2":{"payload":"fake"}}):
+            with patch("round_parlay._decompress_payload",return_value=mock_rounds):
+                groups,tid,note=_api_groupings("Event",2026,3,tournament_id="R2026999")
+        self.assertEqual(tid,"R2026999")
+        self.assertEqual(groups["group_size"].tolist(),[2,3])
+        self.assertEqual(groups["player3"].iloc[0],"")
+
+    def test_weekend_head_to_head_ties_are_three_way_losses_or_two_way_pushes(self):
+        names=[f"Golfer {i:02d}" for i in range(24)]
+        groups=normalize_groupings_upload(pd.DataFrame([
+            {"player1":names[0],"player2":names[1],"tee_time":"9:00"},
+            {"player1":names[2],"player2":names[3],"tee_time":"9:10"},
+            {"player1":names[4],"player2":names[5],"tee_time":"9:20"},
+            {"player1":names[6],"player2":names[7],"tee_time":"9:30"},
+            {"player1":names[8],"player2":names[9],"tee_time":"9:40"},
+            {"player1":names[10],"player2":names[11],"tee_time":"9:50"},
+        ]),3)
+        ratings=pd.DataFrame({"key":[x.lower() for x in names],
+                              "round_rating":[50.]*len(names)})
+        # Two-player, three-outcome (Tie selectable, golfer bet loses):
+        threeway,_=simulate_groups(groups,ratings,n_sims=5000,seed=42,
+                                   two_ball_tie_rule="loss")
+        golfers=threeway[threeway.status.eq("OK")]
+        ties=threeway[threeway.status.eq("TIE_OUTCOME")]
+        self.assertEqual(len(golfers),12)
+        self.assertEqual(len(ties),6)
+        self.assertTrue((golfers["push_pct"]==0).all())
+        self.assertTrue((golfers["tie_outcome_pct"]>0).all())
+        for group, g in threeway.groupby("group"):
+            picks=g[g.status.eq("OK")]
+            tie=g[g.status.eq("TIE_OUTCOME")].iloc[0]
+            self.assertAlmostEqual(float(picks["win_pct"].sum()+tie.win_pct),100,places=6)
+            self.assertAlmostEqual(float(picks.iloc[0].loss_pct),
+                100-float(picks.iloc[0].win_pct),places=6)
+        # Two-way: tie pushes either golfer, rather than losing the bet.
+        twoway,_=simulate_groups(groups,ratings,n_sims=5000,seed=42,
+                                 two_ball_tie_rule="push")
+        golfer2=twoway[twoway.status.eq("OK")]
+        self.assertFalse(twoway.status.eq("TIE_OUTCOME").any())
+        self.assertTrue((golfer2["push_pct"]>0).all())
+        self.assertAlmostEqual(float(golfer2.iloc[0].push_pct),
+                               float(golfer2.iloc[0].tie_outcome_pct))
+        self.assertAlmostEqual(float(golfer2.iloc[0].win_pct+
+                           golfer2.iloc[0].loss_pct+golfer2.iloc[0].push_pct),100)
+        # Weekend six-leg parlay must be possible from six real two-golfer pairs,
+        # and tie-win is displayed separately, never auto-forced as a parlay leg.
+        summary,legs=build_six_leg_tickets(threeway,ticket_count=1)
+        self.assertEqual(len(legs),6)
+        self.assertTrue((legs["matchup_type"]=="2-ball").all())
+        self.assertEqual(int(summary["two_ball_legs"].iloc[0]),6)
+        self.assertFalse(legs["player"].eq("Tie").any())
+        self.assertTrue((legs["push_pct"]==0).all())
+        self.assertAlmostEqual(float(summary["strict_6_of_6_pct"].iloc[0]),
+            float(summary["all_legs_non_loss_pct"].iloc[0]),places=6)
+
+    def test_mixed_six_leg_parlay_from_3_pairs_and_3_triples(self):
+        names=[f"Golfer {i:02d}" for i in range(24)]
+        groups=[]
+        for i in range(3):
+            groups.append({"player1":names[2*i],"player2":names[2*i+1],
+                           "player3":"","tee_time":"9:00"})
+        for i in range(3):
+            groups.append({"player1":names[6+3*i],"player2":names[7+3*i],
+                           "player3":names[8+3*i],"tee_time":"9:10"})
+        groupings=normalize_groupings_upload(pd.DataFrame(groups),3)
+        ratings=pd.DataFrame({"key":[x.lower() for x in names],
+                              "round_rating":[50.]*len(names)})
+        probs,_=simulate_groups(groupings,ratings,n_sims=5000,seed=55)
+        summary,legs=build_six_leg_tickets(probs,ticket_count=1)
+        self.assertEqual(len(legs),6)
+        self.assertEqual(int(summary["two_ball_legs"].iloc[0]),3)
+        self.assertEqual(set(legs["matchup_type"]),{"2-ball","3-ball"})
+        self.assertEqual(int(legs["group"].nunique()),6)
+        self.assertEqual(len(legs["player"].unique()),6)
+
+    def test_only_five_valid_matchups_never_force_six_leg_ticket(self):
+        players=[f"Golfer {i:02d}" for i in range(10)]
+        groups=normalize_groupings_upload(pd.DataFrame(
+            [{"player1":players[2*i],"player2":players[2*i+1]}
+             for i in range(5)]),round_no=3)
+        ratings=pd.DataFrame({"key":[x.lower() for x in players],
+                              "round_rating":[50.]*10})
+        probs,_=simulate_groups(groups,ratings,n_sims=1000)
+        summary,legs=build_six_leg_tickets(probs)
+        self.assertTrue(summary.empty)
+        self.assertTrue(legs.empty)
 
     def test_threeball_research_clearly_market_only(self):
         d=self.slate()
