@@ -6,7 +6,7 @@ import numpy as np
 from ai2_pga_oneclick import (
     parse_dk, normalize_otis, market_baseline, run_tournament,
     dk_roster_ids, normalize_groupings_upload,
-    evaluate_groups,
+    evaluate_groups, normalize_independent_stats,
 )
 
 class TestPGAOneclick(unittest.TestCase):
@@ -45,6 +45,27 @@ class TestPGAOneclick(unittest.TestCase):
         self.assertNotIn("otis_model",normalized)
         with self.assertRaises(ValueError):
             normalize_otis(otis.head(4),dk)
+
+    def test_independent_measured_strokes_gained_is_primary(self):
+        dk=parse_dk(self.slate())
+        source=pd.DataFrame({
+            "Player":dk["player"],
+            "SG: Total":np.linspace(-1.1,1.5,len(dk)),
+            "SG: APP":np.linspace(-.8,1.1,len(dk)),
+            "SG: OTT":np.linspace(-.5,.65,len(dk)),
+            "SG: PUTT":np.linspace(.25,-.2,len(dk)),
+            "Measured Rounds":[48]*len(dk),
+        })
+        normalized,covered=normalize_independent_stats(source,dk)
+        self.assertEqual(covered,len(dk))
+        self.assertIn("sg_approach",normalized)
+        result=run_tournament(self.slate(),tournament="Observed SG Acceptance",
+            course_par=72,no_cut=True,sims=1000,seed=55,lineup_count=2,
+            max_exposure=.5,salary_floor=46000,min_unique=2,
+            independent_raw=source)
+        self.assertEqual(result["metadata"]["independent_sg_match"],len(dk))
+        self.assertIn("Independent observed",result["metadata"]["source_mode"])
+        self.assertEqual(len(result["lineups"]),12)
 
     def test_one_button_sim_projections_align_seed_and_legal_dk_six(self):
         d=self.slate()
