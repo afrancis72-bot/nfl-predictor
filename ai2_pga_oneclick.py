@@ -96,6 +96,52 @@ def normalize_otis(raw,dk):
     # missing values to neutral contribution rather than poor performances.
     return out,matched
 
+def normalize_independent_stats(raw,dk):
+    """Optional measured RRG/SG Stats Bank export; independent of OTIS ranking.
+
+    Accepts published strokes-gained columns; missing measurements remain NaN.
+    DK salaries or salary rank are never misrepresented as observed SG.
+    """
+    if raw is None:
+        return pd.DataFrame(),0
+    frame=raw.copy()
+    columns={key(c):c for c in frame.columns}
+    def choose(names):
+        return next((columns[key(n)] for n in names if key(n) in columns),None)
+    name=choose(("player","name","golfer","player name","golfer name"))
+    if not name:
+        raise ValueError("Independent golfer stats CSV needs a player/name column.")
+    aliases={
+        "sg_total":["sg_total","SG: Total","SG Total","SG TOT","Strokes Gained Total","SGT"],
+        "sg_approach":["sg_approach","SG: APP","SG APP","SG Approach","Strokes Gained Approach","SG: Approach"],
+        "sg_ott":["sg_ott","SG: OTT","SG OTT","SG Off the Tee","Strokes Gained Off the Tee","SG Off Tee"],
+        "sg_arg":["sg_arg","SG: ARG","SG ARG","SG Around the Green","Strokes Gained Around the Green"],
+        "sg_putting":["sg_putting","SG: PUTT","SG PUTT","SG Putting","Strokes Gained Putting"],
+        "driving_distance":["driving_distance","Driving Distance"],
+        "driving_accuracy":["driving_accuracy","Driving Accuracy"],
+        "birdie_rate":["birdie_rate","Birdie Rate","Birdie Percentage"],
+        "bogey_avoidance":["bogey_avoidance","Bogey Avoidance"],
+        "measured_rounds":["measured_rounds","Measured Rounds","Rounds"],
+    }
+    found={k:choose(v) for k,v in aliases.items()}
+    sg_keys=("sg_total","sg_approach","sg_ott","sg_arg","sg_putting")
+    if not any(found[k] for k in sg_keys):
+        raise ValueError("Independent stats CSV has no measured SG Total, APP, OTT, ARG, or PUTT column.")
+    vals=pd.DataFrame({"player":frame[name].astype(str).str.strip()})
+    vals["match_key"]=vals["player"].map(key)
+    if vals["match_key"].duplicated().any():
+        raise ValueError("Duplicate golfer in independent stats CSV.")
+    for k,source in found.items():
+        if source:
+            vals[k]=pd.to_numeric(frame[source],errors="coerce")
+    names=dk[["player"]].copy()
+    names["match_key"]=names["player"].map(key)
+    aligned=names.merge(vals.drop(columns=["player"]),on="match_key",how="left",validate="one_to_one").drop(columns=["match_key"])
+    covered=int(aligned[list(k for k in sg_keys if k in aligned)].notna().any(axis=1).sum())
+    if covered/max(1,len(dk))<.70:
+        raise ValueError(f"Only {covered}/{len(dk)} golfers have measured SG data in the independent export; need 70% or more.")
+    return aligned,covered
+
 def market_baseline(dk):
     """Observable salary ranking only; *not* measured SG or official world rank."""
     d=dk[["player","salary"]].copy()
@@ -134,8 +180,15 @@ def _ensure_coverage_for_optimizer(df):
 def group_ratings_source(model):
     """Market-only fallbacks are visibly flagged and not disguised as OTIS."""
     otis=model["otis"]
+    if int(model.get("metadata",{}).get("independent_sg_match",0))>0:
+        p=model["projections"][["player","expected_round"]].copy()
+        z=(p["expected_round"]-p["expected_round"].mean())/max(float(p["expected_round"].std(ddof=0)),.01)
+        p["otis_true_skill"]=(50.-9.*z).clip(20,80)
+        p["otis_course_fit"]=50.
+        p["otis_form"]=50.
+        return p[["player","otis_true_skill","otis_course_fit","otis_form"]], "independent observed-SG model-derived ratings (not OTIS ranks)"
     if not otis.empty:
-        return otis,"observed OTIS inputs; independent model course-adjusted"
+        return otis,"observed OTIS True Skill, Course Fit and Form; uncalibrated round rating"
     p=model["projections"][["player","expected_round"]].copy()
     z=(p["expected_round"]-p["expected_round"].mean())/max(float(p["expected_round"].std(ddof=0)),.01)
     p["otis_true_skill"]=(50.-9.*z).clip(20,80)
@@ -144,7 +197,7 @@ def group_ratings_source(model):
     return p[["player","otis_true_skill","otis_course_fit","otis_form"]], "DK salary-derived proxy ONLY, not observed SG or independent course fit"
 
 def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
-                   otis_raw=None,sims=3000,seed=42,lineup_count=10,
+                   otis_raw=None,independent_raw=None,sims=3000,seed=42,lineup_count=10,
                    max_exposure=.35,salary_floor=46500,min_unique=3,
                    strategy="Balanced / Single Entry",locks=(),excludes=()):
     if not str(tournament).strip():
@@ -160,7 +213,16 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
         raise ValueError("Exposure cap outside 10–100%.")
     holes=validated_holes(hole_frame,int(course_par))
     otis,matched=normalize_otis(otis_raw,dk)
-    if not otis.empty:
+    independent,observed_match=normalize_independent_stats(independent_raw,dk)
+    if not independent.empty:
+        base=predict_from_dataframes(
+            PGAConfig(tournament=str(tournament),sims=int(sims),seed=int(seed)),
+            dk[["player","salary"]],independent,
+            results=pd.DataFrame(),history=pd.DataFrame(),holes=pd.DataFrame(),
+            weather=pd.DataFrame(),
+        )
+        mode="Independent observed strokes-gained stats + V10 golfer/course model; no OTIS model weighting"
+    elif not otis.empty:
         # No silent use of stale repo results/course-history files.
         base=predict_from_dataframes(
             PGAConfig(tournament=str(tournament),sims=int(sims),seed=int(seed)),
@@ -213,12 +275,12 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
             "sim_lineup_p95":round(float(np.quantile(v,.95)),2)})
     summary=summary.merge(pd.DataFrame(same_world),on="lineup",how="left",validate="one_to_one")
     return {"projections":predicted,"lineups":portfolio,"summary":summary,
-        "exposure":exposure,"otis":otis,"raw_draws":draws,
+        "exposure":exposure,"otis":otis,"independent":independent,"raw_draws":draws,
         "diagnostics":diagnostics,
         "metadata":{"tournament":str(tournament),"course_par":int(course_par),
             "hole_pars_verified":holes is not None,"field_size":len(dk),
             "simulations":int(sims),"seed":int(seed),
-            "otis_match":matched,"source_mode":mode,
+            "otis_match":matched,"independent_sg_match":observed_match,"source_mode":mode,
             "created_utc":datetime.now(timezone.utc).isoformat()}}
 
 def dk_roster_ids(portfolio,projections):
