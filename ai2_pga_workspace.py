@@ -11,6 +11,7 @@ import streamlit as st
 from ai2_pga_oneclick import (
     parse_dk, run_tournament,dk_roster_ids, evaluate_groups,
     build_round_showdown,normalize_groupings_upload,normalize_live_results,
+    bookmaker_filtered_tickets,
 )
 from round_parlay import fetch_groupings,fetch_official_prior_rounds
 from international_ingestion import geocode_course, location_detail, fetch_weather
@@ -317,6 +318,7 @@ with tab_parlay:
                 "tournament":tournament,"seed":run_seed,
             }
             analyzed["live"]=live
+            analyzed["groups"]=groupings
             analyzed["signature"]=group_signature
             st.session_state["ai2_pga_3ball"]=analyzed
             pair_count=int((groupings["group_size"]==2).sum())
@@ -333,24 +335,69 @@ with tab_parlay:
         st.caption(f"Groupings: {grp['metadata']['groupings_source']} · "
                    f"Prior scores: {grp['metadata']['completed_rounds_source']} · "
                    f"Ratings: {grp['source']}")
-        st.subheader("Individual matchup probabilities · 2-ball and 3-ball")
-        st.dataframe(grp["probabilities"],use_container_width=True,hide_index=True)
-        st.download_button("Download group matchup estimates",
-            grp["probabilities"].to_csv(index=False).encode("utf-8-sig"),
-            f"team_ai2_pga_r{round_no}_groups.csv",mime="text/csv")
-        st.subheader("Six-leg candidate research")
-        if grp["ticket_legs"].empty:
-            st.info("Fewer than six fully matched two-/three-ball groups. No forced six-leg ticket.")
+        st.subheader("Only bookable Hard Rock matchups belong in the parlay")
+        st.caption(
+            "Official PGA tee groups are NOT the same as the group-matchup markets "
+            "Hard Rock actually offers. Select only groups visibly listed in your sportsbook. "
+            "The simulator can research every tee group, but won't generate a bettable "
+            "six-leg shortlist from unconfirmed groups."
+        )
+        all_groups=grp["groups"]
+        choices={int(g.group):(
+            f"R{round_no} · {g.tee_time} · "
+            f"{g.player1} / {g.player2}"
+            + (f" / {g.player3}" if int(g.group_size)==3 else "")
+            + f" ({int(g.group_size)}-ball)"
+        ) for g in all_groups.itertuples(index=False)}
+        unique_market_key=hashlib.sha256(repr(group_signature).encode()).hexdigest()[:15]
+        offered_ids=st.multiselect(
+            "Hard Rock group markets currently offered",
+            options=list(choices),
+            default=[],
+            format_func=lambda x:choices[x],
+            key=f"pga_offered_market_ids_{unique_market_key}",
+            help="Select the GROUPS shown in Hard Rock. Changing this list "
+                 "immediately recalculates the six-leg suggestions without new simulations."
+        )
+        restricted_probs,restricted_summary,restricted_legs=bookmaker_filtered_tickets(
+            grp["probabilities"],all_groups,offered_ids,ticket_count=ticket_count
+        )
+        st.caption(
+            f"{len(offered_ids)} sportsbook-listed groups selected out of "
+            f"{len(all_groups)} official tee-time groups."
+        )
+        with st.expander("All official-group research (includes unlisted/unbettable markets)"):
+            st.dataframe(grp["probabilities"],use_container_width=True,hide_index=True)
+            st.download_button("Download all theoretical group probabilities",
+                grp["probabilities"].to_csv(index=False).encode("utf-8-sig"),
+                f"team_ai2_pga_r{round_no}_all_official_groups.csv",mime="text/csv")
+        st.subheader("Hard Rock-listed matchup probabilities")
+        if restricted_probs.empty:
+            st.info("Choose the groups that Hard Rock actually lists before building a parlay.")
         else:
-            st.dataframe(grp["ticket_summary"],hide_index=True,use_container_width=True)
-            st.dataframe(grp["ticket_legs"],hide_index=True,use_container_width=True)
-            st.caption("The displayed full-ticket probabilities assume approximate independence, "
-                       "and do not incorporate sportsbook odds. 3-ball ties push; 2-ball ties "
-                       "lose a golfer bet in 3-way markets or push it in 2-way markets. "
-                       "Verify the exact rules on your betting slip.")
-            st.download_button("Download researched 6-leg candidates",
-                grp["ticket_legs"].to_csv(index=False).encode("utf-8-sig"),
-                f"team_ai2_pga_r{round_no}_six_legs.csv",mime="text/csv")
+            st.dataframe(restricted_probs,use_container_width=True,hide_index=True)
+            st.download_button("Download Hard Rock-listed matchup estimates",
+                restricted_probs.to_csv(index=False).encode("utf-8-sig"),
+                f"team_ai2_pga_r{round_no}_hard_rock_groups.csv",mime="text/csv")
+        st.subheader("Six-leg candidates from offered groups only")
+        if restricted_legs.empty:
+            st.info(
+                "No six-leg ticket generated. Select at least six ACTUALLY OFFERED, "
+                "fully matched sportsbook group markets; six weak or unavailable "
+                "legs should not be forced into a parlay."
+            )
+        else:
+            st.dataframe(restricted_summary,hide_index=True,use_container_width=True)
+            st.dataframe(restricted_legs,hide_index=True,use_container_width=True)
+            st.caption(
+                "Selection is restricted to your confirmed Hard Rock group markets. "
+                "PGA tee-time status does not confirm sportsbook availability. "
+                "Probabilities are provisional and assume approximate independence. "
+                "Compare actual sportsbook prices and settlement rules before wagering."
+            )
+            st.download_button("Download offered-market six-leg candidates",
+                restricted_legs.to_csv(index=False).encode("utf-8-sig"),
+                f"team_ai2_pga_r{round_no}_hard_rock_six_legs.csv",mime="text/csv")
     elif result is None:
         st.info("Run Tournament DFS once to establish the current field and player strength before round research.")
 
