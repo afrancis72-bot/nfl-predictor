@@ -26,6 +26,7 @@ class TestPGAOneclick(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_dk(bad)
         bad=self.slate()
+        bad["Salary"]=bad["Salary"].astype(object)
         bad.loc[1,"Salary"]="?"
         with self.assertRaises(ValueError):
             parse_dk(bad)
