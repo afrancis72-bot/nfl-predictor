@@ -52,9 +52,13 @@ with tab_tournament:
         except Exception as exc:
             st.error(f"DraftKings field check: {exc}")
     with st.expander("Optional golfer research, course pars and advanced portfolio settings"):
-        otis_file=st.file_uploader("OTIS Advanced Course-Fit CSV (recommended for informed projections)",
+        independent_file=st.file_uploader(
+            "RickRunGood / independent SG Stats Bank CSV (preferred measured golfer input)",
+            type=["csv"],key="ai2_pga_independent")
+        otis_file=st.file_uploader("OTIS Advanced Course-Fit CSV (optional comparison and fallback)",
                                 type=["csv"],key="ai2_pga_otis")
         st.caption(
+            "Measured RRG strokes gained takes priority over OTIS in the independent golfer model. "
             "OTIS is optional; without measured golfer skill/form/course fit, "
             "the one-button DK-only simulator is a clearly labeled "
             "salary-market research baseline, NOT an independently calibrated forecast. "
@@ -96,6 +100,7 @@ with tab_tournament:
         exposure_pct,min_unique,salary_floor,strategy,cut_size,
         tuple(locks),tuple(exclusions),seed_mode,chosen_seed,
         hashlib.sha256(otis_file.getvalue()).hexdigest() if otis_file else None,
+        hashlib.sha256(independent_file.getvalue()).hexdigest() if independent_file else None,
         hashlib.sha256(holes_file.getvalue()).hexdigest() if holes_file else None,
     )
     do_run=st.button("⛳ Run PGA simulation + build DFS lineups",
@@ -107,12 +112,13 @@ with tab_tournament:
         else:
             try:
                 otis_raw=pd.read_csv(BytesIO(otis_file.getvalue())) if otis_file else None
+                independent_raw=pd.read_csv(BytesIO(independent_file.getvalue())) if independent_file else None
                 holes=pd.read_csv(BytesIO(holes_file.getvalue())) if holes_file else None
                 seed=int(chosen_seed) if chosen_seed is not None else secrets.randbelow(2147483647)
                 with st.spinner(f"Simulating {sims:,} 72-hole tournament worlds and optimizing DFS portfolio…"):
                     result=run_tournament(dk,tournament,course_par,
                         no_cut=cut_type.startswith("No cut"),
-                        cut_size=cut_size,hole_frame=holes,otis_raw=otis_raw,
+                        cut_size=cut_size,hole_frame=holes,otis_raw=otis_raw,independent_raw=independent_raw,
                         sims=sims,seed=seed,lineup_count=lineup_count,
                         max_exposure=exposure_pct/100,
                         salary_floor=salary_floor,min_unique=min_unique,
@@ -136,15 +142,18 @@ with tab_tournament:
         st.divider()
         st.subheader("Built portfolio — human review before entering")
         st.caption(f"{meta['tournament']} · {meta['course']} · {meta['simulations']:,} simulations · seed {meta['seed']}")
-        if meta["otis_match"]==0:
+        if meta["otis_match"]==0 and meta["independent_sg_match"]==0:
             st.warning(
                 "LOW-CONFIDENCE RESEARCH: golfer quality is inferred only from DraftKings salary. "
                 "Real recent SG, course fit, weather, injuries and ownership are NOT available in this run. "
                 "Do not treat the modeled probabilities as verified edge."
             )
         else:
-            st.caption(f"Observed OTIS course-fit fields matched {meta['otis_match']}/{meta['field_size']} golfers. "
-                       "V11 scoring probabilities remain experimental and have not been calibrated.")
+            st.caption(
+                f"Observed independent SG: {meta['independent_sg_match']}/{meta['field_size']} golfers. "
+                f"OTIS course-fit available: {meta['otis_match']}/{meta['field_size']}. "
+                "V11 scoring probabilities remain experimental and have not been calibrated."
+            )
         if not meta["hole_pars_verified"]:
             st.info("Generic provisional hole pars were used; verify actual course layout to strengthen the model.")
         st.dataframe(result["summary"],hide_index=True,use_container_width=True)
@@ -296,7 +305,9 @@ with tab_audit:
         st.write(f"Model source: **{meta['source_mode']}**")
         st.write(f"Verified 18 hole pars: **{'Yes' if meta['hole_pars_verified'] else 'No — generic provisional layout'}**")
         st.write("Weather / tee wave: **Not connected to current venue in this unified workflow.**")
-        st.write("RRG/OTIS observed golfer data: **OTIS optional upload only; no fabricated SG history.**")
+        st.write("Observed independent golfer strokes gained: "
+                 f"**{meta['independent_sg_match']}/{meta['field_size']} matched golfers**. "
+                 "Measured input overrides OTIS model scores; no invented SG.")
         show=["player","salary","expected_round","round_sd","v11_mean_dk",
               "v11_median_dk","v11_p90_dk","v11_p95_dk",
               "v11_make_cut_pct","otis_true_skill","otis_form","otis_course_fit"]
