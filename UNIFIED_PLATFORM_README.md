@@ -51,6 +51,62 @@ The separate `afrancis72-bot/NASCAR-predictor` standalone repository remains
 unchanged. All unified functionality lives under
 `afrancis72-bot/nfl-predictor@feature/unified-ai2-platform`.
 
+## PGA — native V11 golf simulation, three-balls, Showdown
+
+Select **PGA** from the same unified sport selector. The PGA selector
+now opens a native workspace with four tabs:
+
+- **Tournament DFS:** enter the real event, venue, week, course par and
+  cut/no-cut format; upload the current DraftKings salary file. Click
+  **Run PGA simulation + build DFS lineups**. The existing V11 engine
+  simulates hole-by-hole scores for 72 holes, produces DK Classic scores,
+  and constructs 6-golfer, $50K-cap portfolios. Defaults: 3,000
+  tournaments and 10 lineups. Settings include exposure, minimum unique
+  golfers, minimum salary, balanced vs GPP vs cut-equity objectives,
+  fixed/Fibonacci/random seed, golfer locks/vetoes.
+- **Round 3-Balls & 6-Leg Research:** retrieves official round
+  groupings and verified prior round scores from the existing PGA TOUR
+  adapter, or user-provided CSV fallbacks. Runs within-group simulations
+  and produces push-aware six-leg research candidates; clearly **not**
+  actual sportsbook odds or calibrated real-world hit probabilities.
+  Round 2+ requires observed completed-round scores. No forced bets
+  with fewer than six fully matched groups.
+- **Round Showdown:** imports round-specific DK salaries and uses
+  completed-round evidence to construct 6-golfer showdown lineups.
+- **Course DNA / Data Quality:** reports actual input coverage, measured
+  SG vs salary-market-only baseline, hole template provenance, weather,
+  and player-specific skill assumptions.
+
+**Measured golfer data is optional, but it matters.** A single DK salary
+upload enables a **lower-confidence market-prior experiment** that derives
+expected skill solely from the DK salary distribution; it is not
+independently predictive and does not invent historical strokes gained.
+Optional observed **RickRunGood/independent SG Stats Bank exports** take
+priority in the V10 golfer model. Optional OTIS Advanced Course-Fit
+exports inform skill, recent form and course-fit only when independently
+observed SG has not been provided. OTIS ranking/model are audit-only
+and never direct inputs. Each supplied research file requires at least
+70% valid matching to the current DK field. The app never substitutes
+the standalone PGA repo's stale results/field data as current.
+
+Actual 18-hole course pars can be imported; otherwise generic pars
+matching course par are clearly labeled provisional. A user-selected,
+verified venue from public OpenStreetMap geocoding can optionally feed
+Open-Meteo hourly weather into the V10 golfer model when measured input
+data are present. No individualized tee-wave exposure is fabricated.
+This is an experimental golf-first scoring model, not a calibrated
+hole-level/strokes-gained simulation or demonstrated profitable
+DraftKings strategy. Full covariance-aware portfolio search, verified
+ownership and real DFS contest ROI evaluation remain research tasks.
+
+Files include `ai2_pga_workspace.py`, `ai2_pga_oneclick.py`, the
+ported V11 golf/round modules, and
+`.github/workflows/unified-pga-acceptance.yml`.
+The independent `afrancis72-bot/pga-predictor` repository remains unchanged.
+As with NASCAR, the six-G/real-ID roster CSV must be compared to the
+actual DKEntries contest template before uploading. No direct
+DraftKings betting, entries, or live-deployment claim is made.
+
 ## NFL Classic one-button workflow
 
 1. Open NFL from the home screen and upload the DraftKings salaries CSV.
