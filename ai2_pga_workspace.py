@@ -15,7 +15,7 @@ from ai2_pga_oneclick import (
 from round_parlay import fetch_groupings,fetch_official_prior_rounds
 from international_ingestion import geocode_course, location_detail, fetch_weather
 
-st.subheader("PGA · Tournament DFS, Round Showdown & 3-Ball Parlays")
+st.subheader("PGA · Tournament DFS, Round Showdown & Group-Matchup Parlays")
 st.caption(
     "One unified golf workspace. Tournament DFS uses the existing V11 "
     "hole-by-hole scoring simulator. Live round props use published groupings "
@@ -24,7 +24,7 @@ st.caption(
 
 tab_tournament,tab_parlay,tab_showdown,tab_audit=st.tabs([
     "🏆 Tournament DFS · One Click",
-    "🎯 Round 3-Balls & 6-Leg Research",
+    "🎯 Round Matchups · 2 & 3 Balls",
     "⛳ Round Showdown",
     "🧬 Course DNA & Data Quality",
 ])
@@ -253,10 +253,11 @@ with tab_tournament:
             "team_ai2_pga_simulated_projections.csv",mime="text/csv")
 
 with tab_parlay:
-    st.subheader("PGA TOUR 3-Ball Matchups · 6-Leg Ticket Research")
+    st.subheader("PGA TOUR 2-Ball & 3-Ball Matchups · 6-Leg Research")
     st.caption(
         "Official round groupings and completed-round scores are attempted automatically. "
         "Parlay win/push probabilities are research estimates, not sportsbook prices. "
+        "Weekend groups of two are supported, including separate tie-outcome markets. "
         "No automatic betting or guaranteed edges."
     )
     cols=st.columns([1,1,1,1])
@@ -264,15 +265,24 @@ with tab_parlay:
     group_sims=int(cols[1].selectbox("Group simulations",[10000,25000,50000],index=1,key="pga_group_sims"))
     ticket_count=int(cols[2].number_input("6-leg ticket candidates",1,10,3,key="pga_ticket_count"))
     run_seed=int(cols[3].number_input("Group seed",0,2147483647,42,key="pga_group_seed"))
+    two_ball_rule=st.radio(
+        "Two-player matchup settlement (check your sportsbook)",
+        ["3-way: separate Tie outcome (golfer loses on a tie)",
+         "2-way: tied scores push the golfer selection"],
+        index=0,horizontal=True,key="pga_two_ball_rule")
+    tie_rule="loss" if two_ball_rule.startswith("3-way") else "push"
+    st.caption("Three-ball ties are modeled as pushes. For two-ball markets, "
+               "select whether a tie loses your golfer pick (3-way) or pushes it (2-way). "
+               "A separate 'Tie' outcome is displayed only for 3-way markets.")
     with st.expander("Optional source fallbacks (only when official data fail)"):
         tournament_id=st.text_input("PGA TOUR tournament ID (if known)",key="pga_tid")
         groups_upload=st.file_uploader("Verified tee groupings CSV",type=["csv"],key="pga_group_csv")
         results_upload=st.file_uploader("Completed earlier rounds CSV",type=["csv"],key="pga_prior_results_csv")
     group_signature=(result["metadata"]["created_utc"] if result else None,
-                     round_no,group_sims,ticket_count,run_seed,tournament,tournament_id,
+                     round_no,group_sims,ticket_count,run_seed,tournament,tournament_id,tie_rule,
                      hashlib.sha256(groups_upload.getvalue()).hexdigest() if groups_upload else None,
                      hashlib.sha256(results_upload.getvalue()).hexdigest() if results_upload else None)
-    do_groups=st.button("Research this round's 3-balls",type="primary",
+    do_groups=st.button("Research this round's group matchups",type="primary",
                         key="pga_research_group",use_container_width=True,
                         disabled=result is None)
     if do_groups:
@@ -285,7 +295,7 @@ with tab_parlay:
                     groupings,source,note=fetch_groupings(tournament,int(start_date.year),round_no,
                                                          tournament_id=tournament_id)
             if groupings.empty:
-                raise ValueError("No valid three-golfer round groups available. Upload verified tee times as a fallback.")
+                raise ValueError("No valid two- or three-golfer round groups available. Upload verified tee times as a fallback.")
             live=pd.DataFrame()
             live_source="Round 1: pre-tournament information only"
             if round_no>1:
@@ -299,7 +309,8 @@ with tab_parlay:
                 if live.empty:
                     raise ValueError("No verified completed-round scores for this round. Cannot present a live-informed matchup prediction.")
             analyzed=evaluate_groups(groupings,result,int(round_no),live=live,
-                                     seed=run_seed,sims=group_sims,tickets=ticket_count)
+                                     seed=run_seed,sims=group_sims,tickets=ticket_count,
+                                     two_ball_tie_rule=tie_rule)
             analyzed["metadata"]={
                 "round":round_no,"groupings_source":source,
                 "completed_rounds_source":live_source,
@@ -308,7 +319,12 @@ with tab_parlay:
             analyzed["live"]=live
             analyzed["signature"]=group_signature
             st.session_state["ai2_pga_3ball"]=analyzed
-            st.success(f"Evaluated {len(groupings)} groups for Round {round_no}.")
+            pair_count=int((groupings["group_size"]==2).sum())
+            trio_count=int((groupings["group_size"]==3).sum())
+            st.success(
+                f"Evaluated {len(groupings)} groups for Round {round_no}: "
+                f"{pair_count} two-balls and {trio_count} three-balls."
+            )
         except Exception as exc:
             st.session_state.pop("ai2_pga_3ball",None)
             st.error(str(exc))
@@ -317,18 +333,21 @@ with tab_parlay:
         st.caption(f"Groupings: {grp['metadata']['groupings_source']} · "
                    f"Prior scores: {grp['metadata']['completed_rounds_source']} · "
                    f"Ratings: {grp['source']}")
-        st.subheader("Individual three-ball probabilities")
+        st.subheader("Individual matchup probabilities · 2-ball and 3-ball")
         st.dataframe(grp["probabilities"],use_container_width=True,hide_index=True)
-        st.download_button("Download 3-ball estimates",
+        st.download_button("Download group matchup estimates",
             grp["probabilities"].to_csv(index=False).encode("utf-8-sig"),
             f"team_ai2_pga_r{round_no}_groups.csv",mime="text/csv")
         st.subheader("Six-leg candidate research")
         if grp["ticket_legs"].empty:
-            st.info("Fewer than six fully matched three-ball groups. No forced six-leg ticket.")
+            st.info("Fewer than six fully matched two-/three-ball groups. No forced six-leg ticket.")
         else:
             st.dataframe(grp["ticket_summary"],hide_index=True,use_container_width=True)
             st.dataframe(grp["ticket_legs"],hide_index=True,use_container_width=True)
-            st.caption("The displayed full-ticket probabilities assume approximate independence, and do not incorporate sportsbook odds. Ties in 3-balls can push a leg.")
+            st.caption("The displayed full-ticket probabilities assume approximate independence, "
+                       "and do not incorporate sportsbook odds. 3-ball ties push; 2-ball ties "
+                       "lose a golfer bet in 3-way markets or push it in 2-way markets. "
+                       "Verify the exact rules on your betting slip.")
             st.download_button("Download researched 6-leg candidates",
                 grp["ticket_legs"].to_csv(index=False).encode("utf-8-sig"),
                 f"team_ai2_pga_r{round_no}_six_legs.csv",mime="text/csv")
