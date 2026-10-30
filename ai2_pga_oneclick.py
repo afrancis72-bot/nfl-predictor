@@ -197,7 +197,7 @@ def group_ratings_source(model):
     return p[["player","otis_true_skill","otis_course_fit","otis_form"]], "DK salary-derived proxy ONLY, not observed SG or independent course fit"
 
 def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
-                   otis_raw=None,independent_raw=None,sims=3000,seed=42,lineup_count=10,
+                   otis_raw=None,independent_raw=None,weather_raw=None,sims=3000,seed=42,lineup_count=10,
                    max_exposure=.35,salary_floor=46500,min_unique=3,
                    strategy="Balanced / Single Entry",locks=(),excludes=()):
     if not str(tournament).strip():
@@ -214,12 +214,13 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
     holes=validated_holes(hole_frame,int(course_par))
     otis,matched=normalize_otis(otis_raw,dk)
     independent,observed_match=normalize_independent_stats(independent_raw,dk)
+    weather=(weather_raw.copy() if isinstance(weather_raw,pd.DataFrame) else pd.DataFrame())
     if not independent.empty:
         base=predict_from_dataframes(
             PGAConfig(tournament=str(tournament),sims=int(sims),seed=int(seed)),
             dk[["player","salary"]],independent,
             results=pd.DataFrame(),history=pd.DataFrame(),holes=pd.DataFrame(),
-            weather=pd.DataFrame(),
+            weather=weather,
         )
         mode="Independent observed strokes-gained stats + V10 golfer/course model; no OTIS model weighting"
     elif not otis.empty:
@@ -228,7 +229,7 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
             PGAConfig(tournament=str(tournament),sims=int(sims),seed=int(seed)),
             dk[["player","salary"]],otis,
             results=pd.DataFrame(),history=pd.DataFrame(),holes=pd.DataFrame(),
-            weather=pd.DataFrame(),
+            weather=weather,
         )
         mode="OTIS observed field strength/form/fit + V10 model"
     else:
@@ -280,7 +281,11 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
         "metadata":{"tournament":str(tournament),"course_par":int(course_par),
             "hole_pars_verified":holes is not None,"field_size":len(dk),
             "simulations":int(sims),"seed":int(seed),
-            "otis_match":matched,"independent_sg_match":observed_match,"source_mode":mode,
+            "otis_match":matched,"independent_sg_match":observed_match,
+            "weather_hours":len(weather),"weather_wind_mph":(
+                round(float(pd.to_numeric(weather["wind_mph"],errors="coerce").mean()),1)
+                if "wind_mph" in weather and weather["wind_mph"].notna().any() else None),
+            "source_mode":mode,
             "created_utc":datetime.now(timezone.utc).isoformat()}}
 
 def dk_roster_ids(portfolio,projections):
