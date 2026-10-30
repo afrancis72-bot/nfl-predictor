@@ -7,6 +7,7 @@ from ai2_pga_oneclick import (
     parse_dk, normalize_otis, market_baseline, run_tournament,
     dk_roster_ids, normalize_groupings_upload,
     evaluate_groups, normalize_independent_stats,
+    normalize_rrg_course_fit, apply_rrg_course_fit, group_ratings_source,
 )
 
 class TestPGAOneclick(unittest.TestCase):
@@ -66,6 +67,81 @@ class TestPGAOneclick(unittest.TestCase):
         self.assertEqual(result["metadata"]["independent_sg_match"],len(dk))
         self.assertIn("Independent observed",result["metadata"]["source_mode"])
         self.assertEqual(len(result["lineups"]),12)
+
+    def test_rrg_course_fit_categories_are_independently_weighted_and_audited(self):
+        dk=parse_dk(self.slate())
+        n=len(dk)
+        # RRG Player Fit CSV examples: independently computed OTT/APP/ARG/PUTT/SCORING
+        # course correlation effects, and their own preweighted FIT composite.
+        rrg=pd.DataFrame({
+            "Player":dk["player"][::-1].to_numpy(),
+            "OTT":np.linspace(-.5,.5,n),
+            "APP":np.linspace(-1.,1.,n),
+            "ARG":np.linspace(.2,-.2,n),
+            "PUTT":np.linspace(-.4,.4,n),
+            "SCORING":np.linspace(-.7,.7,n),
+            "FIT":np.linspace(40.,90.,n),
+            "Rank":list(range(1,n+1)),
+        })
+        matched,coverage=normalize_rrg_course_fit(rrg,dk)
+        self.assertEqual(coverage["matched"],n)
+        self.assertEqual(coverage["components"],n)
+        self.assertIn("rrg_fit_rank_audit",matched)
+        base=market_baseline(dk)
+        tilt=apply_rrg_course_fit(base,matched)
+        self.assertGreater(tilt["rrg_fit_adjustment_strokes"].abs().max(),.01)
+        self.assertLessEqual(tilt["rrg_fit_adjustment_strokes"].abs().max(),.22)
+        self.assertTrue((tilt["rrg_fit_evidence"]==
+                         "Our weighting of RRG skill-fit categories").all())
+        self.assertTrue(np.allclose(tilt["expected_round"]-base["expected_round"],
+                            tilt["rrg_fit_adjustment_strokes"]))
+        self.assertEqual(tilt["rrg_fit_rank_audit"].nunique(),n)
+        # A radically changed RRG FIT value should not change our independent
+        # component-weighted evaluation when the component columns are present.
+        changed=rrg.copy()
+        changed["FIT"]=10000.-changed["FIT"]
+        matched2,_=normalize_rrg_course_fit(changed,dk)
+        tilt2=apply_rrg_course_fit(base,matched2)
+        np.testing.assert_allclose(tilt["rrg_fit_adjustment_strokes"],
+                                   tilt2["rrg_fit_adjustment_strokes"])
+        full=run_tournament(self.slate(),tournament="RRG Course Fit Acceptance",
+            course_par=72,no_cut=True,sims=1000,seed=42,lineup_count=2,
+            max_exposure=.5,salary_floor=46000,min_unique=2,
+            course_fit_raw=rrg)
+        self.assertEqual(full["metadata"]["rrg_fit_match"],n)
+        self.assertEqual(full["metadata"]["rrg_fit_components"],n)
+        self.assertIn("rrg_fit_adjustment_strokes",full["projections"])
+        self.assertEqual(len(full["summary"]),2)
+        ratings,source=group_ratings_source(full)
+        self.assertIn("RRG",source)
+        self.assertGreater(float(ratings["otis_course_fit"].std()),0.)
+
+    def test_rrg_fit_only_fallback_and_bad_course_export(self):
+        dk=parse_dk(self.slate())
+        n=len(dk)
+        base=market_baseline(dk)
+        fit_only=pd.DataFrame({
+            "Golfer":dk["player"],"FIT":np.linspace(-1.,1.,n),
+            "Course Fit Rank":list(range(1,n+1)),
+        })
+        normalized,meta=normalize_rrg_course_fit(fit_only,dk)
+        self.assertEqual(meta["overall_only"],n)
+        adjusted=apply_rrg_course_fit(base,normalized)
+        self.assertTrue((adjusted["rrg_fit_evidence"]==
+                         "RRG overall FIT only (reduced weight)").all())
+        one_category=pd.DataFrame({"Player":dk["player"],
+                                  "APP":np.linspace(-1.,1.,n)})
+        normalized2,_=normalize_rrg_course_fit(one_category,dk)
+        category_impact=apply_rrg_course_fit(base,normalized2)
+        self.assertGreater(category_impact["rrg_fit_adjustment_strokes"].abs().max(),
+                           adjusted["rrg_fit_adjustment_strokes"].abs().max())
+        with self.assertRaises(ValueError):
+            normalize_rrg_course_fit(fit_only[["Golfer","Course Fit Rank"]],dk)
+        with self.assertRaises(ValueError):
+            normalize_rrg_course_fit(fit_only.head(4),dk)
+        with self.assertRaises(ValueError):
+            normalize_rrg_course_fit(
+                pd.concat([fit_only,fit_only.iloc[:1]],ignore_index=True),dk)
 
     def test_one_button_sim_projections_align_seed_and_legal_dk_six(self):
         d=self.slate()
