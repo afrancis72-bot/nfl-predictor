@@ -171,8 +171,11 @@ if run is not None and run["run_key"] == run_key:
             "The simulated averages, medians, P10 and P90 come from the actual sampled games and DO change across seeds."
         )
         visible_markets = ("Points", "Rebounds", "Assists", "Threes", "PRA")
+        # Calculate ranges for every supported market so the props tab's
+        # optional PR/PA/RA/Stocks selections work, too. Main display stays
+        # focused on the five most-used markets.
         simulated_summary = summarize_simulated_projections(
-            projections, samples, markets=visible_markets
+            projections, samples, markets=tuple(MARKETS)
         )
         means = simulated_summary.pivot(
             index="player_id", columns="market", values="simulation_mean"
