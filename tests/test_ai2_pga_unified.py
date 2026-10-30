@@ -12,6 +12,7 @@ from ai2_pga_oneclick import (
     dk_roster_ids, normalize_groupings_upload,
     evaluate_groups, normalize_independent_stats,
     normalize_rrg_course_fit, apply_rrg_course_fit, group_ratings_source,
+    bookmaker_filtered_tickets,
 )
 
 class TestPGAOneclick(unittest.TestCase):
@@ -278,6 +279,38 @@ class TestPGAOneclick(unittest.TestCase):
         self.assertEqual(set(legs["matchup_type"]),{"2-ball","3-ball"})
         self.assertEqual(int(legs["group"].nunique()),6)
         self.assertEqual(len(legs["player"].unique()),6)
+
+    def test_only_bookmaker_listed_tee_groups_can_appear_in_six_leg_shortlist(self):
+        names=[f"Golfer {i:02d}" for i in range(30)]
+        raw=pd.DataFrame([
+            {"player1":names[i*2],"player2":names[i*2+1],
+             "tee_time":f"9:{i:02d}"}
+            for i in range(10)
+        ])
+        groups=normalize_groupings_upload(raw,round_no=2)
+        ratings=pd.DataFrame({"key":[n.lower() for n in names],
+                              "round_rating":[50.]*len(names)})
+        simulated,_=simulate_groups(groups,ratings,n_sims=1000,seed=42)
+        # No sportsbook market list: no actionable six-leg ticket.
+        p,s,l=bookmaker_filtered_tickets(simulated,groups,[],ticket_count=1)
+        self.assertTrue(p.empty)
+        self.assertTrue(s.empty)
+        self.assertTrue(l.empty)
+        # Five confirmed groups cannot form a six-leg ticket.
+        p,s,l=bookmaker_filtered_tickets(simulated,groups,[1,2,3,4,5],ticket_count=1)
+        self.assertEqual(p["group"].nunique(),5)
+        self.assertTrue(s.empty)
+        self.assertTrue(l.empty)
+        # A restricted six-market list must NEVER include unlisted groups 3/8/9/10.
+        ids=[1,2,4,5,6,7]
+        p,s,l=bookmaker_filtered_tickets(simulated,groups,ids,ticket_count=1)
+        self.assertEqual(set(p["group"]),set(ids))
+        self.assertEqual(len(l),6)
+        self.assertEqual(set(l["group"]),set(ids))
+        self.assertNotIn(3,set(l["group"]))
+        self.assertNotIn(8,set(l["group"]))
+        with self.assertRaises(ValueError):
+            bookmaker_filtered_tickets(simulated,groups,[1,99],ticket_count=1)
 
     def test_only_five_valid_matchups_never_force_six_leg_ticket(self):
         players=[f"Golfer {i:02d}" for i in range(10)]
