@@ -74,7 +74,18 @@ now opens a native workspace with four tabs:
   on their sportsbook. Three-ball ties use the original push convention.
   Six-leg candidate generation prioritizes named golfer picks, not
   automatically the Tie outcome, and refuses to force a six-leg ticket
-  when fewer than six fully matched groups exist. Round 2+ requires
+  when fewer than six fully matched groups exist.
+  **Bookmaker availability is not implied by official PGA TOUR tee times.**
+  After round matchups are simulated, the user must explicitly mark the
+  tee groups actually offered by Hard Rock in the `Hard Rock group markets
+  currently offered` multiselect. The six-leg ticket builder then
+  restricts itself to those confirmed markets and refuses to generate
+  a ticket with fewer than six offered, matched groups. Unconfirmed
+  official groups remain viewable as theoretical research in an expander.
+  Changing the offered group list updates the candidate ticket without
+  rerunning the full simulation; switching tournaments/rounds resets the
+  selection rather than allowing stale sportsbook markets. Actual
+  sportsbook odds still require a separate check before wagering. Round 2+ requires
   verified completed-round scoring. Modeled probabilities are **not**
   actual sportsbook prices, calibrated win rates, or validated profit edges.
 - **Round Showdown:** imports round-specific DK salaries and uses
