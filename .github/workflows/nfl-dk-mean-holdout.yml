@@ -1,0 +1,59 @@
+name: NFL mean and P90 - held-out real-game calibration
+on:
+  pull_request:
+    paths:
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'tests/test_nfl_player_dk_means_holdout.py'
+      - '.github/workflows/nfl-dk-mean-holdout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  historical-player-scores:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Dependencies
+        run: python -m pip install numpy pandas scipy beautifulsoup4
+      - name: Compile historic scoring benchmark
+        run: python -m compileall -q scripts/backtest_nfl_player_dk_means.py
+      - name: No future player-week observations in pregame pool
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Measure real player DK points mean bias and P90 coverage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          PYTHONPATH=. python -u scripts/backtest_nfl_player_dk_means.py > /tmp/holdout.json 2>/tmp/holdout_error.log
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            cat /tmp/holdout_error.log
+            if [ -n "$PR_NUMBER" ]; then
+              { echo '**NFL scoring holdout could not be completed safely:**'; echo '\`\`\`'; tail -30 /tmp/holdout_error.log; echo '\`\`\`'; } >/tmp/bench_error.md
+              gh pr comment "$PR_NUMBER" --body-file /tmp/bench_error.md || true
+            fi
+            exit "$status"
+          fi
+          cat /tmp/holdout.json
+          if [ -n "$PR_NUMBER" ]; then
+            python - <<'PY' >/tmp/bench_result.md
+          import json
+          x=json.load(open('/tmp/holdout.json'))
+          print('**Ungraded NFL actual player scoring calibration benchmark**')
+          for year in ('2025','2026'):
+              d=x[year]
+              s=d['summary']
+              print(f'- {d["period"]}: {s["n"]} matched player games. Historical mean MAE {s["history_mean_mae"]}, simulated mean MAE {s["sim_mean_mae"]}, bias {s["sim_mean_signed_bias"]}, actual <= P90 {s["simulated_p90_actual_coverage_pct"]}%')
+              for p,v in d["by_position"].items():
+                  print(f'  - {p}: {v["n"]} games; sim MAE {v["sim_mean_mae"]}; bias {v["sim_mean_signed_bias"]}')
+              print(f'  - Missed simulations {d["skipped_games"]}; first issues {d["skip_examples"][:2]}')
+          print('No live projection changes; conditional on pregame sample player appearing. Does not measure full GPP ROI.')
+          PY
+            gh pr comment "$PR_NUMBER" --body-file /tmp/bench_result.md || true
+          fi
