@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from injury_opportunity import redistribute
 from ai2_nfl_game_market import market_tds_prior
+from ai2_nfl_receiving_tds import receiving_td_factors
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
 TEAM_ALIASES={"JAC":"JAX","WAS":"WSH","LA":"LAR"}
@@ -197,7 +198,8 @@ def _resolve_baselines(pool, rates):
 
 def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None, allow_role_proxies=True,
                              team_environment=None, snap_profiles=None, injury_presence=None,
-                             role_share_concentration=None, market_game_totals=None, market_weight=0.):
+                             role_share_concentration=None, market_game_totals=None, market_weight=0.,
+                             receiving_td_weight=0.):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -208,6 +210,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     out_players=out_players or []
     team_environment=team_environment or {}
     snap_profiles=snap_profiles or {}
+    if (not np.isfinite(receiving_td_weight) or
+            not 0. <= receiving_td_weight <= 1.):
+        raise ValueError("Receiving TD propensity strength must be between 0 and 1")
     market_game_totals = market_game_totals or {}
     # None preserves explicit legacy simulation callers. Unified NFL passes a
     # measured dict, and an unknown player's share defaults to ZERO rather
@@ -381,6 +386,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             rr=[]
             for _,p in skill.iterrows():
                 key=(str(p['_name']),team); rr.append(rm.loc[key] if key in rm.index else None)
+            receiving_td_efficiency=receiving_td_factors(rr)
             target_rates=np.array([_safe(z.get('targets_pg') if z is not None else np.nan,0) for z in rr],float)
             carry_rates=np.array([_safe(z.get('carries_pg') if z is not None else np.nan,0) for z in rr],float)
             target_rates,carry_rates,snap_changes=apply_snap_roles_to_rates(
@@ -622,6 +628,18 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # The rushing allocation explicitly includes the QB, previously
             # assigned zero rushing TDs regardless of his rushing workload.
             rec_td_full=np.zeros((ns,len(skill)+1),dtype=np.int16)
+            if receiving_td_weight:
+                receiving_td_multiplier=np.append(
+                    receiving_td_efficiency**float(receiving_td_weight),1.)
+            else:
+                receiving_td_multiplier=None
+            stat_draws[f'__RECEIVING_TD_EFFICIENCY__|{team}']={
+                'strength':float(receiving_td_weight),
+                'actual_pre_game_catch_td_factors':dict(
+                    zip(skill['Name'].astype(str),receiving_td_efficiency.tolist())),
+                'changes_live_scoring':bool(receiving_td_weight),
+                'source':'nflverse historical per-catch receiving TD; shrink 40 catch prior',
+            }
             rush_td_full=np.zeros((ns,len(skill)+2),dtype=np.int16)
             qb_carries=carr[:,-2]
             for si in range(ns):
@@ -631,6 +649,10 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                     # Use actual catches as capacity and scoring opportunity.
                     catches=rec_counts[si]
                     weights=np.asarray(catches,dtype=float)+.05*(catches>0)
+                    if receiving_td_multiplier is not None:
+                        # Does NOT create an extra TD, move a TD to a player
+                        # without a catch, or change the team's TD count.
+                        weights*=receiving_td_multiplier
                     rec_td_full[si]=_td_allocation_with_capacity(
                         rng,int(pass_td[si]),weights,catches)
                 if rush_td[si]:
