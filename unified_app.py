@@ -227,6 +227,56 @@ else:
                                mime="text/csv", key="nfl_dk_ids")
             st.caption("Roster-ID CSV contains player IDs, not an official contest-entry template. Verify the DraftKings import format.")
 
+            with st.expander("Player simulation audit · explain projected DK points"):
+                sim_rows = output_one.get("player_simulation_audit") or []
+                if not sim_rows:
+                    st.warning("Detailed player component audit is not available for this build. "
+                               "Run BUILD again to generate it from the same 10,000 football scenarios.")
+                    if output_one.get("player_simulation_audit_error"):
+                        st.caption("Diagnostic issue: " + str(output_one["player_simulation_audit_error"]))
+                else:
+                    sim_table = _ai2_pd.DataFrame(sim_rows)
+                    available = sim_table[sim_table["Audit status"].astype(str).str.startswith("Verified")].copy()
+                    if available.empty:
+                        st.info("No verified player-level scoring breakdown is available.")
+                    else:
+                        available["Selector"] = available["Player"] + " (" + available["Team"] + ", " + available["Position"] + ")"
+                        labels = available["Selector"].tolist()
+                        puka = next((i for i, label in enumerate(labels)
+                                     if label.startswith("Puka Nacua (")), 0)
+                        choice = st.selectbox("Player to inspect", labels, index=puka, key="nfl_sim_player_inspect")
+                        record = available.loc[available["Selector"] == choice].iloc[0]
+                        cmean, crebuild = st.columns(2)
+                        cmean.metric("Simulated mean DK points", f"{record['Sim mean DK']:.2f}")
+                        crebuild.metric("Rebuilt from football stats", f"{record['Rebuilt mean DK']:.2f}")
+                        stat_names = ["Mean targets", "Mean receptions", "Mean receiving yards",
+                                      "Mean receiving TD", "Chance 1+ receiving TD %",
+                                      "Chance 2+ receiving TD %", "Chance 100+ receiving yards %",
+                                      "Mean carries", "Mean rushing yards", "Mean rushing TD",
+                                      "Mean passing yards", "Mean passing TD", "Mean interceptions",
+                                      "Target allocation prior / game", "Target allocation share %",
+                                      "Team pass attempts prior", "Team offensive TD prior"]
+                        metric_rows = [{"Simulation metric": name, "Average / percentage": record[name]}
+                                       for name in stat_names if name in record and _ai2_pd.notna(record[name])]
+                        if metric_rows:
+                            st.dataframe(_ai2_pd.DataFrame(metric_rows), hide_index=True, use_container_width=True)
+                        scoring_rows = [{"DraftKings scoring component": name.replace("Points: ", ""),
+                                         "Average DK points": record[name]}
+                                        for name in record.index if name.startswith("Points: ")
+                                        and _ai2_pd.notna(record[name])]
+                        if scoring_rows:
+                            st.markdown("**Where the projected fantasy points come from**")
+                            st.dataframe(_ai2_pd.DataFrame(scoring_rows), hide_index=True, use_container_width=True)
+                        st.caption("This is the component-average explanation from the actual seeded simulation. "
+                                   "It is NOT a single 33-point game or a sportsbook-line estimate. "
+                                   "Each player's component sums are checked against every simulated DK score.")
+                    st.download_button(
+                        "Download full player simulation audit (CSV)",
+                        data=sim_table.to_csv(index=False).encode("utf-8-sig"),
+                        file_name=f"team_ai2_nfl_simulation_audit_seed_{int(seed_one)}.csv",
+                        mime="text/csv", key="nfl_player_simulation_audit_export")
+
+
             with st.expander("NFL injuries and news status", expanded=True):
                 report = output_one.get("pregame_report") or {}
                 checked = report.get("checked_utc") or "not available"
