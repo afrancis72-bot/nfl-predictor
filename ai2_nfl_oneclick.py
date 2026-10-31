@@ -18,6 +18,7 @@ from ai2_nfl_sim_portfolio import select_simulated_portfolio
 from ai2_nfl_export import export_classic_candidates
 from ai2_nfl_opponent_intelligence import make_opponent_report, report_summary
 from ai2_nfl_input_integrity import input_lineage_rows, lineup_role_warnings
+from ai2_nfl_projection_review import projection_review_flags
 import pandas as pd
 
 def _slate_week(saved_salaries):
@@ -90,6 +91,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         # Diagnostic-only feature must never invalidate otherwise legal lineups.
         simulation_component_audit = []
         simulation_component_audit_error = str(exc)
+    high_mean_flags = projection_review_flags(simulation_component_audit, pool)
     means = dict(zip(players["ID"].astype(str), draws.mean(axis=0).tolist()))
     prepared = []
     from collections import Counter
@@ -218,6 +220,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "csv": export_classic_candidates([x["candidate"] for x in ranked]),
         "audit": audit, "seed": seed, "pregame_report": pregame_report,
         "player_simulation_audit": simulation_component_audit,
+        "projection_review_flags": high_mean_flags,
         "player_simulation_audit_error": simulation_component_audit_error,
         "opponent_matchup_report": opposing_report,
         "opponent_matchup_summary": opposing_summary,
