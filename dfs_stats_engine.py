@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from injury_opportunity import redistribute
+from ai2_nfl_game_market import market_tds_prior
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
 TEAM_ALIASES={"JAC":"JAX","WAS":"WSH","LA":"LAR"}
@@ -196,7 +197,7 @@ def _resolve_baselines(pool, rates):
 
 def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None, allow_role_proxies=True,
                              team_environment=None, snap_profiles=None, injury_presence=None,
-                             role_share_concentration=None):
+                             role_share_concentration=None, market_game_totals=None, market_weight=0.):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -207,6 +208,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     out_players=out_players or []
     team_environment=team_environment or {}
     snap_profiles=snap_profiles or {}
+    market_game_totals = market_game_totals or {}
+    if market_weight and not market_game_totals:
+        raise ValueError("Market scoring requires actual pregame game total lines")
     # None preserves explicit legacy simulation callers. Unified NFL passes a
     # measured dict, and an unknown player's share defaults to ZERO rather
     # than silently awarding a full conditional OUT-player workload.
@@ -566,6 +570,15 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # Shared TD/turnover scoring uses historical rates only.
             rush_td_prior=max(.3,team_rush*.035)
             expected_td,fg_mean=_team_scoring_budget(pass_td_pg,rush_td_prior)
+            market_key=tuple(sorted((team,opp)))
+            market_info=market_game_totals.get(market_key) or {}
+            market_line=market_info.get("total_points")
+            if market_weight:
+                if not str(market_info.get("source") or "").startswith(
+                        "nflverse schedules sourced pregame"):
+                    raise ValueError("Market weight requires actual nflverse pregame source")
+                expected_td=market_tds_prior(expected_td,fg_mean,market_line,
+                                             weight=market_weight)
             # Tie touchdown opportunities to the *same simulated offensive plays*.
             # A binomial draw avoids the independent Poisson tail that previously
             # produced 10-11 offensive TDs while keeping a plausible high-scoring tail.
@@ -576,6 +589,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             stat_draws[f'__TEAM_SCORING__|{team}']={
                 'scoring_source':'historical_rates_only',
                 'expected_offensive_tds':float(expected_td),
+                'market_total_line':market_line,
+                'market_weight':float(market_weight) if market_line is not None else 0.,
+                'market_scored':bool(market_weight and market_line is not None),
                 'td_probability_per_team_play':td_probability,
                 'expected_field_goals':float(fg_mean),
                 'simulated_offensive_tds':total_td,
