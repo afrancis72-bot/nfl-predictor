@@ -274,10 +274,14 @@ else:
                                "No speculative injury opportunity boosts were applied.")
                 off_slate_out = output_one.get("off_slate_confirmed_out") or []
                 if off_slate_out:
-                    st.info("Officially ruled-OUT players found outside the DraftKings "
-                            "salary file: " + ", ".join(
+                    st.info("Players unavailable in official injury or published weekly reserve "
+                            "records but missing DraftKings salaries: " + ", ".join(
                                 str(x["player"])+" ("+str(x["team"])+")"
                                 for x in off_slate_out))
+                if output_one.get("reserve_status_issue"):
+                    st.caption("Reserve roster source unavailable: "+
+                               str(output_one["reserve_status_issue"]) +
+                               ". No unreported injured-reserve absences were assumed.")
                 review_flags = output_one.get("projection_review_flags") or []
                 if review_flags:
                     st.warning("High-mean projection review required: these simulations "
