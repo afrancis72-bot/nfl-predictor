@@ -13,12 +13,14 @@ from ai2_nfl_input_integrity import player_role_trends
 from ai2_nfl_team_environment import predict_team_environment
 from ai2_nfl_snap_roles import fetch_snap_counts, predict_snap_roles
 from ai2_nfl_injury_context import official_off_slate_out, estimate_injury_presence
+from ai2_nfl_roster_status import fetch_weekly_roster, reserve_players_missing_from_slate
 import pandas as pd
 
 UNAVAILABLE = frozenset({"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "DOUBTFUL", "D"})
 
 def collect_automatic_baselines(salaries, season, week, *, history=None, injury_fetcher=None,
-                                snap_history=None, snap_fetcher=None):
+                                snap_history=None, snap_fetcher=None,
+                                roster_history=None, roster_fetcher=None):
     salary_rows = parse_csv_payload(salaries[1])
     if not salary_rows:
         raise ValueError("Salary slate contains no players")
@@ -67,6 +69,23 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
     # DraftKings salary file; never infer IR or OUT merely from that absence.
     off_slate_out = official_off_slate_out(
         injury_meta.get("practice_rows") or [], salary_rows, rates)
+    reserve_issue = None
+    reserve_out = []
+    try:
+        if roster_history is None:
+            roster_history = (roster_fetcher or fetch_weekly_roster)(season)
+        reserve_out = reserve_players_missing_from_slate(
+            roster_history, salary_rows, rates, season, week)
+    except (OSError, ValueError, TypeError, KeyError, TimeoutError) as exc:
+        reserve_issue = str(exc)
+    # Two real source feeds may report the SAME unavailable teammate.
+    # Deduplicate before conditioning or redistributing his workload.
+    out_keys = {(str(x["player"]).casefold(),str(x["team"])) for x in off_slate_out}
+    for x in reserve_out:
+        k = (str(x["player"]).casefold(),str(x["team"]))
+        if k not in out_keys:
+            off_slate_out.append(x)
+            out_keys.add(k)
     recorded_out = [
         {"player": row["Name"], "team": row["Team"]}
         for _, row in baseline.iterrows()
@@ -100,6 +119,8 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         "injury_presence": injury_presence,
         "injury_context_report": injury_context_report,
         "confirmed_off_slate_out": off_slate_out,
+        "reserve_status_issue": reserve_issue,
+        "reserve_source": "nflverse weekly roster; target-week explicit RES/IR/PUP/NFI",
         "source": "nflverse historical stats and NFL official game designations",
         "target_season": season, "target_week": week,
         "matched_count": int(baseline["match_status"].eq("matched").sum()),
