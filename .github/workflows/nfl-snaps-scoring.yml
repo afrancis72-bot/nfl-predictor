@@ -1,4 +1,4 @@
-name: NFL snap-based opportunity: scored inputs and historical holdout
+name: 'NFL snap-based opportunity - scored inputs and historical holdout'
 on:
   pull_request:
     paths:
