@@ -327,7 +327,7 @@ def group_ratings_source(model):
 
 def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
                    otis_raw=None,independent_raw=None,course_fit_raw=None,weather_raw=None,sims=3000,seed=42,lineup_count=10,
-                   max_exposure=.35,salary_floor=46500,min_unique=3,
+                   max_exposure=.20,salary_floor=46500,min_unique=3,
                    strategy="Balanced / Single Entry",locks=(),excludes=()):
     if not str(tournament).strip():
         raise ValueError("Enter the actual current tournament.")
