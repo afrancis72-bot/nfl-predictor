@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from injury_opportunity import redistribute
+from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
 TEAM_ALIASES={"JAC":"JAX","WAS":"WSH","LA":"LAR"}
 
@@ -171,7 +172,7 @@ def _resolve_baselines(pool, rates):
     return r, report
 
 def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None, allow_role_proxies=True,
-                             team_environment=None):
+                             team_environment=None, snap_profiles=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -181,6 +182,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     """
     out_players=out_players or []
     team_environment=team_environment or {}
+    snap_profiles=snap_profiles or {}
     out_keys={(_clean_name(item['player']),_team(item['team'])) for item in out_players}
     x=pool[pool['optimizer_eligible']==True].copy().reset_index(drop=True)
     if out_keys:
@@ -338,6 +340,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 key=(str(p['_name']),team); rr.append(rm.loc[key] if key in rm.index else None)
             target_rates=np.array([_safe(z.get('targets_pg') if z is not None else np.nan,0) for z in rr],float)
             carry_rates=np.array([_safe(z.get('carries_pg') if z is not None else np.nan,0) for z in rr],float)
+            target_rates,carry_rates,snap_changes=apply_snap_roles_to_rates(
+                target_rates,carry_rates,skill,snap_profiles)
+            stat_draws[f'__SNAP_OPPORTUNITY__|{team}']={
+                'observed_role_adjustments':snap_changes,
+                'scored_player_count':sum(
+                    (abs(d['target_after']-d['target_before'])>.0001 or
+                     abs(d['carry_after']-d['carry_before'])>.0001)
+                    for d in snap_changes),
+                'source':'nflverse PFR actual offensive snaps; routes are unavailable',
+            }
             # Historical player rates may span different depth charts and cannot
             # safely be summed into an unconstrained team rushing workload.
             # Derive a team-level play budget first, then allocate those plays.
