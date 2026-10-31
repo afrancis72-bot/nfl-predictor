@@ -31,7 +31,18 @@ jobs:
         run: |
           python -m compileall -q ai2_nfl_snap_roles.py ai2_nfl_auto_intelligence.py ai2_nfl_oneclick.py ai2_nfl_simulation_adapter.py dfs_stats_engine.py ai2_nfl_input_integrity.py unified_app.py tests/test_ai2_nfl_snap_roles.py scripts/backtest_nfl_snap_roles.py
       - name: Test observed snap scoring, source identity, and no week leakage
-        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_snap_roles.py' -v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_snap_roles.py' -v 2>&1 | tee /tmp/snap_tests.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ] && [ -n "$PR_NUMBER" ]; then
+            { echo 'Observed snap tests failed:'; echo '```'; tail -70 /tmp/snap_tests.log; echo '```'; } >/tmp/snap_test_failure.md
+            gh pr comment "$PR_NUMBER" --body-file /tmp/snap_test_failure.md || true
+          fi
+          exit "$status"
       - name: Core existing NFL safeguards
         run: |
           PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
