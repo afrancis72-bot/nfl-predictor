@@ -1,0 +1,35 @@
+name: Unified PGA salary review checks
+on:
+  push:
+    branches:
+      - "feature/pga-salary-review-correct-app"
+      - "feature/unified-ai2-platform"
+    paths:
+      - "ai2_pga_workspace.py"
+      - "ai2_pga_salary_review.py"
+      - "ai2_pga_review_ui.py"
+      - "tests/test_ai2_pga_salary_review.py"
+      - "tests/test_ai2_pga_review_screen.py"
+      - "tests/test_ai2_pga_review_screen.py"
+      - ".github/workflows/ai2_pga_salary_review.yml"
+  pull_request:
+    paths:
+      - "ai2_pga_workspace.py"
+      - "ai2_pga_salary_review.py"
+      - "ai2_pga_review_ui.py"
+      - "tests/test_ai2_pga_salary_review.py"
+      - ".github/workflows/ai2_pga_salary_review.yml"
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install minimum model and UI dependencies
+        run: python -m pip install numpy pandas scipy streamlit
+      - name: Compile real PGA application and review modules
+        run: python -m py_compile unified_app.py ai2_pga_workspace.py ai2_pga_oneclick.py ai2_pga_salary_review.py ai2_pga_review_ui.py
+      - name: Test evidence, vetoes and portfolio construction
+        run: python -m unittest discover -s tests -p "test_ai2_pga_*review*.py" -v
