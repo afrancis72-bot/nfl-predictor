@@ -10,6 +10,7 @@ import pandas as pd
 from injury_opportunity import redistribute
 from ai2_nfl_game_market import market_tds_prior
 from ai2_nfl_receiving_tds import receiving_td_factors
+from ai2_nfl_defensive_efficiency import matchup_yard_multiplier
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
 TEAM_ALIASES={"JAC":"JAX","WAS":"WSH","LA":"LAR"}
@@ -199,7 +200,7 @@ def _resolve_baselines(pool, rates):
 def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None, allow_role_proxies=True,
                              team_environment=None, snap_profiles=None, injury_presence=None,
                              role_share_concentration=None, market_game_totals=None, market_weight=0.,
-                             receiving_td_weight=0.):
+                             receiving_td_weight=0.,defense_profiles=None,defense_weight=0.):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -214,6 +215,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             not 0. <= receiving_td_weight <= 1.):
         raise ValueError("Receiving TD propensity strength must be between 0 and 1")
     market_game_totals = market_game_totals or {}
+    defense_profiles=defense_profiles or {}
+    if not np.isfinite(defense_weight) or not 0.<=defense_weight<=1.:
+        raise ValueError("Opponent defense scoring strength must be between 0 and 1")
     # None preserves explicit legacy simulation callers. Unified NFL passes a
     # measured dict, and an unknown player's share defaults to ZERO rather
     # than silently awarding a full conditional OUT-player workload.
@@ -382,6 +386,18 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             pass_td_pg=_safe(qr.get('passing_tds_pg') if qr is not None else np.nan, 1.45)
 
             skill=tx[tx.Position.astype(str).isin(['RB','WR','TE'])].copy()
+            defense_factors=[
+                matchup_yard_multiplier(
+                    defense_profiles,opp,str(p["Position"]),
+                    strength=defense_weight)
+                for _,p in skill.iterrows()
+            ]
+            stat_draws[f'__OPPONENT_YARD_EFFICIENCY__|{team}']={
+                'opponent':opp,'source':'nflverse observed pregame opponent_team position partial DK',
+                'weight':float(defense_weight),
+                'player_yard_factors':dict(zip(skill['Name'].astype(str),defense_factors)),
+                'scored_players':sum(abs(f-1.)>.0001 for f in defense_factors)
+            }
             # Join observed opportunity; missing/depth players receive zero share unless no rates exist.
             rr=[]
             for _,p in skill.iterrows():
@@ -553,6 +569,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 cpg=max(_safe(z.get('carries_pg') if z is not None else np.nan,0),.1)
                 ypc=_safe(z.get('rushing_yards_pg') if z is not None else np.nan,cpg*4.1)/cpg
                 rushyd=np.where(cc>0,rng.normal(cc*ypc,np.sqrt(np.maximum(cc,1))*max(1.8,abs(ypc)*.75),ns),0.)
+                if str(p["Position"])=="RB":
+                    rushyd*=defense_factors[j]
                 player_rec[j]=(tt,recs,recyd); player_rush[j]=(cc,rushyd)
                 team_rec_yd+=recyd; team_comp+=recs
 
@@ -567,7 +585,14 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             scale=np.clip(hist_ypa/np.maximum(generated_ypa,.1),.72,1.35)
             team_rec_yd*=scale
             oth_y*=scale
-            for j in player_rec: player_rec[j]=(player_rec[j][0],player_rec[j][1],player_rec[j][2]*scale)
+            for j in player_rec:
+                # Rebalance team QB passing yardage toward actual defender
+                # concessions only after the regular pregame YPA correction;
+                # skill receiving yards and QB yards remain EXACTLY shared.
+                old_yd=player_rec[j][2]*scale
+                new_yd=old_yd*defense_factors[j]
+                player_rec[j]=(player_rec[j][0],player_rec[j][1],new_yd)
+                team_rec_yd+=new_yd-old_yd
 
             # Cache each scenario's completed passes; TD catches must be actual catches.
             rec_counts=np.column_stack([player_rec[j][1] for j in player_rec] + [oth_c])
