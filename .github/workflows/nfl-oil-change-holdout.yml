@@ -1,0 +1,20 @@
+name: NFL Oil Change historical holdout comparison
+on:
+  pull_request:
+    paths:
+      - 'scripts/backtest_nfl_oil_change.py'
+      - 'ai2_nfl_input_integrity.py'
+      - '.github/workflows/nfl-oil-change-holdout.yml'
+  workflow_dispatch:
+jobs:
+  pregame-role-matchup-holdout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pandas numpy scipy beautifulsoup4
+      - name: Compare pregame role and opponent hypotheses against history-only model
+        run: PYTHONPATH=. python -u scripts/backtest_nfl_oil_change.py
