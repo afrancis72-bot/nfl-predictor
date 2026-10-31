@@ -22,6 +22,7 @@ st.caption(
     "hole-by-hole scoring simulator. Live round props use published groupings "
     "and actual completed-round evidence."
 )
+st.caption("PGA DFS release 2026-10-31 • Unified Preview • 20% default exposure")
 
 tab_tournament,tab_parlay,tab_showdown,tab_audit=st.tabs([
     "🏆 Tournament DFS · One Click",
@@ -116,7 +117,13 @@ with tab_tournament:
                        "Geocoded locations and weather are not proof of actual tournament tee waves.")
 
         lineup_count=int(st.number_input("Number of DFS lineups",1,30,10,step=1,key="pga_lineup_count"))
-        exposure_pct=int(st.slider("Maximum golfer exposure (%)",10,100,35,5,key="pga_exp"))
+        exposure_pct=int(st.slider("Maximum golfer exposure (%)",10,100,20,5,
+                                    key="pga_exp_20261031_unified_v2",
+                                    help="20% of 10 lineups = maximum two appearances per golfer. This control has a new key to clear the former 35% setting."))
+        allowed=max(1,int((lineup_count*exposure_pct/100)//1))
+        required_distinct=int((lineup_count*6+allowed-1)//allowed)
+        st.caption(f"Portfolio exposure limit: no more than {allowed}/{lineup_count} lineups per golfer; "
+                   f"at least {required_distinct} distinct golfers needed for 6-player lineups.")
         min_unique=int(st.slider("Minimum unique golfers between lineups",1,5,3,key="pga_unique"))
         salary_floor=int(st.number_input("Minimum total lineup salary",0,50000,46500,100,key="pga_floor"))
         strategy=st.selectbox("Portfolio objective",
