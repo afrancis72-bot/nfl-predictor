@@ -82,7 +82,7 @@ def actual_partial(row,position):
 
 
 def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
-             role_share_concentration=None,market_weight=0.):
+             role_share_concentration=None,market_weight=0.,receiving_td_weight=0.):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -112,7 +112,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                     allow_role_proxies=False,team_environment=environment,
                     snap_profiles=snap,injury_presence={},
                     role_share_concentration=role_share_concentration,
-                    market_game_totals=market_totals,market_weight=market_weight)
+                    market_game_totals=market_totals,market_weight=market_weight,
+                    receiving_td_weight=receiving_td_weight)
             except (KeyError,ValueError,TypeError,IndexError) as e:
                 failures.append(f"{season} W{week} {away}@{home}: {str(e)[:150]}")
                 continue
