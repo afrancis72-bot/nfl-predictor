@@ -15,6 +15,7 @@ from ai2_nfl_matchups import canonical_team
 from ai2_nfl_auto_baselines import _norm_name
 from ai2_nfl_team_environment import predict_team_environment
 from ai2_nfl_snap_roles import predict_snap_roles, fetch_snap_counts
+from ai2_nfl_game_market import market_totals_for_slate
 from dfs_stats_engine import simulate_stat_driven_dfs
 from props_data import fetch_weekly, clean_weekly, make_rates, dk_classic_points
 
@@ -81,7 +82,7 @@ def actual_partial(row,position):
 
 
 def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
-             role_share_concentration=None):
+             role_share_concentration=None,market_weight=0.):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -89,6 +90,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
         rates=make_rates(weekly,season,week)
         environment=predict_team_environment(weekly,season,week)
         snap=predict_snap_roles(weekly,snaps,season,week,team_environment=environment)
+        market_totals=market_totals_for_slate(schedules,season,week) if market_weight else {}
         week_games=schedules[
             (schedules["season"].eq(season))&
             (schedules["week"].eq(week))&
@@ -109,7 +111,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                     pool,rates,n_sims=n_sims,seed=season*100+week,
                     allow_role_proxies=False,team_environment=environment,
                     snap_profiles=snap,injury_presence={},
-                    role_share_concentration=role_share_concentration)
+                    role_share_concentration=role_share_concentration,
+                    market_game_totals=market_totals,market_weight=market_weight)
             except (KeyError,ValueError,TypeError,IndexError) as e:
                 failures.append(f"{season} W{week} {away}@{home}: {str(e)[:150]}")
                 continue
