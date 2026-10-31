@@ -69,7 +69,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     # The game-level simulator already redistributes OUT-player touches and
     # targets. Use unmodified rates with outs to avoid double counting.
     players, draws, stat_draws = run_verified_stat_simulation(
-        pool, raw_rates, n_sims=10000, seed=seed, out_players=outs)
+        pool, raw_rates, n_sims=10000, seed=seed, out_players=outs,
+        team_environment=research.get("team_environment"))
     if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
         raise ValueError("Incomplete NFL simulation; refusing to export lineups")
     try:
@@ -185,6 +186,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         })
     role_trends = research.get("role_trends") or []
     return {
+        "team_environment": research.get("team_environment") or {},
         "input_lineage": input_lineage_rows(research),
         "role_trends": role_trends,
         "lineup_role_warnings": lineup_role_warnings(ranked, role_trends),
