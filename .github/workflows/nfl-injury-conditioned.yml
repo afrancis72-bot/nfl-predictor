@@ -12,6 +12,7 @@ on:
       - 'unified_app.py'
       - 'tests/test_ai2_nfl_injury_context.py'
       - 'tests/test_ai2_nfl_roster_status.py'
+      - 'tests/test_ai2_nfl_priced_reserve_integration.py'
       - 'tests/test_ai2_nfl_projection_review.py'
       - '.github/workflows/nfl-injury-conditioned.yml'
   workflow_dispatch:
@@ -32,6 +33,8 @@ jobs:
         run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_injury_context.py' -v
       - name: Verify same-week reserve statuses are truly sourced
         run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_roster_status.py' -v
+      - name: End-to-end reserve status must remove DK-priced IR players
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_priced_reserve_integration.py' -v
       - name: Check Puka/Bijan high-mean warning
         run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_projection_review.py' -v
       - name: Existing verified simulation and snap source safeguards
