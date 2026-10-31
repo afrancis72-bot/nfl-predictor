@@ -1,0 +1,60 @@
+name: NFL defense opponent efficiency scoring historical holdout
+on:
+  pull_request:
+    paths:
+      - 'ai2_nfl_defensive_efficiency.py'
+      - 'dfs_stats_engine.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/backtest_nfl_defensive_efficiency.py'
+      - 'tests/test_nfl_defensive_efficiency_scoring.py'
+      - '.github/workflows/nfl-defense-efficiency-holdout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  defense-scoring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install historical-stat dependencies
+        run: python -m pip install numpy pandas scipy beautifulsoup4
+      - name: Compile and verify per-opportunity scored effects conserve team football
+        run: |
+          python -m compileall -q ai2_nfl_defensive_efficiency.py dfs_stats_engine.py scripts/backtest_nfl_defensive_efficiency.py
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_defensive_efficiency_scoring.py' -v
+      - name: Backtest true opponent efficiency on previous games, then evaluate independent 2026 actual player DK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          PYTHONPATH=. python -u scripts/backtest_nfl_defensive_efficiency.py >/tmp/defense_compare.json 2>/tmp/defense_compare_error.log
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            cat /tmp/defense_compare_error.log
+            if [ -n "$PR_NUMBER" ]; then
+              { echo 'Defensive-efficiency simulation failed validation:'; echo '```'; tail -35 /tmp/defense_compare_error.log; echo '```'; } >/tmp/defense_error.md
+              gh pr comment "$PR_NUMBER" --body-file /tmp/defense_error.md || true
+            fi
+            exit "$status"
+          fi
+          cat /tmp/defense_compare.json
+          python - <<'PY' >/tmp/defense_comment.md
+          import json
+          d=json.load(open('/tmp/defense_compare.json'))
+          print('**Observed opponent defensive weakness: pregame position data ACTUALLY changes football yards**')
+          print(f'Train 2025; chosen strength: {d["training_selected_strength"]}. Test {d["heldout_period"]}.')
+          for key,r in d["variants"].items():
+              a,b=r["training"],r["holdout"]
+              print(f'- Weight {key}: training MAE {a["sim_mean_mae"]}, heldout MAE {b["sim_mean_mae"]}, signed bias {b["sim_mean_signed_bias"]}, P90 coverage {b["simulated_p90_actual_coverage_pct"]}%, n={b["n"]}')
+          print(f'Independent heldout mean improvement: {d["holdout_player_mean_error_improved"]}; P90 nearer 90%: {d["holdout_player_P90_coverage_nearer_90"]}.')
+          print('Not enabled in one-click without verified actual player-score improvements; never changes team play/TD budget.')
+          PY
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body-file /tmp/defense_comment.md || true
+          fi
