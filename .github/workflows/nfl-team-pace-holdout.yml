@@ -1,0 +1,42 @@
+name: NFL team pace model - historical proof before use
+on:
+  pull_request:
+    paths:
+      - 'scripts/backtest_nfl_team_environment.py'
+      - 'tests/test_ai2_nfl_team_environment.py'
+      - '.github/workflows/nfl-team-pace-holdout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  test-team-pace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pandas numpy scipy
+      - run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_team_environment.py' -v
+      - name: Historical holdout (2025 training, 2026 evaluation)
+        run: PYTHONPATH=. python -u scripts/backtest_nfl_team_environment.py | tee /tmp/team_environment.json
+      - name: Publish holdout metrics to review
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python - <<'PY' > /tmp/team_environment.md
+          import json
+          x=json.load(open('/tmp/team_environment.json'))
+          print('**Experimental team-specific NFL pace audit (NOT deployed)**')
+          print(f'Observed team-game box-score proxies: {x["observed_team_game_proxies"]}.')
+          print(f'Weights selected using 2025 training only: {x["team_prior_weights_chosen_without_2026"]}.')
+          print('2026 Weeks 4-8 true holdout:')
+          for q in x["heldout"]:
+              print(f'- {q["metric"]}, {q["model"]}: {q["count"]} examples; MAE {q["mae"]}; RMSE {q["rmse"]}')
+          print('A pace accuracy improvement alone is not proof of improved player DK or contest ROI.')
+          PY
+          gh pr comment "$PR_NUMBER" --body-file /tmp/team_environment.md || true
