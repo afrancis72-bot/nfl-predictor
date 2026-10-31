@@ -206,6 +206,37 @@ else:
             output_one = None
 
         if output_one:
+            with st.expander("NFL prediction oil check · Which information actually drives the simulation?", expanded=True):
+                st.caption("SCORED = changes the forecast; OPTIMIZER_ONLY = changes selection; "
+                           "ELIGIBILITY_ONLY = roster gate; RESEARCH_ONLY = collected but NOT scored; "
+                           "NOT_CONNECTED = missing. A 'verified' historical rate is NOT a verified Sunday role.")
+                lineage_rows = output_one.get("input_lineage") or []
+                if lineage_rows:
+                    st.dataframe(_ai2_pd.DataFrame(lineage_rows), hide_index=True,
+                                 use_container_width=True)
+                else:
+                    st.warning("Prediction-input lineage is unavailable for this build.")
+                st.warning("Opponent positional allowances, defender injury research, and recent workload "
+                           "trend warnings currently do NOT modify simulated fantasy scores. "
+                           "These inputs require independent historical calibration before we turn on changes.")
+                role_flags = output_one.get("lineup_role_warnings") or []
+                if role_flags:
+                    st.subheader("Selected players whose observed opportunity changed")
+                    st.dataframe(_ai2_pd.DataFrame(role_flags), hide_index=True,
+                                 use_container_width=True)
+                    st.caption("A role change requires human review, not an automatic veto. "
+                               "Last three observed appearances versus earlier same-team games; "
+                               "no week-of-game stats are used.")
+                else:
+                    st.caption("No selected-player role-trend warnings were returned. "
+                               "This is NOT proof that snaps, routes, or current roles were verified.")
+                all_role_rows = output_one.get("role_trends") or []
+                if all_role_rows:
+                    st.download_button(
+                        "Download all pregame NFL role trends",
+                        data=_ai2_pd.DataFrame(all_role_rows).to_csv(index=False).encode("utf-8-sig"),
+                        file_name="team_ai2_nfl_role_trends.csv",
+                        mime="text/csv", key="nfl_input_integrity_role_export")
             ranked = st.session_state.get("ai2_oneclick_review_ranked") or output_one["ranked"]
             overview, details, exposures = review_tables(ranked)
             st.subheader(f"Your {len(ranked)} lineups — player names")

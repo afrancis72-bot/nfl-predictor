@@ -1,0 +1,27 @@
+name: NFL oil change - truthful prediction inputs
+on:
+  pull_request:
+    paths:
+      - 'ai2_nfl_input_integrity.py'
+      - 'ai2_nfl_auto_intelligence.py'
+      - 'ai2_nfl_oneclick.py'
+      - 'unified_app.py'
+      - 'tests/test_ai2_nfl_input_integrity.py'
+      - '.github/workflows/nfl-input-integrity.yml'
+  workflow_dispatch:
+jobs:
+  verify-input-lineage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install numpy pandas scipy beautifulsoup4 streamlit
+      - name: Compile affected NFL modules
+        run: python -m compileall -q ai2_nfl_input_integrity.py ai2_nfl_auto_intelligence.py ai2_nfl_oneclick.py unified_app.py tests/test_ai2_nfl_input_integrity.py
+      - name: Verify no future data contamination and no false certification
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_input_integrity.py' -v
+      - name: Check existing core opportunity, injury, candidate and simulation protections
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
