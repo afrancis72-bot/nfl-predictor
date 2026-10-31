@@ -6,6 +6,9 @@ on:
       - 'ai2_nfl_input_integrity.py'
       - '.github/workflows/nfl-oil-change-holdout.yml'
   workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
 jobs:
   pregame-role-matchup-holdout:
     runs-on: ubuntu-latest
@@ -17,4 +20,21 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install pandas numpy scipy beautifulsoup4
       - name: Compare pregame role and opponent hypotheses against history-only model
-        run: PYTHONPATH=. python -u scripts/backtest_nfl_oil_change.py
+        run: PYTHONPATH=. python -u scripts/backtest_nfl_oil_change.py | tee /tmp/nfl_holdout.json
+      - name: Record tested, nonproduction role and opponent comparison
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python - <<'PY' > /tmp/nfl_holdout_comment.md
+          import json
+          x=json.load(open('/tmp/nfl_holdout.json'))
+          print('NFL *experimental, nonproduction* role and opponent holdout:')
+          print(f'Season {x["season"]}; weeks {x["weeks"]}; matched players {x["samples"]}.')
+          print(f'Observed role comparisons: {x["role_coverage"]}; opponent comparisons: {x["opponent_coverage"]}.')
+          for p in x["overall"]:
+              print(f'- {p["model"]}: MAE {p["mae"]:.4f} DK; RMSE {p["rmse"]:.4f}')
+          print('These are partial-DK historical means, not simulated lineup cash rates. No production scoring change.')
+          PY
+          gh pr comment "$PR_NUMBER" --body-file /tmp/nfl_holdout_comment.md || true
