@@ -1,0 +1,60 @@
+name: NFL observed receiving TD allocation and real-game holdout
+on:
+  pull_request:
+    paths:
+      - 'ai2_nfl_receiving_tds.py'
+      - 'dfs_stats_engine.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/backtest_nfl_receiving_td_factors.py'
+      - 'tests/test_nfl_receiving_td_propensity.py'
+      - '.github/workflows/nfl-receiving-td-holdout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  receiving-tds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Dependencies
+        run: python -m pip install numpy pandas scipy beautifulsoup4
+      - name: Compile and verify TD game-capacity conservation
+        run: |
+          python -m compileall -q ai2_nfl_receiving_tds.py dfs_stats_engine.py scripts/backtest_nfl_player_dk_means.py scripts/backtest_nfl_receiving_td_factors.py
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_receiving_td_propensity.py' -v
+      - name: Historical 2025 selection followed by independent 2026 actual player points/P90
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          PYTHONPATH=. python -u scripts/backtest_nfl_receiving_td_factors.py >/tmp/rec_td_heldout.json 2>/tmp/rec_td_failure.log
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            cat /tmp/rec_td_failure.log
+            if [ -n "$PR_NUMBER" ]; then
+              { echo 'Observed receiving-TD scoring holdout failed:'; echo '```'; tail -30 /tmp/rec_td_failure.log; echo '```'; } >/tmp/rec_td_failed.md
+              gh pr comment "$PR_NUMBER" --body-file /tmp/rec_td_failed.md || true
+            fi
+            exit "$status"
+          fi
+          cat /tmp/rec_td_heldout.json
+          python - <<'PY' >/tmp/rec_td_result.md
+          import json
+          d=json.load(open('/tmp/rec_td_heldout.json'))
+          print('**Historical RECEIVING TD allocation using real TD per catch (with conservative shrinkage)**')
+          print(f'Train-only selected weight {d["chosen_weight_on_2025_only"]}. Heldout {d["holdout"]}.')
+          for weight,v in d["variants"].items():
+              a,b=v['train'],v['holdout']
+              print(f'- Weight {weight}: training DK MAE {a["sim_mean_mae"]}; independent test DK MAE {b["sim_mean_mae"]}, bias {b["sim_mean_signed_bias"]}, P90 coverage {b["simulated_p90_actual_coverage_pct"]}%, n {b["n"]}')
+          print(f'Chosen on training improves 2026 mean: {d["holdout_mean_mae_improved"]}; improves P90 calibration: {d["holdout_p90_coverage_closer_90"]}')
+          print('Not activated in one-click scoring; even if positive, require multi-slate confirmation.')
+          PY
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body-file /tmp/rec_td_result.md || true
+          fi
