@@ -25,7 +25,7 @@ jobs:
         run: |
           python -m compileall -q ai2_nfl_p90_calibration.py scripts/backtest_nfl_p90_calibration.py
           PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_p90_residual_calibration.py' -v
-      - name: Larger NFL player game test: 2025 W5-14 training, W15-18 validation, 2026 untouched
+      - name: "Larger NFL player game test: 2025 W5-14 training, W15-18 validation, 2026 untouched"
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
