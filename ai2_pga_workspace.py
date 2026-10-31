@@ -15,6 +15,7 @@ from ai2_pga_oneclick import (
 )
 from round_parlay import fetch_groupings,fetch_official_prior_rounds
 from international_ingestion import geocode_course, location_detail, fetch_weather
+from ai2_pga_review_ui import render_review_page
 
 st.subheader("PGA · Tournament DFS, Round Showdown & Group-Matchup Parlays")
 st.caption(
@@ -24,8 +25,9 @@ st.caption(
 )
 st.caption("PGA DFS release 2026-10-31 • Unified Preview • 20% default exposure")
 
-tab_tournament,tab_parlay,tab_showdown,tab_audit=st.tabs([
+tab_tournament,tab_review,tab_parlay,tab_showdown,tab_audit=st.tabs([
     "🏆 Tournament DFS · One Click",
+    "🔎 Salary-Tier Review & Vetoes",
     "🎯 Round Matchups · 2 & 3 Balls",
     "⛳ Round Showdown",
     "🧬 Course DNA & Data Quality",
@@ -195,6 +197,7 @@ with tab_tournament:
                 result["metadata"]["start_date"]=str(start_date)
                 st.session_state["ai2_pga_result"]=result
                 st.session_state["ai2_pga_signature"]=setup_signature
+                st.session_state.pop("ai2_pga_review_portfolio",None)
                 st.session_state.pop("ai2_pga_3ball",None)
                 st.session_state.pop("ai2_pga_showdown",None)
                 st.success(f"Built {len(result['summary'])} lineups using seed {seed}.")
@@ -211,6 +214,7 @@ with tab_tournament:
         meta=result["metadata"]
         st.divider()
         st.subheader("Built portfolio — human review before entering")
+        st.info("For salary-tier recommendations and veto decisions, open **🔎 Salary-Tier Review & Vetoes** above before entering lineups.")
         st.caption(f"{meta['tournament']} · {meta['course']} · {meta['simulations']:,} simulations · seed {meta['seed']}")
         if meta["otis_match"]==0 and meta["independent_sg_match"]==0:
             st.warning(
@@ -259,6 +263,14 @@ with tab_tournament:
         st.download_button("Download golfer projections",
             result["projections"].to_csv(index=False).encode("utf-8-sig"),
             "team_ai2_pga_simulated_projections.csv",mime="text/csv")
+
+with tab_review:
+    render_review_page(
+        result,signature=setup_signature,
+        lineup_count=lineup_count,max_exposure=exposure_pct/100,
+        salary_floor=salary_floor,min_unique=min_unique,
+        strategy=strategy,locks=locks,base_exclusions=exclusions,
+    )
 
 with tab_parlay:
     st.subheader("PGA TOUR 2-Ball & 3-Ball Matchups · 6-Leg Research")
