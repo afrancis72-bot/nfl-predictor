@@ -1,0 +1,57 @@
+name: NFL pregame market totals scoring holdout
+on:
+  pull_request:
+    paths:
+      - 'ai2_nfl_game_market.py'
+      - 'dfs_stats_engine.py'
+      - 'scripts/backtest_nfl_game_market.py'
+      - 'tests/test_nfl_game_market.py'
+      - '.github/workflows/nfl-market-scoring-holdout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  market-team-points:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Dependencies
+        run: python -m pip install numpy pandas scipy beautifulsoup4
+      - name: Compile optional market model
+        run: python -m compileall -q ai2_nfl_game_market.py dfs_stats_engine.py scripts/backtest_nfl_game_market.py
+      - name: Source-safety / scoring-no-leakage tests
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_game_market.py' -v
+      - name: Historical 2025 training then 2026 team scoring holdout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          PYTHONPATH=. python -u scripts/backtest_nfl_game_market.py >/tmp/market_heldout.json 2>/tmp/market_failure.txt
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            cat /tmp/market_failure.txt
+            if [ -n "$PR_NUMBER" ]; then
+              { echo 'Market scoring historical validation failed:'; echo '```'; tail -30 /tmp/market_failure.txt; echo '```'; } > /tmp/market_fail.md
+              gh pr comment "$PR_NUMBER" --body-file /tmp/market_fail.md || true
+            fi
+            exit "$code"
+          fi
+          cat /tmp/market_heldout.json
+          python - <<'PY' >/tmp/market_result.md
+          import json
+          x=json.load(open('/tmp/market_heldout.json'))
+          print('**Pregame team total market scoring: 2025 training / 2026 holdout**')
+          print(f'Weight chosen only on 2025: {x["chosen_weight_pre_2026"]}')
+          for c in x['holdout_scores']:
+              print(f'- Weight {c["weight"]}: n={c["n"]}, team-point MAE={c["mae"]}, signed bias={c["bias"]}, RMSE={c["rmse"]}')
+          print('Not activated in the NFL one-click scoring path. Historical team points include ST/DST; no proof of improved DK lineup returns.')
+          PY
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body-file /tmp/market_result.md || true
+          fi
