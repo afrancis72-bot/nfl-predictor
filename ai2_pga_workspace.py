@@ -23,7 +23,7 @@ st.caption(
     "hole-by-hole scoring simulator. Live round props use published groupings "
     "and actual completed-round evidence."
 )
-st.caption("PGA DFS release 2026-10-31 • Unified Preview • 20% default exposure")
+st.caption("PGA DFS release 2026-10-31 • Salary-Tier Review & Vetoes added • 20% default exposure")
 
 tab_tournament,tab_review,tab_parlay,tab_showdown,tab_audit=st.tabs([
     "🏆 Tournament DFS · One Click",
