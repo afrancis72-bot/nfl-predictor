@@ -1,0 +1,42 @@
+name: NFL injury-context scoring and projection safety
+on:
+  pull_request:
+    paths:
+      - 'ai2_nfl_injury_context.py'
+      - 'ai2_nfl_roster_status.py'
+      - 'ai2_nfl_projection_review.py'
+      - 'dfs_stats_engine.py'
+      - 'ai2_nfl_auto_intelligence.py'
+      - 'ai2_nfl_oneclick.py'
+      - 'ai2_nfl_simulation_adapter.py'
+      - 'unified_app.py'
+      - 'tests/test_ai2_nfl_injury_context.py'
+      - 'tests/test_ai2_nfl_roster_status.py'
+      - 'tests/test_ai2_nfl_projection_review.py'
+      - '.github/workflows/nfl-injury-conditioned.yml'
+  workflow_dispatch:
+jobs:
+  validate-injury-context:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install observed engine dependencies
+        run: python -m pip install pandas numpy scipy beautifulsoup4 streamlit
+      - name: Compile changed NFL code and actual unified sports app
+        run: python -m compileall -q ai2_nfl_injury_context.py ai2_nfl_roster_status.py ai2_nfl_projection_review.py dfs_stats_engine.py ai2_nfl_auto_intelligence.py ai2_nfl_oneclick.py ai2_nfl_simulation_adapter.py unified_app.py
+      - name: Prove injury-adjusted scoring actually differs from legacy and conserves plays
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_injury_context.py' -v
+      - name: Verify same-week reserve statuses are truly sourced
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_roster_status.py' -v
+      - name: Check Puka/Bijan high-mean warning
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_projection_review.py' -v
+      - name: Existing verified simulation and snap source safeguards
+        run: |
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_snap_roles.py' -v
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_team_pace_scoring.py' -v
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_oneclick.py' -v

@@ -94,7 +94,8 @@ def input_lineage_rows(research):
         {"Information": "Historical carries, targets, catches, rushing/receiving efficiency", "Data use": "SCORED",
          "Why": "Historical nflverse rushing and receiving rates allocate scenarios"},
         {"Information": "Confirmed unavailable offensive players", "Data use": "SCORED" if injury_available else "UNAVAILABLE",
-         "Why": "Confirmed unavailability removes players and redistributes historical opportunity once"},
+         "Why": ("OUT players are removed; additional redistribution is reduced by the "
+                 "share of prior team games already played without them, where known")},
         {"Information": "Practice report and questionable designation",
          "Data use": "ELIGIBILITY_ONLY" if injury_available else "UNAVAILABLE",
          "Why": "Questionable players are held out; no verified workload estimate for players playing hurt"},

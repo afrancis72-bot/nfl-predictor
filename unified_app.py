@@ -255,6 +255,39 @@ else:
                 st.warning("Opponent defensive research, weather, market spreads, route running "
                            "and projected ownership remain unconnected to scoring. "
                            "These are not silently assumed to be modeled.")
+                injury_rows = output_one.get("injury_context_report") or []
+                if injury_rows:
+                    st.markdown("**Injury adjustment · already reflected versus newly available opportunity**")
+                    context_df = _ai2_pd.DataFrame(injury_rows)
+                    st.dataframe(context_df, hide_index=True, use_container_width=True)
+                    st.download_button(
+                        "Download injury opportunity accounting",
+                        data=context_df.to_csv(index=False).encode("utf-8-sig"),
+                        file_name="team_ai2_nfl_injury_opportunity.csv",
+                        mime="text/csv", key="nfl_injury_context_export")
+                    st.caption("An unavailable teammate's historical conditional targets/carries "
+                               "are now scaled by the share of recent team games where he played. "
+                               "This avoids assigning his full workload again when teammates' "
+                               "recent results already reflect his absence.")
+                else:
+                    st.caption("No sourced OUT-player history available to adjust this slate. "
+                               "No speculative injury opportunity boosts were applied.")
+                off_slate_out = output_one.get("off_slate_confirmed_out") or []
+                if off_slate_out:
+                    st.info("Players unavailable in official injury or published weekly reserve "
+                            "records but missing DraftKings salaries: " + ", ".join(
+                                str(x["player"])+" ("+str(x["team"])+")"
+                                for x in off_slate_out))
+                if output_one.get("reserve_status_issue"):
+                    st.caption("Reserve roster source unavailable: "+
+                               str(output_one["reserve_status_issue"]) +
+                               ". No unreported injured-reserve absences were assumed.")
+                review_flags = output_one.get("projection_review_flags") or []
+                if review_flags:
+                    st.warning("High-mean projection review required: these simulations "
+                               "need statistical-component verification before entry.")
+                    st.dataframe(_ai2_pd.DataFrame(review_flags),
+                                 hide_index=True, use_container_width=True)
                 role_flags = output_one.get("lineup_role_warnings") or []
                 if role_flags:
                     st.subheader("Selected players whose observed opportunity changed")
