@@ -209,8 +209,6 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     team_environment=team_environment or {}
     snap_profiles=snap_profiles or {}
     market_game_totals = market_game_totals or {}
-    if market_weight and not market_game_totals:
-        raise ValueError("Market scoring requires actual pregame game total lines")
     # None preserves explicit legacy simulation callers. Unified NFL passes a
     # measured dict, and an unknown player's share defaults to ZERO rather
     # than silently awarding a full conditional OUT-player workload.
@@ -573,7 +571,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             market_key=tuple(sorted((team,opp)))
             market_info=market_game_totals.get(market_key) or {}
             market_line=market_info.get("total_points")
-            if market_weight:
+            if market_weight and market_line is not None:
                 if not str(market_info.get("source") or "").startswith(
                         "nflverse schedules sourced pregame"):
                     raise ValueError("Market weight requires actual nflverse pregame source")
