@@ -123,7 +123,7 @@ def input_lineage_rows(research):
 
 
 def lineup_role_warnings(lineups, trends):
-    """Flag observed role declines for selected golfers—err, NFL players only.
+    """Flag observed role changes in selected NFL Classic lineups.
 
     Keep this as review evidence: do not substitute warnings for player vetoes.
     """
