@@ -278,6 +278,12 @@ else:
                             "records but missing DraftKings salaries: " + ", ".join(
                                 str(x["player"])+" ("+str(x["team"])+")"
                                 for x in off_slate_out))
+                priced_reserve = output_one.get("priced_confirmed_reserve_out") or []
+                if priced_reserve:
+                    st.warning("Verified same-week RES/IR status; excluded from DraftKings "
+                               "simulation despite appearing in uploaded salaries: " +
+                               ", ".join(str(x["player"])+" ("+str(x["team"])+")"
+                                         for x in priced_reserve))
                 if output_one.get("reserve_status_issue"):
                     st.caption("Reserve roster source unavailable: "+
                                str(output_one["reserve_status_issue"]) +
