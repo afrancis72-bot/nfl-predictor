@@ -9,6 +9,8 @@ on:
       - "ai2_pga_salary_review.py"
       - "ai2_pga_review_ui.py"
       - "tests/test_ai2_pga_salary_review.py"
+      - "tests/test_ai2_pga_review_screen.py"
+      - "tests/test_ai2_pga_review_screen.py"
       - ".github/workflows/ai2_pga_salary_review.yml"
   pull_request:
     paths:
@@ -30,4 +32,4 @@ jobs:
       - name: Compile real PGA application and review modules
         run: python -m py_compile unified_app.py ai2_pga_workspace.py ai2_pga_oneclick.py ai2_pga_salary_review.py ai2_pga_review_ui.py
       - name: Test evidence, vetoes and portfolio construction
-        run: python -m unittest discover -s tests -p "test_ai2_pga_salary_review.py" -v
+        run: python -m unittest discover -s tests -p "test_ai2_pga_*review*.py" -v
