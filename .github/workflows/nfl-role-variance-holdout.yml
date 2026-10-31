@@ -1,0 +1,63 @@
+name: NFL role-share variance P90 holdout
+on:
+  pull_request:
+    paths:
+      - 'dfs_stats_engine.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/backtest_nfl_role_variance.py'
+      - 'tests/test_nfl_role_variance.py'
+      - '.github/workflows/nfl-role-variance-holdout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  role-variance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install simulation source dependencies
+        run: python -m pip install numpy pandas scipy beautifulsoup4
+      - name: Compile alternative and historical holdout
+        run: python -m compileall -q dfs_stats_engine.py scripts/backtest_nfl_player_dk_means.py scripts/backtest_nfl_role_variance.py tests/test_nfl_role_variance.py
+      - name: Team budget conservation and same-world score reconciliation
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_role_variance.py' -v
+      - name: Existing NFL source and roster-safe model tests
+        run: |
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_injury_context.py' -v
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
+      - name: Independent game holdout, 2025 tune only, 2026 validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          PYTHONPATH=. python -u scripts/backtest_nfl_role_variance.py >/tmp/role_variance.json 2>/tmp/role_variance_error.txt
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            cat /tmp/role_variance_error.txt
+            if [ -n "$PR_NUMBER" ]; then
+              { echo 'NFL role-variance holdout could not be safely validated:'; echo '```'; tail -25 /tmp/role_variance_error.txt; echo '```'; } > /tmp/role_variance_failure.md
+              gh pr comment "$PR_NUMBER" --body-file /tmp/role_variance_failure.md || true
+            fi
+            exit "$code"
+          fi
+          cat /tmp/role_variance.json
+          python - <<'PY' >/tmp/role_variance_summary.md
+          import json
+          x=json.load(open('/tmp/role_variance.json'))
+          print('**Role-share variance P90 test: independent pregame player-scoring benchmark**')
+          print(f'Train-only chosen: {x["train_selected_variant"]}')
+          for k,v in x["variants"].items():
+              a,b=v['training'],v['holdout']
+              print(f'- {k}: train P90 pinball {a["p90_pinball"]}, train coverage {a["simulated_p90_actual_coverage_pct"]}%; holdout P90 pinball {b["p90_pinball"]}, coverage {b["simulated_p90_actual_coverage_pct"]}%, MAE {b["sim_mean_mae"]}, n={b["n"]}')
+          print(f'Holdout pinball improved: {x["heldout_p90_pinball_improved"]}; coverage closer to 90%: {x["heldout_p90_coverage_closer_to_90"]}')
+          print('No change to production scoring: experimental variance stays OFF until validated.')
+          PY
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body-file /tmp/role_variance_summary.md || true
+          fi
