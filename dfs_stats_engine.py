@@ -170,7 +170,8 @@ def _resolve_baselines(pool, rates):
         r = pd.concat([r, pd.DataFrame(additions)], ignore_index=True)
     return r, report
 
-def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None, allow_role_proxies=True):
+def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None, allow_role_proxies=True,
+                             team_environment=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -179,6 +180,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     are also shared between offense and DST.
     """
     out_players=out_players or []
+    team_environment=team_environment or {}
     out_keys={(_clean_name(item['player']),_team(item['team'])) for item in out_players}
     x=pool[pool['optimizer_eligible']==True].copy().reset_index(drop=True)
     if out_keys:
@@ -306,7 +308,14 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             else:
                 team_pass_observed=float('nan'); sample_games=0.
                 team_pass_baseline=32.
-            pass_pg=team_pass_baseline
+            env=team_environment.get(team) or {}
+            # A real, prior-game team-specific pass volume forecast now matters
+            # to scoring.  Blend with the existing QB evidence rather than
+            # abruptly replacing the QB's on-field baseline.
+            if env:
+                pass_pg=float(np.clip(.5*team_pass_baseline + .5*float(env['expected_pass_attempts']),18.,48.))
+            else:
+                pass_pg=team_pass_baseline
             stat_draws[f'__TEAM_PASS_BASELINE__|{team}']={
                 'rostered_qb_available':qb_eligible,
                 'historical_qb_count':int(len(historical_qbs)),
@@ -347,6 +356,21 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             team_rush=float(np.clip(.35*observed_rush+.65*inferred_rush,12.,42.))
             expected_dropbacks=float(np.clip(pass_pg+sack_pg,12.,55.))
             expected_plays=float(np.clip(expected_dropbacks+team_rush,48.,78.))
+            if env:
+                # The last-six-team-game historical volume replaces a generic
+                # game-play prior, preserving the shared pass/rush budget.
+                expected_plays=float(np.clip(float(env['expected_plays']),48.,78.))
+                team_rush=float(np.clip(expected_plays-expected_dropbacks,12.,42.))
+                expected_plays=float(np.clip(expected_dropbacks+team_rush,48.,78.))
+            stat_draws[f'__TEAM_ENVIRONMENT__|{team}']={
+                'scored_team_history':bool(env),
+                'team_plays_prior':float(env['expected_plays']) if env else None,
+                'team_pass_attempts_prior':float(env['expected_pass_attempts']) if env else None,
+                'estimated_expected_plays':expected_plays,
+                'estimated_pass_attempts':pass_pg,
+                'historical_games':int(env['observed_games']) if env else 0,
+                'source':str(env.get('source') or 'Historical QB volume; generic pace prior'),
+            }
 
             # Script: positive means this team trails -> more passing, less rushing.
             # Sample one team play budget. Passing and rushing draw from the same
