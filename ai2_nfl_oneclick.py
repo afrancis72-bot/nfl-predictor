@@ -213,6 +213,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "snap_feed_issue": research.get("snap_issue"),
         "injury_context_report": research.get("injury_context_report") or [],
         "off_slate_confirmed_out": research.get("confirmed_off_slate_out") or [],
+        "reserve_status_issue": research.get("reserve_status_issue"),
         "input_lineage": input_lineage_rows(research),
         "role_trends": role_trends,
         "lineup_role_warnings": lineup_role_warnings(ranked, role_trends),
