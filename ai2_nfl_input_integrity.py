@@ -109,8 +109,14 @@ def input_lineage_rows(research):
          "Why": "Pregame box-score trend is a warning, not yet a historically calibrated projection adjustment"},
         {"Information": "DraftKings salary, roster constraints and diversification", "Data use": "OPTIMIZER_ONLY",
          "Why": "Filters eligible lineups and assigns exposures; does not set player scoring probabilities"},
-        {"Information": "Verified weekly snaps, routes and depth-chart roles", "Data use": "NOT_CONNECTED",
-         "Why": "Historical carry/target rates do not certify this week's role"},
+        {"Information": "Previous games' observed offensive snap counts and player opportunity",
+         "Data use": "SCORED" if research.get("snap_profiles") else "UNAVAILABLE",
+         "Why": ("PFR/nflverse player offensive snaps plus observed target/carry per snap "
+                 "can adjust simulated opportunity for eligible roles; incomplete data fall back "
+                 "without fabricated measurements")},
+        {"Information": "Verified routes run, targets per route, and current-week depth-chart roles",
+         "Data use": "NOT_CONNECTED",
+         "Why": "During-season route charting and verified projected depth-chart changes are not available in this feed"},
         {"Information": "Historical team-specific pace and passing volume",
          "Data use": "SCORED" if research.get("team_environment") else "UNAVAILABLE",
          "Why": ("Prior-game team volume estimates adjust simulated pass/rush and plays; "
