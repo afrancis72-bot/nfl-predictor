@@ -54,6 +54,14 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     if any("Official NFL injury feed unavailable" in issue for issue in research["blockers"]):
         raise ValueError("Official game-status data cannot be retrieved; please retry when the source is available")
     pool, raw_rates, outs, audit = create_observed_model_pool(research)
+    # Confirmed officially OUT players can be absent from DK salaries.
+    # Ensure a specific player's historical targets are redistributed at most once.
+    already_out = {(str(z["player"]).casefold(),str(z["team"])) for z in outs}
+    for z in research.get("confirmed_off_slate_out", []):
+        k=(str(z["player"]).casefold(),str(z["team"]))
+        if k not in already_out:
+            outs.append({"player":z["player"],"team":z["team"]})
+            already_out.add(k)
     # Player eligibility is evaluated for the current slate. Past human vetoes
     # are audit feedback, not permanent or automatically carried-forward bans.
     # Explicit current-slate exclusions would need to be confirmed separately.
@@ -71,7 +79,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     players, draws, stat_draws = run_verified_stat_simulation(
         pool, raw_rates, n_sims=10000, seed=seed, out_players=outs,
         team_environment=research.get("team_environment"),
-        snap_profiles=research.get("snap_profiles"))
+        snap_profiles=research.get("snap_profiles"),
+        injury_presence=research.get("injury_presence", {}))
     if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
         raise ValueError("Incomplete NFL simulation; refusing to export lineups")
     try:
@@ -200,6 +209,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
              "Source": v["source"], "Routes available": False}
             for p, v in sorted((research.get("snap_profiles") or {}).items())],
         "snap_feed_issue": research.get("snap_issue"),
+        "injury_context_report": research.get("injury_context_report") or [],
+        "off_slate_confirmed_out": research.get("confirmed_off_slate_out") or [],
         "input_lineage": input_lineage_rows(research),
         "role_trends": role_trends,
         "lineup_role_warnings": lineup_role_warnings(ranked, role_trends),
