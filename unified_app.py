@@ -234,9 +234,27 @@ else:
                 else:
                     st.warning("Measured team-specific pace was not available; "
                                "the original historical-QB/generic-pace model is being used.")
-                st.warning("Opponent positional allowances, defender injury research, and recent workload "
-                           "trend warnings currently do NOT modify simulated fantasy scores. "
-                           "These inputs require independent historical calibration before we turn on changes.")
+                snap_rows = output_one.get("snap_role_report") or []
+                if snap_rows:
+                    st.markdown("**Measured offensive snaps → scored target/carry estimates**")
+                    snap_df = _ai2_pd.DataFrame(snap_rows)
+                    st.dataframe(snap_df, hide_index=True, use_container_width=True)
+                    st.download_button(
+                        "Download measured snap opportunity estimates",
+                        data=snap_df.to_csv(index=False).encode("utf-8-sig"),
+                        file_name="team_ai2_nfl_snap_opportunity.csv",
+                        mime="text/csv", key="nfl_scored_snap_opportunity_export")
+                    st.caption("Only prior completed games are used. Receiving routes are NOT "
+                               "available from this source; snaps are not interchangeable with routes.")
+                else:
+                    st.warning("No measured snap roles were applied. "
+                               "The model used historical target/carry rates instead.")
+                if output_one.get("snap_feed_issue"):
+                    st.warning("Snap feed unavailable or incomplete: " +
+                               str(output_one["snap_feed_issue"]))
+                st.warning("Opponent defensive research, weather, market spreads, route running "
+                           "and projected ownership remain unconnected to scoring. "
+                           "These are not silently assumed to be modeled.")
                 role_flags = output_one.get("lineup_role_warnings") or []
                 if role_flags:
                     st.subheader("Selected players whose observed opportunity changed")
