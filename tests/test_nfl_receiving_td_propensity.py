@@ -33,7 +33,7 @@ class ObservedRecTDTests(unittest.TestCase):
         pool,rates=sim_fixture()
         rates.loc[(rates["team"]=="AAA")&(rates["position"]=="WR"),"receiving_tds_pg"]=1.0
         rates.loc[(rates["team"]=="AAA")&(rates["position"]=="TE"),"receiving_tds_pg"]=0.0
-        a,base,_=simulate_stat_driven_dfs(
+        a,base,baseline_stats=simulate_stat_driven_dfs(
             pool,rates,n_sims=220,seed=44,allow_role_proxies=False)
         b,scored,stats=simulate_stat_driven_dfs(
             pool,rates,n_sims=220,seed=44,allow_role_proxies=False,
@@ -43,14 +43,10 @@ class ObservedRecTDTests(unittest.TestCase):
         self.assertTrue(factors["changes_live_scoring"])
         self.assertGreater(factors["actual_pre_game_catch_td_factors"]["WAAA"],1.)
         self.assertLess(factors["actual_pre_game_catch_td_factors"]["TAAA"],1.)
-        scored_tds=stats["__TEAM_SCORING__|AAA"]["simulated_offensive_tds"]
-        components=[stats[n] for n in ("WAAA","RAAA","TAAA","QAAA")]
-        all_tds=np.zeros(220)
-        for p in components:
-            all_tds+=np.asarray(p["receiving_tds"] if "receiving_tds" in p else p["passing_tds"])*0.0
-        # Entire team TD accounting is enforced internally by simulator's
-        # team passing/rushing and capacity reconciliation.
-        self.assertEqual(len(scored_tds),220)
+        np.testing.assert_array_equal(
+            stats["__TEAM_SCORING__|AAA"]["simulated_offensive_tds"],
+            baseline_stats["__TEAM_SCORING__|AAA"]["simulated_offensive_tds"])
+        # This changes which receiver gets a passing TD, not team touchdowns.
 
     def test_invalid_strength_rejected(self):
         pool,rates=sim_fixture()
