@@ -1,0 +1,59 @@
+name: NFL snap-based opportunity: scored inputs and historical holdout
+on:
+  pull_request:
+    paths:
+      - 'ai2_nfl_snap_roles.py'
+      - 'ai2_nfl_auto_intelligence.py'
+      - 'ai2_nfl_oneclick.py'
+      - 'ai2_nfl_input_integrity.py'
+      - 'ai2_nfl_simulation_adapter.py'
+      - 'dfs_stats_engine.py'
+      - 'unified_app.py'
+      - 'tests/test_ai2_nfl_snap_roles.py'
+      - 'scripts/backtest_nfl_snap_roles.py'
+      - '.github/workflows/nfl-snaps-scoring.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  observed-snaps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Dependencies
+        run: python -m pip install pandas numpy scipy beautifulsoup4 streamlit
+      - name: Compile targeted code and actual four-sport Streamlit page
+        run: |
+          python -m compileall -q ai2_nfl_snap_roles.py ai2_nfl_auto_intelligence.py ai2_nfl_oneclick.py ai2_nfl_simulation_adapter.py dfs_stats_engine.py ai2_nfl_input_integrity.py unified_app.py tests/test_ai2_nfl_snap_roles.py scripts/backtest_nfl_snap_roles.py
+      - name: Test observed snap scoring, source identity, and no week leakage
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_snap_roles.py' -v
+      - name: Core existing NFL safeguards
+        run: |
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_input_integrity.py' -v
+      - name: Independent pregame historical role forecast holdout
+        run: PYTHONPATH=. python -u scripts/backtest_nfl_snap_roles.py | tee /tmp/role_holdout.json
+      - name: Report historical calibration result
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python - <<'PY' >/tmp/snap_holdout_comment.md
+          import json
+          x=json.load(open('/tmp/role_holdout.json'))
+          print('**NFL real-snap opportunity model: historical validation**')
+          print(f'Training {x["training_period"]}; independent test {x["heldout_period"]}.')
+          print(f'Strength chosen using pre-2026 results: {x["chosen_weight_pre_2026"]}.')
+          for z in x["holdout"]:
+              print(f'- Weight {z["weight"]}: n={z["observations"]}; opportunity MAE={z["mae"]}; RMSE={z["rmse"]}')
+          for z in x["holdout_by_role"]:
+              print(f'- {z["role"]}: history={z["history_only"]["mae"]}, snap={z["snap_enhanced"]["mae"]}')
+          print('WARNING: Target/carry forecast test only; not complete DK scoring/ROI.')
+          PY
+          gh pr comment "$PR_NUMBER" --body-file /tmp/snap_holdout_comment.md || true
