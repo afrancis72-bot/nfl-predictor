@@ -80,7 +80,8 @@ def actual_partial(row,position):
     return dk_classic_points(row,position)
 
 
-def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320):
+def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
+             role_share_concentration=None):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -107,7 +108,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320):
                 players,draws,_=simulate_stat_driven_dfs(
                     pool,rates,n_sims=n_sims,seed=season*100+week,
                     allow_role_proxies=False,team_environment=environment,
-                    snap_profiles=snap,injury_presence={})
+                    snap_profiles=snap,injury_presence={},
+                    role_share_concentration=role_share_concentration)
             except (KeyError,ValueError,TypeError,IndexError) as e:
                 failures.append(f"{season} W{week} {away}@{home}: {str(e)[:150]}")
                 continue
