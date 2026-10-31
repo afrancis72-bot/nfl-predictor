@@ -100,7 +100,7 @@ class SnapRolesTests(unittest.TestCase):
         pool,rates=sim_fixture()
         players,a,astats=simulate_stat_driven_dfs(pool,rates,n_sims=200,seed=19,
                                                    allow_role_proxies=False)
-        profile={("w aaa","AAA","WR"):{
+        profile={("waaa","AAA","WR"):{
             "expected_targets":12.,"expected_carries":0.,
             "recent_snap_pct":92.,"earlier_snap_pct":70.,
             "snap_games":5,"blend_weight":.6}}
