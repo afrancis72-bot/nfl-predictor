@@ -39,8 +39,31 @@ def _safe(v, default):
         z=float(v); return z if np.isfinite(z) else float(default)
     except Exception: return float(default)
 
-def _multinomial_rows(rng, totals, probs):
-    return np.asarray([rng.multinomial(int(max(0,n)), probs) for n in totals],dtype=np.int16)
+def _multinomial_rows(rng, totals, probs, *, concentration=None):
+    """Allocate exactly one team's real plays/attempts without inventing volume.
+
+    Optional, experimental game-to-game role uncertainty: a single latent
+    Dirichlet share vector per scenario. Low concentration = larger target/
+    carry shares volatility. No future stats and no additional opportunities.
+    None preserves the verified production simulation exactly.
+    """
+    if concentration is None:
+        return np.asarray([rng.multinomial(int(max(0,n)), probs) for n in totals],
+                          dtype=np.int16)
+    if not np.isfinite(concentration) or not 1.0 <= float(concentration) <= 1000.:
+        raise ValueError("Role-share concentration must be finite between 1 and 1000")
+    shares=np.asarray(probs,dtype=float)
+    if shares.ndim!=1 or (shares<0).any() or not np.isclose(shares.sum(),1.):
+        raise ValueError("Invalid team role probabilities")
+    # Per-scenario probabilities maintain nonzero selection eligibility only
+    # for players with observed opportunity; never resurrect an OUT player.
+    eligible=shares>0
+    scenario_probs=np.zeros((len(totals),len(shares)),dtype=float)
+    scenario_probs[:,eligible]=rng.dirichlet(
+        shares[eligible]*float(concentration),size=len(totals))
+    return np.asarray([
+        rng.multinomial(int(max(0,n)),scenario_probs[i])
+        for i,n in enumerate(totals)],dtype=np.int16)
 
 def _team_scoring_budget(historical_pass_tds, historical_rush_tds, expected_field_goals=1.65):
     """Historical-rate-only scoring prior; no sportsbook inputs.
@@ -172,7 +195,8 @@ def _resolve_baselines(pool, rates):
     return r, report
 
 def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None, allow_role_proxies=True,
-                             team_environment=None, snap_profiles=None, injury_presence=None):
+                             team_environment=None, snap_profiles=None, injury_presence=None,
+                             role_share_concentration=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -250,6 +274,13 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
     stat_draws['__MODEL_VERSION__']='Stat-driven V3.12: absence-conditioned injury opportunity and measured pace/snaps'
+    stat_draws['__ROLE_SHARE_VARIANCE__'] = {
+        'scenario_role_concentration':role_share_concentration,
+        'mode':'EXPERIMENTAL_MEASURED' if role_share_concentration is not None
+               else 'EXISTING_FIXED_HISTORICAL_SHARES',
+        'changes_live_scoring':role_share_concentration is not None,
+        'warning':'Not enabled in one-click NFL scoring without independent holdout validation'
+    }
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
@@ -495,11 +526,11 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'active_carry_rates_pg':dict(zip(skill['Name'].astype(str),carry_rates.tolist()))}
 
             tprob=np.append(np.maximum(target_rates,0),leftover); tprob=tprob/tprob.sum()
-            targ=_multinomial_rows(rng,attempts,tprob)
+            targ=_multinomial_rows(rng,attempts,tprob,concentration=role_share_concentration)
             # Carry allocation includes QB and an unmodeled bucket.
             qb_carry=_safe(qr.get('carries_pg') if qr is not None else np.nan,3.0)
             cbase=np.append(np.maximum(carry_rates,0),[max(qb_carry,0),carry_other])
-            cprob=cbase/cbase.sum(); carr=_multinomial_rows(rng,rushes,cprob)
+            cprob=cbase/cbase.sum(); carr=_multinomial_rows(rng,rushes,cprob,concentration=role_share_concentration)
             oth_carries=carr[:,-1].copy()
 
             team_rec_yd=np.zeros(ns); team_comp=np.zeros(ns); player_rec={}; player_rush={}
