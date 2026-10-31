@@ -13,7 +13,7 @@ REQUIRED_RATES = {"player", "team", "position", "games_played", "pass_attempts_p
 
 
 def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, out_players=None,
-                                 team_environment=None, snap_profiles=None):
+                                 team_environment=None, snap_profiles=None, injury_presence=None):
     """Run the existing game-level engine only on explicitly verified inputs.
 
     Returns the engine's (players, points matrix, stat draws) without marking
@@ -127,7 +127,18 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
                 raise ValueError("Snap opportunity input requires actual observed nflverse evidence")
             if evidence.get("routes_verified") is not False or int(evidence.get("snap_games",0)) < 4:
                 raise ValueError("Snap opportunity input must be observed, not fabricated routes")
+    if injury_presence is not None:
+        if not isinstance(injury_presence, dict):
+            raise ValueError("Injury presence data must be observed pregame evidence")
+        for k, v in injury_presence.items():
+            if not isinstance(k, tuple) or len(k)!=2 or not isinstance(v, dict):
+                raise ValueError("Invalid injured player identity")
+            if not str(v.get("source") or "").startswith("nflverse prior-game"):
+                raise ValueError("Injury presence requires real historical source")
+            share=float(v.get("share",float("nan")))
+            if not (np.isfinite(share) and 0 <= share <= 1):
+                raise ValueError("Invalid unavailable-player historical playing share")
     return simulate_stat_driven_dfs(active, rates, n_sims=int(n_sims),
                                     seed=int(seed), out_players=out_players,
                                     allow_role_proxies=False, team_environment=team_environment,
-                                    snap_profiles=snap_profiles)
+                                    snap_profiles=snap_profiles, injury_presence=injury_presence)
