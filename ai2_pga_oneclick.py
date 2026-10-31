@@ -7,6 +7,9 @@ Missing strokes gained or official hole pars are never fabricated.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
+from pathlib import Path
+import importlib.util
+import inspect
 import re
 import unicodedata
 import numpy as np
@@ -445,8 +448,25 @@ def evaluate_groups(groups,model,round_no,live=None,seed=42,sims=25000,tickets=5
         covered=int((ratings["live_rounds"]>0).sum())
         if covered < max(3,int(len(ratings)*.5)):
             raise ValueError(f"Only {covered}/{len(ratings)} golfers matched completed-round scoring evidence.")
-    probs,_=simulate_groups(groups,ratings,n_sims=int(sims),seed=int(seed),
-                            two_ball_tie_rule=two_ball_tie_rule)
+    # Streamlit can retain a shadowed or stale round_parlay import across reruns.
+    # Preserve the selected sportsbook tie settlement; never silently drop the
+    # keyword or revert to the legacy default when an old function is loaded.
+    group_simulator = simulate_groups
+    if "two_ball_tie_rule" not in inspect.signature(group_simulator).parameters:
+        local_module_path = Path(__file__).resolve().with_name("round_parlay.py")
+        spec = importlib.util.spec_from_file_location(
+            "_ai2_pga_local_round_parlay", local_module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("PGA group simulator source could not be loaded.")
+        local_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(local_module)
+        group_simulator = local_module.simulate_groups
+        if "two_ball_tie_rule" not in inspect.signature(group_simulator).parameters:
+            raise RuntimeError(
+                "PGA 2-ball settlement simulation is out of date. "
+                "Redeploy the preview app before running matchups.")
+    probs,_=group_simulator(groups,ratings,n_sims=int(sims),seed=int(seed),
+                           two_ball_tie_rule=two_ball_tie_rule)
     summary,legs=build_six_leg_tickets(probs,ticket_count=int(tickets))
     return {"ratings":ratings,"probabilities":probs,"ticket_summary":summary,
         "ticket_legs":legs,"source":provenance,
