@@ -7,7 +7,7 @@ def sample():
     positions=["QB","RB","RB","WR","WR","WR","TE","WR","DST"]
     ids=list(range(101,110))
     picks=pd.DataFrame({"lineup":[1]*9,"slot":slots,"ID":ids})
-    salary=pd.DataFrame({"ID":ids,"Position":positions,"Salary":[5500]*9,"TeamAbbrev":["SEA"]*9})
+    salary=pd.DataFrame({"ID":ids,"Position":positions,"Salary":[5500]*9,"TeamAbbrev":["SEA"]*9,"Status":[""]*9})
     return picks,salary
 
 def test_export_and_preserve_existing_entry():
@@ -44,7 +44,8 @@ def test_optimizer_excludes_out_and_ir_before_selection():
         "Salary":[5500]*10,"Status":[""]*9+["IR"]})
     projection=pd.DataFrame({"ID":[str(i+1) for i in range(10)],
         "dk_points_mean":[15.0]*9+[100.0],
-        "dk_points_p90":[20.0]*9+[110.0]})
+        "dk_points_p90":[20.0]*9+[110.0],
+        "role_confidence":[0.85]*10})
     picks=build_classic_lineups(salary,projection,dst_points={"DEN":7.0},count=1,salary_floor=47500)
     assert len(picks)==9
     assert "10" not in set(picks.ID.astype(str))
@@ -54,3 +55,20 @@ def test_classic_export_blocks_inactive_players():
     salary["Status"]=[""]*8+["OUT"]
     with pytest.raises(ValueError,match="inactive"):
         export_classic_ids(picks,salary)
+
+def test_export_does_not_assume_missing_status_means_active():
+    picks,salary=sample()
+    with pytest.raises(ValueError,match="missing Status"):
+        export_classic_ids(picks,salary.drop(columns=["Status"]))
+
+
+def test_optimizer_does_not_assume_missing_role_confidence_is_verified():
+    from classic_lineup_builder import build_classic_lineups
+    picks,salary=sample()
+    salary["Name"]=[f"Player {i}" for i in range(len(salary))]
+    projections=pd.DataFrame({
+        "ID":salary["ID"].astype(str),
+        "dk_points_mean":[15.0]*len(salary),
+        "dk_points_p90":[20.0]*len(salary)})
+    with pytest.raises(ValueError,match="role evidence"):
+        build_classic_lineups(salary,projections,dst_points={"SEA":7.0},count=1)
