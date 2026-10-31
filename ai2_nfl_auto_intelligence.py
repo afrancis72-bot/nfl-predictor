@@ -10,6 +10,7 @@ from props_data import fetch_weekly, make_rates
 from ai2_nfl_workload import redistribute_opportunities
 from ai2_nfl_matchup_diagnostics import defensive_allowance
 from ai2_nfl_input_integrity import player_role_trends
+from ai2_nfl_team_environment import predict_team_environment
 import pandas as pd
 
 UNAVAILABLE = frozenset({"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "DOUBTFUL", "D"})
@@ -40,6 +41,7 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
                                    & ~baseline["excluded_for_status"]
                                    & ~baseline["requires_injury_review"])
     rates = make_rates(history, season, week)
+    team_environment = predict_team_environment(history, season, week)
     # Observable pregame usage changes must be visible in the review, not
     # silently confused with independent current-week role verification.
     role_trends = player_role_trends(history, salary_rows, season, week)
@@ -65,6 +67,7 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         "players": baseline, "raw_rates": rates, "adjusted_rates": adjusted_rates,
         "opponent_allowances": opponent_allowances, "opponent_history_issue": opponent_issue,
         "opportunity_changes": opportunity_changes, "role_trends": role_trends,
+        "team_environment": team_environment,
         "source": "nflverse historical stats and NFL official game designations",
         "target_season": season, "target_week": week,
         "matched_count": int(baseline["match_status"].eq("matched").sum()),
