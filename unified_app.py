@@ -214,6 +214,8 @@ else:
                 if lineage_rows:
                     st.dataframe(_ai2_pd.DataFrame(lineage_rows), hide_index=True,
                                  use_container_width=True)
+                else:
+                    st.warning("Prediction-input lineage is unavailable for this build.")
                 scored_teams = output_one.get("team_environment") or {}
                 if scored_teams:
                     st.markdown("**New in scoring: measured team play and passing volume**")
@@ -232,8 +234,6 @@ else:
                 else:
                     st.warning("Measured team-specific pace was not available; "
                                "the original historical-QB/generic-pace model is being used.")
-                else:
-                    st.warning("Prediction-input lineage is unavailable for this build.")
                 st.warning("Opponent positional allowances, defender injury research, and recent workload "
                            "trend warnings currently do NOT modify simulated fantasy scores. "
                            "These inputs require independent historical calibration before we turn on changes.")
