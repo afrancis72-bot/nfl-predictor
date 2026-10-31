@@ -1,0 +1,32 @@
+name: NFL scored team pace and pass environment
+on:
+  pull_request:
+    paths:
+      - 'ai2_nfl_team_environment.py'
+      - 'dfs_stats_engine.py'
+      - 'ai2_nfl_simulation_adapter.py'
+      - 'ai2_nfl_auto_intelligence.py'
+      - 'ai2_nfl_oneclick.py'
+      - 'ai2_nfl_input_integrity.py'
+      - 'tests/test_ai2_nfl_team_pace_scoring.py'
+      - '.github/workflows/nfl-scored-team-environment.yml'
+  workflow_dispatch:
+jobs:
+  scored-team-volume:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install simulation and source dependencies
+        run: python -m pip install pandas numpy scipy beautifulsoup4
+      - name: Compile changed model files
+        run: python -m compileall -q ai2_nfl_team_environment.py dfs_stats_engine.py ai2_nfl_simulation_adapter.py ai2_nfl_auto_intelligence.py ai2_nfl_oneclick.py ai2_nfl_input_integrity.py tests/test_ai2_nfl_team_pace_scoring.py
+      - name: Verify source chronology and actual scoring response
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_team_pace_scoring.py' -v
+      - name: Verify verified-stats adapter and integrity audit
+        run: |
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_ai2_nfl_input_integrity.py' -v
