@@ -172,7 +172,7 @@ def _resolve_baselines(pool, rates):
     return r, report
 
 def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None, allow_role_proxies=True,
-                             team_environment=None, snap_profiles=None):
+                             team_environment=None, snap_profiles=None, injury_presence=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -183,6 +183,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     out_players=out_players or []
     team_environment=team_environment or {}
     snap_profiles=snap_profiles or {}
+    # None preserves explicit legacy simulation callers. Unified NFL passes a
+    # measured dict, and an unknown player's share defaults to ZERO rather
+    # than silently awarding a full conditional OUT-player workload.
+    legacy_injury_model = injury_presence is None
+    injury_presence = injury_presence or {}
+    def _missing_fraction(name, team):
+        if legacy_injury_model:
+            return 1.0
+        context = injury_presence.get((_clean_name(name), _team(team)))
+        return float(context["share"]) if context is not None else 0.0
     out_keys={(_clean_name(item['player']),_team(item['team'])) for item in out_players}
     x=pool[pool['optimizer_eligible']==True].copy().reset_index(drop=True)
     if out_keys:
@@ -239,7 +249,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     rm=r.drop_duplicates(['_name','team']).set_index(['_name','team'])
     ns=int(n_sims); rng=np.random.default_rng(seed)
     out=np.zeros((ns,len(x)),dtype=np.float32); stat_draws={}
-    stat_draws['__MODEL_VERSION__']='Stat-driven V3.11: roster-independent team passing baseline'
+    stat_draws['__MODEL_VERSION__']='Stat-driven V3.12: absence-conditioned injury opportunity and measured pace/snaps'
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
@@ -359,7 +369,17 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # their carries will be redistributed once, not added as new plays.
             out_team=r[(r['team']==team)&(r['position'].astype(str).str.upper().isin(['RB','WR','TE']))].copy()
             out_team=out_team[[ (str(z['_name']),team) in redistributable_out for _,z in out_team.iterrows() ]] if redistributable_out else out_team.iloc[0:0]
-            missing_rush=float(pd.to_numeric(out_team.get('carries_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
+            if len(out_team):
+                out_team['_missing_fraction'] = [
+                    _missing_fraction(row['player'], team)
+                    for _, row in out_team.iterrows()
+                ]
+            else:
+                out_team['_missing_fraction'] = pd.Series(dtype=float)
+            missing_rush = float((
+                pd.to_numeric(out_team.get('carries_pg',pd.Series(dtype=float)),
+                              errors='coerce').fillna(0).clip(lower=0)
+                * out_team['_missing_fraction']).sum())
             observed_rush=active_rush+missing_rush
             # A conservative team-play prior (65 plays) is used because the
             # input has no verified team-level plays/game feed. The 42-rush cap
@@ -423,9 +443,17 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # Separate confirmed-OUT historical usage from the genuine OTHER bucket.
             # OUT opportunity is redistributed exactly once.
             team_hist=r[(r['team']==team)&(r['position'].astype(str).str.upper().isin(['RB','WR','TE']))].copy()
-            out_hist=team_hist[[ (str(z['_name']),team) in redistributable_out for _,z in team_hist.iterrows() ]] if redistributable_out else team_hist.iloc[0:0]
-            missing_t=float(pd.to_numeric(out_hist.get('targets_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
-            missing_c=float(pd.to_numeric(out_hist.get('carries_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
+            out_hist=out_team
+            raw_missing_t=float(pd.to_numeric(out_hist.get('targets_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
+            raw_missing_c=float(pd.to_numeric(out_hist.get('carries_pg',pd.Series(dtype=float)),errors='coerce').fillna(0).clip(lower=0).sum())
+            missing_t=float((
+                pd.to_numeric(out_hist.get('targets_pg',pd.Series(dtype=float)),
+                              errors='coerce').fillna(0).clip(lower=0)
+                * out_hist['_missing_fraction']).sum())
+            missing_c=float((
+                pd.to_numeric(out_hist.get('carries_pg',pd.Series(dtype=float)),
+                              errors='coerce').fillna(0).clip(lower=0)
+                * out_hist['_missing_fraction']).sum())
             leftover=max(pass_pg*.10, pass_pg-target_rates.sum()-missing_t, .5)
             carry_other=max(team_rush*.06,.5)
             pre_target_budget=float(target_rates.sum()+leftover+missing_t)
@@ -453,6 +481,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'carry_budget_before':pre_carry_budget,
                 'carry_budget_after':post_carry_budget,
                 'removed_targets_pg':missing_t,'removed_carries_pg':missing_c,
+                'historical_out_targets_if_always_active_pg':raw_missing_t,
+                'historical_out_carries_if_always_active_pg':raw_missing_c,
+                'out_context_method':('LEGACY_UNCONDITIONAL' if legacy_injury_model
+                                      else 'PREGAME_ABSENCE_CONDITIONED'),
+                'out_context_by_player':[
+                    {'player':str(row['player']),
+                     'present_in_history_fraction':round(float(row['_missing_fraction']),4),
+                     'raw_targets_pg':max(0.,_safe(row.get('targets_pg'),0.)),
+                     'raw_carries_pg':max(0.,_safe(row.get('carries_pg'),0.))}
+                    for _,row in out_hist.iterrows()],
                 'active_target_rates_pg':dict(zip(skill['Name'].astype(str),target_rates.tolist())),
                 'active_carry_rates_pg':dict(zip(skill['Name'].astype(str),carry_rates.tolist()))}
 
