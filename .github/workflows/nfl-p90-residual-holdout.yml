@@ -1,0 +1,60 @@
+name: NFL expanded P90 reliability - 2025 rolling calibration 2026 holdout
+on:
+  pull_request:
+    paths:
+      - 'ai2_nfl_p90_calibration.py'
+      - 'scripts/backtest_nfl_p90_calibration.py'
+      - 'tests/test_nfl_p90_residual_calibration.py'
+      - '.github/workflows/nfl-p90-residual-holdout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  evaluate-p90:
+    runs-on: ubuntu-latest
+    timeout-minutes: 27
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Dependencies
+        run: python -m pip install numpy pandas scipy beautifulsoup4
+      - name: Independent calibration and no data leakage tests
+        run: |
+          python -m compileall -q ai2_nfl_p90_calibration.py scripts/backtest_nfl_p90_calibration.py
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_p90_residual_calibration.py' -v
+      - name: "Larger NFL player game test: 2025 W5-14 training, W15-18 validation, 2026 untouched"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          PYTHONPATH=. python -u scripts/backtest_nfl_p90_calibration.py >/tmp/p90_result.json 2>/tmp/p90_error.log
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            cat /tmp/p90_error.log
+            if [ -n "$PR_NUMBER" ]; then
+              { echo 'P90 rolling calibration could not be validated:'; echo '```'; tail -40 /tmp/p90_error.log; echo '```'; } >/tmp/p90_error.md
+              gh pr comment "$PR_NUMBER" --body-file /tmp/p90_error.md || true
+            fi
+            exit "$status"
+          fi
+          cat /tmp/p90_result.json
+          python - <<'PY' > /tmp/p90_comment.md
+          import json
+          x=json.load(open('/tmp/p90_result.json'))
+          print('**NFL P90 post-simulation quantile calibration, larger independent backtest**')
+          print(f'Player-games={x["total_matched_player_games"]}. Training-only selected: {x["selected_without_2026_evidence"]}.')
+          print(f'2025 training rows: {x["estimated_from_2025_only"]["training_rows"]}, pooled P90 adjustment: {x["estimated_from_2025_only"]["pooled_margin_dk"]} DK')
+          for tag in ('2025_validation','2026_holdout'):
+              print(f'**{tag}**')
+              for kind,v in x[tag].items():
+                  print(f'- {kind}: coverage={v["actual_below_reported_p90_pct"]}%, pinball={v["p90_pinball"]}, added DK={v["average_added_p90_points"]}, n={v["n"]}')
+          print(f'Independent test improved P90 error: {x["holdout_p90_error_improved"]}; closer to 90%: {x["holdout_coverage_closer_90"]}')
+          print('All fantasy-stat worlds unchanged. Partial fantasy scores and player appearance selection are study limitations.')
+          PY
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body-file /tmp/p90_comment.md || true
+          fi
