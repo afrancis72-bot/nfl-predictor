@@ -5,7 +5,6 @@ from contextlib import ExitStack
 import pandas as pd
 
 from ai2_nfl_auto_intelligence import collect_automatic_baselines
-from tests.test_ai2_nfl_injury_context import make_weekly
 
 
 class ReserveOneClickIntegrationTests(unittest.TestCase):
