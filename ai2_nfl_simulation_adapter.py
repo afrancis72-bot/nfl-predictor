@@ -13,7 +13,7 @@ REQUIRED_RATES = {"player", "team", "position", "games_played", "pass_attempts_p
 
 
 def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, out_players=None,
-                                 team_environment=None):
+                                 team_environment=None, snap_profiles=None):
     """Run the existing game-level engine only on explicitly verified inputs.
 
     Returns the engine's (players, points matrix, stat draws) without marking
@@ -116,6 +116,18 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
             if games < 3 or not (np.isfinite(plays) and 48 <= plays <= 80
                                   and np.isfinite(attempts) and 18 <= attempts <= 50):
                 raise ValueError("Unverified or implausible team game environment")
+    if snap_profiles is not None:
+        if not isinstance(snap_profiles, dict):
+            raise ValueError("Snap opportunity profiles must be keyed observed player roles")
+        for key, evidence in snap_profiles.items():
+            if not (isinstance(key, tuple) and len(key) == 3
+                    and isinstance(evidence, dict)):
+                raise ValueError("Snap opportunity profile has invalid player identity")
+            if not str(evidence.get("source") or "").startswith("nflverse PFR"):
+                raise ValueError("Snap opportunity input requires actual observed nflverse evidence")
+            if evidence.get("routes_verified") is not False or int(evidence.get("snap_games",0)) < 4:
+                raise ValueError("Snap opportunity input must be observed, not fabricated routes")
     return simulate_stat_driven_dfs(active, rates, n_sims=int(n_sims),
                                     seed=int(seed), out_players=out_players,
-                                    allow_role_proxies=False, team_environment=team_environment)
+                                    allow_role_proxies=False, team_environment=team_environment,
+                                    snap_profiles=snap_profiles)
