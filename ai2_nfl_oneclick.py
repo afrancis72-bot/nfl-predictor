@@ -70,7 +70,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     # targets. Use unmodified rates with outs to avoid double counting.
     players, draws, stat_draws = run_verified_stat_simulation(
         pool, raw_rates, n_sims=10000, seed=seed, out_players=outs,
-        team_environment=research.get("team_environment"))
+        team_environment=research.get("team_environment"),
+        snap_profiles=research.get("snap_profiles"))
     if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
         raise ValueError("Incomplete NFL simulation; refusing to export lineups")
     try:
@@ -187,6 +188,18 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     role_trends = research.get("role_trends") or []
     return {
         "team_environment": research.get("team_environment") or {},
+        "snap_role_report": [
+            {"Player": p[0], "Team": p[1], "Position": p[2],
+             "Last observed week": v["last_observed_week"],
+             "Offensive snaps expected": v["expected_offensive_snaps"],
+             "Recent offense snap share %": v["recent_snap_pct"],
+             "Earlier offense snap share %": v["earlier_snap_pct"],
+             "Snap-based target estimate": v.get("expected_targets"),
+             "Snap-based carry estimate": v.get("expected_carries"),
+             "Observed snap games": v["snap_games"],
+             "Source": v["source"], "Routes available": False}
+            for p, v in sorted((research.get("snap_profiles") or {}).items())],
+        "snap_feed_issue": research.get("snap_issue"),
         "input_lineage": input_lineage_rows(research),
         "role_trends": role_trends,
         "lineup_role_warnings": lineup_role_warnings(ranked, role_trends),

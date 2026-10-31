@@ -11,11 +11,13 @@ from ai2_nfl_workload import redistribute_opportunities
 from ai2_nfl_matchup_diagnostics import defensive_allowance
 from ai2_nfl_input_integrity import player_role_trends
 from ai2_nfl_team_environment import predict_team_environment
+from ai2_nfl_snap_roles import fetch_snap_counts, predict_snap_roles
 import pandas as pd
 
 UNAVAILABLE = frozenset({"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "DOUBTFUL", "D"})
 
-def collect_automatic_baselines(salaries, season, week, *, history=None, injury_fetcher=None):
+def collect_automatic_baselines(salaries, season, week, *, history=None, injury_fetcher=None,
+                                snap_history=None, snap_fetcher=None):
     salary_rows = parse_csv_payload(salaries[1])
     if not salary_rows:
         raise ValueError("Salary slate contains no players")
@@ -42,6 +44,18 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
                                    & ~baseline["requires_injury_review"])
     rates = make_rates(history, season, week)
     team_environment = predict_team_environment(history, season, week)
+    snap_profiles = {}
+    snap_issue = None
+    try:
+        if snap_history is None:
+            fetch_snap = snap_fetcher or fetch_snap_counts
+            snap_history = fetch_snap([season])
+        snap_profiles = predict_snap_roles(
+            history, snap_history, season, week, team_environment=team_environment)
+    except (OSError, ValueError, TypeError, KeyError, TimeoutError) as exc:
+        # Don't pretend historical targets were adjusted when the snap source
+        # is unreachable. Keep the old scoring path, and disclose the reason.
+        snap_issue = str(exc)
     # Observable pregame usage changes must be visible in the review, not
     # silently confused with independent current-week role verification.
     role_trends = player_role_trends(history, salary_rows, season, week)
@@ -68,6 +82,8 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         "opponent_allowances": opponent_allowances, "opponent_history_issue": opponent_issue,
         "opportunity_changes": opportunity_changes, "role_trends": role_trends,
         "team_environment": team_environment,
+        "snap_profiles": snap_profiles,
+        "snap_issue": snap_issue,
         "source": "nflverse historical stats and NFL official game designations",
         "target_season": season, "target_week": week,
         "matched_count": int(baseline["match_status"].eq("matched").sum()),
