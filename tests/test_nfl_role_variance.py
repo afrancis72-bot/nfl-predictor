@@ -5,7 +5,7 @@ import pandas as pd
 
 from dfs_stats_engine import _multinomial_rows,simulate_stat_driven_dfs
 from scripts.backtest_nfl_role_variance import p90_pinball,quality
-from tests.test_ai2_nfl_team_pace_scoring import sim_fixture
+from test_ai2_nfl_team_pace_scoring import sim_fixture
 
 
 class NflRoleVarianceTests(unittest.TestCase):
