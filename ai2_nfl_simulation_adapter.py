@@ -12,7 +12,8 @@ REQUIRED_RATES = {"player", "team", "position", "games_played", "pass_attempts_p
                   "carries_pg", "targets_pg"}
 
 
-def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, out_players=None):
+def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, out_players=None,
+                                 team_environment=None):
     """Run the existing game-level engine only on explicitly verified inputs.
 
     Returns the engine's (players, points matrix, stat draws) without marking
@@ -103,6 +104,18 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
             raise ValueError(f"Invalid historical opportunity rate: {field}")
     if rates["source"].astype(str).str.contains("ROLE_PROXY", case=False).any():
         raise ValueError("Unverified role-proxy rates are not eligible for official simulation")
+    if team_environment is not None:
+        if not isinstance(team_environment, dict):
+            raise ValueError("Team environment must be an observed source dictionary")
+        for team, profile in team_environment.items():
+            if not isinstance(profile, dict) or not str(profile.get("source") or "").startswith("nflverse"):
+                raise ValueError("Team environment requires actual nflverse source evidence")
+            plays = float(profile.get("expected_plays", float("nan")))
+            attempts = float(profile.get("expected_pass_attempts", float("nan")))
+            games = int(profile.get("observed_games", 0))
+            if games < 3 or not (np.isfinite(plays) and 48 <= plays <= 80
+                                  and np.isfinite(attempts) and 18 <= attempts <= 50):
+                raise ValueError("Unverified or implausible team game environment")
     return simulate_stat_driven_dfs(active, rates, n_sims=int(n_sims),
                                     seed=int(seed), out_players=out_players,
-                                    allow_role_proxies=False)
+                                    allow_role_proxies=False, team_environment=team_environment)

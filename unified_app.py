@@ -216,6 +216,24 @@ else:
                                  use_container_width=True)
                 else:
                     st.warning("Prediction-input lineage is unavailable for this build.")
+                scored_teams = output_one.get("team_environment") or {}
+                if scored_teams:
+                    st.markdown("**New in scoring: measured team play and passing volume**")
+                    st.dataframe(_ai2_pd.DataFrame([
+                        {"Team": team,
+                         "Projected team plays": round(profile["expected_plays"], 1),
+                         "Projected pass attempts": round(profile["expected_pass_attempts"], 1),
+                         "Observed prior team-games": profile["observed_games"],
+                         "Latest source game": str(profile["last_observed_season"]) + " W" +
+                             str(profile["last_observed_week"])}
+                        for team, profile in sorted(scored_teams.items())
+                    ]), hide_index=True, use_container_width=True)
+                    st.caption("These are nflverse pregame box-score estimates used in the simulated "
+                               "team plays and passing mix. Not verified snaps or game odds. "
+                               "Teams without enough history retain existing conservative priors.")
+                else:
+                    st.warning("Measured team-specific pace was not available; "
+                               "the original historical-QB/generic-pace model is being used.")
                 st.warning("Opponent positional allowances, defender injury research, and recent workload "
                            "trend warnings currently do NOT modify simulated fantasy scores. "
                            "These inputs require independent historical calibration before we turn on changes.")
