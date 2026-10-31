@@ -17,6 +17,7 @@ from ai2_nfl_candidate_builder import build_classic_candidates
 from ai2_nfl_sim_portfolio import select_simulated_portfolio
 from ai2_nfl_export import export_classic_candidates
 from ai2_nfl_opponent_intelligence import make_opponent_report, report_summary
+from ai2_nfl_input_integrity import input_lineage_rows, lineup_role_warnings
 import pandas as pd
 
 def _slate_week(saved_salaries):
@@ -182,7 +183,11 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
             "P90/$1000": entry["p90_per_1000"],
             "Players": ", ".join(str(p["Name"]) for p in roster),
         })
+    role_trends = research.get("role_trends") or []
     return {
+        "input_lineage": input_lineage_rows(research),
+        "role_trends": role_trends,
+        "lineup_role_warnings": lineup_role_warnings(ranked, role_trends),
         "summary": summary, "ranked": ranked,
         "csv": export_classic_candidates([x["candidate"] for x in ranked]),
         "audit": audit, "seed": seed, "pregame_report": pregame_report,
