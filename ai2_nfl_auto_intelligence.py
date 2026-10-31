@@ -12,6 +12,7 @@ from ai2_nfl_matchup_diagnostics import defensive_allowance
 from ai2_nfl_input_integrity import player_role_trends
 from ai2_nfl_team_environment import predict_team_environment
 from ai2_nfl_snap_roles import fetch_snap_counts, predict_snap_roles
+from ai2_nfl_injury_context import official_off_slate_out, estimate_injury_presence
 import pandas as pd
 
 UNAVAILABLE = frozenset({"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "DOUBTFUL", "D"})
@@ -62,6 +63,18 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
     statuses = {(str(row["Name"]), str(row.get("Team", ""))): str(row["current_status"])
                 for _, row in baseline.iterrows()}
     adjusted_rates, opportunity_changes = redistribute_opportunities(rates, statuses)
+    # Official OUT reports can identify a teammate who is missing from the
+    # DraftKings salary file; never infer IR or OUT merely from that absence.
+    off_slate_out = official_off_slate_out(
+        injury_meta.get("practice_rows") or [], salary_rows, rates)
+    recorded_out = [
+        {"player": row["Name"], "team": row["Team"]}
+        for _, row in baseline.iterrows()
+        if bool(row["excluded_for_status"]) and
+           str(row["Position"]).upper() in {"QB","RB","WR","TE"}
+    ]
+    injury_presence, injury_context_report = estimate_injury_presence(
+        history, recorded_out + off_slate_out, season, week)
     opponent_issue = None
     try:
         # Every game used here predates the target slate week.
@@ -84,6 +97,9 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         "team_environment": team_environment,
         "snap_profiles": snap_profiles,
         "snap_issue": snap_issue,
+        "injury_presence": injury_presence,
+        "injury_context_report": injury_context_report,
+        "confirmed_off_slate_out": off_slate_out,
         "source": "nflverse historical stats and NFL official game designations",
         "target_season": season, "target_week": week,
         "matched_count": int(baseline["match_status"].eq("matched").sum()),
