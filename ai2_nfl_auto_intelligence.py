@@ -13,7 +13,9 @@ from ai2_nfl_input_integrity import player_role_trends
 from ai2_nfl_team_environment import predict_team_environment
 from ai2_nfl_snap_roles import fetch_snap_counts, predict_snap_roles
 from ai2_nfl_injury_context import official_off_slate_out, estimate_injury_presence
-from ai2_nfl_roster_status import fetch_weekly_roster, reserve_players_missing_from_slate
+from ai2_nfl_roster_status import fetch_weekly_roster, reserve_players_for_slate
+from ai2_nfl_auto_baselines import _norm_name
+from ai2_nfl_matchups import canonical_team
 import pandas as pd
 
 UNAVAILABLE = frozenset({"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "DOUBTFUL", "D"})
@@ -71,13 +73,49 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         injury_meta.get("practice_rows") or [], salary_rows, rates)
     reserve_issue = None
     reserve_out = []
+    reserve_priced = []
     try:
         if roster_history is None:
             roster_history = (roster_fetcher or fetch_weekly_roster)(season)
-        reserve_out = reserve_players_missing_from_slate(
+        if not isinstance(roster_history, pd.DataFrame) or not {
+                "season","week"}.issubset(roster_history.columns):
+            raise ValueError("Unverified weekly roster snapshot; no reserve exclusions assumed")
+        current = roster_history[
+            (pd.to_numeric(roster_history["season"], errors="coerce").eq(season)) &
+            (pd.to_numeric(roster_history["week"], errors="coerce").eq(week))]
+        if current.empty:
+            available = pd.to_numeric(
+                roster_history.loc[pd.to_numeric(roster_history["season"],
+                     errors="coerce").eq(season),"week"],errors="coerce")
+            latest = (int(available.max()) if not available.empty and
+                      pd.notna(available.max()) else "none")
+            raise ValueError(
+                f"Target-week {season} W{week} roster not published; latest W{latest}. "
+                "IR status for off-slate players cannot be assumed from prior weeks")
+        _, reserve_priced, reserve_out = reserve_players_for_slate(
             roster_history, salary_rows, rates, season, week)
     except (OSError, ValueError, TypeError, KeyError, TimeoutError) as exc:
         reserve_issue = str(exc)
+    if reserve_priced:
+        priced_keys = {
+            (_norm_name(row["player"]),canonical_team(row["team"])): row
+            for row in reserve_priced}
+        baseline["roster_reserve_status"] = [
+            str(priced_keys.get((_norm_name(row["Name"]),
+                                 canonical_team(row["Team"])),{}).get(
+                                 "roster_status") or "")
+            for _,row in baseline.iterrows()]
+        is_reserve=baseline["roster_reserve_status"].ne("")
+        baseline.loc[is_reserve,"current_status"]="IR"
+        baseline.loc[is_reserve,"excluded_for_status"]=True
+        baseline.loc[is_reserve,"requires_injury_review"]=False
+        baseline.loc[is_reserve,"model_candidate"]=False
+        # The research-only opportunity baseline and actual simulator
+        # eligibility must see precisely the SAME injured statuses.
+        statuses = {
+            (str(row["Name"]),str(row["Team"])):str(row["current_status"])
+            for _,row in baseline.iterrows()}
+        adjusted_rates, opportunity_changes = redistribute_opportunities(rates,statuses)
     # Two real source feeds may report the SAME unavailable teammate.
     # Deduplicate before conditioning or redistributing his workload.
     out_keys = {(str(x["player"]).casefold(),str(x["team"])) for x in off_slate_out}
@@ -119,6 +157,7 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         "injury_presence": injury_presence,
         "injury_context_report": injury_context_report,
         "confirmed_off_slate_out": off_slate_out,
+        "confirmed_priced_reserve_out": reserve_priced,
         "reserve_status_issue": reserve_issue,
         "reserve_source": "nflverse weekly roster; target-week explicit RES/IR/PUP/NFI",
         "source": "nflverse historical stats and NFL official game designations",

@@ -1,7 +1,7 @@
 """Real weekly reserve status means off-slate players can be included safely."""
 import unittest
 import pandas as pd
-from ai2_nfl_roster_status import reserve_players_missing_from_slate
+from ai2_nfl_roster_status import reserve_players_missing_from_slate, reserve_players_for_slate
 
 
 class RosterReserveTests(unittest.TestCase):
@@ -38,6 +38,26 @@ class RosterReserveTests(unittest.TestCase):
         result=reserve_players_missing_from_slate(
             self.roster,salaries,self.rates,2026,9)
         self.assertEqual([r["player"] for r in result],["Brian Robinson Jr."])
+    def test_priced_player_status_is_verified_and_cannot_be_in_lineups(self):
+        salaries=self.salary+[
+            {"Name":"Davante Adams","TeamAbbrev":"LAR"}]
+        all_out,priced,off=reserve_players_for_slate(
+            self.roster,salaries,self.rates,2026,9)
+        self.assertEqual({r["player"] for r in priced},{"Davante Adams"})
+        self.assertEqual({r["player"] for r in off},{"Brian Robinson Jr."})
+        self.assertEqual(len(all_out),2)
+        self.assertEqual(priced[0]["roster_status"],"RES")
+        self.assertTrue(priced[0]["present_in_dk"])
+
+    def test_conflicting_same_week_active_and_reserve_is_not_assumed_out(self):
+        mixed=pd.concat([self.roster,self.roster.iloc[[0]].assign(status="ACT")],
+                        ignore_index=True)
+        all_out,priced,off=reserve_players_for_slate(
+            mixed,self.salary,self.rates,2026,9)
+        self.assertEqual([r["player"] for r in all_out],["Brian Robinson Jr."])
+        self.assertEqual(priced,[])
+        self.assertEqual(len(off),1)
+
     def test_rejects_missing_observation_provenance(self):
         with self.assertRaisesRegex(ValueError,"explicit"):
             reserve_players_missing_from_slate(
