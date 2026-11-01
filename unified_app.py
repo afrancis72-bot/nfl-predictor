@@ -206,7 +206,29 @@ else:
             output_one = None
 
         if output_one:
-            with st.expander("NFL prediction oil check · Which information actually drives the simulation?", expanded=True):
+            ranked = st.session_state.get("ai2_oneclick_review_ranked") or output_one["ranked"]
+            overview, details, exposures = review_tables(ranked)
+            st.subheader(f"Your {len(ranked)} lineups — player names")
+            st.warning(output_one.get("research_warning",
+                       "Experimental projections. Review current injuries before entry."))
+            st.dataframe(overview, use_container_width=True, hide_index=True)
+            st.download_button("Download readable Excel review",
+                               data=named_excel(ranked),
+                               file_name=f"team_ai2_nfl_{len(ranked)}_lineups_NAMED.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               key="nfl_named_xlsx")
+            st.download_button("Download readable CSV review",
+                               data=named_csv(ranked),
+                               file_name=f"team_ai2_nfl_{len(ranked)}_lineups_NAMED.csv",
+                               mime="text/csv", key="nfl_named_csv")
+            st.download_button("Download DraftKings roster-ID CSV",
+                               data=roster_id_csv(ranked),
+                               file_name=f"team_ai2_nfl_{len(ranked)}_lineups_DK_ids.csv",
+                               mime="text/csv", key="nfl_dk_ids")
+            st.caption("Roster-ID CSV contains player IDs, not an official contest-entry template. Verify the DraftKings import format.")
+
+            st.subheader("Reports & diagnostics")
+            with st.expander("Model inputs & workload plausibility reports", expanded=False):
                 st.caption("SCORED = changes the forecast; OPTIMIZER_ONLY = changes selection; "
                            "ELIGIBILITY_ONLY = roster gate; RESEARCH_ONLY = collected but NOT scored; "
                            "NOT_CONNECTED = missing. A 'verified' historical rate is NOT a verified Sunday role.")
@@ -325,26 +347,7 @@ else:
                         data=_ai2_pd.DataFrame(all_role_rows).to_csv(index=False).encode("utf-8-sig"),
                         file_name="team_ai2_nfl_role_trends.csv",
                         mime="text/csv", key="nfl_input_integrity_role_export")
-            ranked = st.session_state.get("ai2_oneclick_review_ranked") or output_one["ranked"]
-            overview, details, exposures = review_tables(ranked)
-            st.subheader(f"Your {len(ranked)} lineups — player names")
-            st.warning(output_one.get("research_warning",
-                       "Experimental projections. Review current injuries before entry."))
-            st.dataframe(overview, use_container_width=True, hide_index=True)
-            st.download_button("Download readable Excel review",
-                               data=named_excel(ranked),
-                               file_name=f"team_ai2_nfl_{len(ranked)}_lineups_NAMED.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               key="nfl_named_xlsx")
-            st.download_button("Download readable CSV review",
-                               data=named_csv(ranked),
-                               file_name=f"team_ai2_nfl_{len(ranked)}_lineups_NAMED.csv",
-                               mime="text/csv", key="nfl_named_csv")
-            st.download_button("Download DraftKings roster-ID CSV",
-                               data=roster_id_csv(ranked),
-                               file_name=f"team_ai2_nfl_{len(ranked)}_lineups_DK_ids.csv",
-                               mime="text/csv", key="nfl_dk_ids")
-            st.caption("Roster-ID CSV contains player IDs, not an official contest-entry template. Verify the DraftKings import format.")
+
 
             with st.expander("Player simulation audit · explain projected DK points"):
                 sim_rows = output_one.get("player_simulation_audit") or []
@@ -361,9 +364,8 @@ else:
                     else:
                         available["Selector"] = available["Player"] + " (" + available["Team"] + ", " + available["Position"] + ")"
                         labels = available["Selector"].tolist()
-                        puka = next((i for i, label in enumerate(labels)
-                                     if label.startswith("Puka Nacua (")), 0)
-                        choice = st.selectbox("Player to inspect", labels, index=puka, key="nfl_sim_player_inspect")
+                        choice = st.selectbox("Player to inspect", sorted(labels),
+                                              key="nfl_sim_player_inspect")
                         record = available.loc[available["Selector"] == choice].iloc[0]
                         cmean, crebuild = st.columns(2)
                         cmean.metric("Simulated mean DK points", f"{record['Sim mean DK']:.2f}")
@@ -396,7 +398,7 @@ else:
                         mime="text/csv", key="nfl_player_simulation_audit_export")
 
 
-            with st.expander("NFL injuries and news status", expanded=True):
+            with st.expander("NFL injuries and news status", expanded=False):
                 report = output_one.get("pregame_report") or {}
                 checked = report.get("checked_utc") or "not available"
                 source = report.get("official_injury_url") or "unknown source"
@@ -434,7 +436,7 @@ else:
                     "Exact receiver-cornerback routes and shadow coverages not verified."))
                 st.caption("An OUT defender is a clue, not proof of a particular WR matchup. No automatic positive player projections are credited without measured alignment and calibrated evidence.")
 
-            with st.expander("Portfolio overlap and distinct winning paths", expanded=True):
+            with st.expander("Portfolio overlap and distinct winning paths", expanded=False):
                 diversity = portfolio_overlap_audit(ranked)
                 summary = diversity["summary"]
                 st.caption(
