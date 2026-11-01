@@ -31,5 +31,23 @@ class UnifiedNFLUITests(unittest.TestCase):
                     os.environ["AI2_DATA_DIR"] = old
 
 
+    def test_reporting_is_collapsed_and_lineups_come_first(self):
+        source = (Path(__file__).resolve().parent.parent / "unified_app.py").read_text()
+        build = source.index('key="nfl_one_build"')
+        review = source.index('st.subheader(f"Your {len(ranked)} lineups — player names")')
+        reports = source.index('st.subheader("Reports & diagnostics")')
+        warnings = source.index('role_outliers = output_one.get("role_projection_anomalies") or []')
+        self.assertLess(build, review)
+        self.assertLess(review, reports)
+        self.assertLess(reports, warnings)
+        self.assertIn(
+            'with st.expander("Model inputs & workload plausibility reports", expanded=False):',
+            source)
+        self.assertIn(
+            'with st.expander("NFL injuries and news status", expanded=False):',
+            source)
+        self.assertNotIn('if label.startswith("Puka Nacua (")', source)
+
+
 if __name__ == "__main__":
     unittest.main()
