@@ -23,6 +23,20 @@ def _colkey(s):
 def _namekey(s):
     return re.sub("[^a-z0-9]","",unicodedata.normalize("NFKD",str(s)).encode("ascii","ignore").decode().lower())
 
+# Strict, known driver-name aliases only; do NOT fuzzy-match unrelated drivers.
+_PRACTICE_ALIASES={
+    "johnhnemechek":"johnhunternemechek",
+    "jhnemechek":"johnhunternemechek",
+    "rickystenhousejr":"rickystenhouse",
+    "rickystenhousejunior":"rickystenhouse",
+    "chrisbell":"christopherbell",
+    "willbyron":"williambyron",
+}
+
+def _practice_namekey(s):
+    key=_namekey(s)
+    return _PRACTICE_ALIASES.get(key,key)
+
 def load_dk_slate(data):
     """Accept actual driver IDs, salaries and FULL qualifying grid only."""
     raw=data.copy() if isinstance(data,pd.DataFrame) else pd.read_csv(data)
@@ -73,21 +87,44 @@ def _speed_to_rank(df, source_col):
         raise ValueError("Practice speed cannot be negative.")
     return speeds.rank(ascending=False,method="min")
 
-def practice_updates(raw,dk):
-    """Optional practice rank or speed data, without changing the DK grid."""
+def practice_updates(raw,dk,return_report=False):
+    """Match published practice ranks to DK drivers, without changing qualifying.
+
+    Ignore clearly unmatched extra rows (e.g. a driver not in the DK slate),
+    but reject ambiguous/mostly wrong-series uploads rather than inventing data.
+    The optional report makes every omission transparent in the unified app.
+    """
     if raw is None:
-        return pd.DataFrame({"Name":dk["Name"],"qualifying_position":dk["Starting"]}),0
+        result=pd.DataFrame({"Name":dk["Name"],"qualifying_position":dk["Starting"]})
+        report={"practice_rows":0,"matched_practice_rows":0,"unmatched_practice_names":[]}
+        return (result,0,report) if return_report else (result,0)
     x=raw.copy()
     columns={_colkey(c):c for c in x.columns}
     name_col=next((columns.get(c) for c in ("name","driver","drivername") if c in columns),None)
     if not name_col:
         raise ValueError("Practice file needs a driver Name column.")
-    x["key"]=x[name_col].map(_namekey)
-    if x["key"].duplicated().any() or not set(x["key"]).issubset(set(dk["Name"].map(_namekey))):
-        raise ValueError("Practice driver names must uniquely match names in the DK slate.")
+    x["key"]=x[name_col].map(_practice_namekey)
+    if x["key"].eq("").any():
+        raise ValueError("Practice driver names cannot be blank.")
+    dk_keys=dk["Name"].map(_practice_namekey)
+    if dk_keys.duplicated().any():
+        raise ValueError("DraftKings driver names are ambiguous after standard name normalization.")
+    unmatched=x.loc[~x["key"].isin(set(dk_keys)),name_col].astype(str).tolist()
+    matched=x.loc[x["key"].isin(set(dk_keys))].copy()
+    if matched["key"].duplicated().any():
+        duplicated=matched.loc[matched["key"].duplicated(keep=False),name_col].astype(str).tolist()
+        raise ValueError("Duplicate practice drivers after name normalization: "+", ".join(duplicated[:8]))
+    if not len(matched):
+        raise ValueError("No practice drivers matched the DraftKings slate. Verify the race/series and driver names.")
+    if len(matched)/len(x)<0.70:
+        raise ValueError(
+            f"Practice file matched only {len(matched)}/{len(x)} listed drivers. "
+            "Verify this is the SAME race and series as the DK slate. "
+            "Unmatched: "+", ".join(unmatched[:8])
+        )
     frame=dk[["Name","Starting"]].copy()
-    frame["key"]=frame["Name"].map(_namekey)
-    frame=frame.merge(x.drop(columns=[name_col]),on="key",how="left",validate="one_to_one")
+    frame["key"]=dk_keys
+    frame=frame.merge(matched.drop(columns=[name_col]),on="key",how="left",validate="one_to_one")
     frame=frame.drop(columns=["key"]).rename(columns={"Starting":"qualifying_position"})
     speeds={
        "single_lap_rank":("single_lap_speed","single lap speed","best lap speed"),
@@ -106,7 +143,11 @@ def practice_updates(raw,dk):
     present=int(frame[list(PRACTICE_COLS)].notna().any(axis=1).sum())
     if not present:
         raise ValueError("No usable actual practice rank or speed columns found; remove the practice upload or correct its headers.")
-    return frame[["Name","qualifying_position"]+list(PRACTICE_COLS)],present
+    report={"practice_rows":len(x),"matched_practice_rows":present,
+            "unmatched_practice_names":unmatched,
+            "dk_without_practice":frame.loc[~frame[list(PRACTICE_COLS)].notna().any(axis=1),"Name"].astype(str).tolist()}
+    update=frame[["Name","qualifying_position"]+list(PRACTICE_COLS)]
+    return (update,present,report) if return_report else (update,present)
 
 def _baseline(dk):
     salary=dk["Salary"].rank(pct=True)
@@ -130,7 +171,7 @@ def build_input_features(dk,track_name,laps,practice=None,reference=None):
     if not 25<=int(laps)<=700:
         raise ValueError("Race laps must be between 25 and 700; confirm scheduled race distance.")
     track.loc[:,"laps"]=int(laps)
-    update,practice_drivers=practice_updates(practice,dk)
+    update,practice_drivers,practice_report=practice_updates(practice,dk,return_report=True)
     prior=_baseline(dk)
     ref_count=0
     ref_coverage=0
@@ -157,6 +198,7 @@ def build_input_features(dk,track_name,laps,practice=None,reference=None):
         features["data_coverage"]=0.0
         features["model_confidence"]=0.45
     return features,{"practice_drivers":practice_drivers,
+         "practice_report":practice_report,
          "reference_drivers":ref_count,"reference_coverage_drivers":ref_coverage,
          "verified_grid":True,"track":track_name,"laps":int(laps)}
 
