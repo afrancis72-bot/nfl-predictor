@@ -8,7 +8,7 @@ from ai2_nascar_oneclick import (
     load_dk_slate, practice_updates, build_input_features, run_oneclick,
     validate_portfolio, dk_roster_csv, track_catalog,
 )
-from nascar_predictor_pro import Config, simulate, optimize_lineups
+from nascar_predictor_pro import Config, simulate, optimize_lineups, _allocate_dominator_laps
 from nascar_reference_dna import build_reference_dna, reference_track_family, parse_profile_text
 
 class NascarUnifiedTests(unittest.TestCase):
@@ -152,6 +152,36 @@ class NascarUnifiedTests(unittest.TestCase):
         })
         with self.assertRaisesRegex(ValueError,"Duplicate practice drivers"):
             practice_updates(duplicate,dk)
+
+    def test_short_track_leaders_concentrate_laps_and_keep_dk_accounting(self):
+        rng=np.random.default_rng(2026)
+        # Synthetic ability distribution: driver-agnostic, no named driver boosts.
+        strength=np.linspace(2.0,-2.0,37)
+        max_led=[]
+        leaders=[]
+        for _ in range(350):
+            ll,fl=_allocate_dominator_laps(rng,strength,500,short_track=True)
+            self.assertEqual(len(ll),37)
+            self.assertEqual(int(ll.sum()),500)
+            self.assertEqual(int(fl.sum()),500)
+            self.assertTrue(np.all(ll>=0))
+            self.assertTrue(np.all(fl>=0))
+            leaders.append(int(np.count_nonzero(ll)))
+            self.assertLessEqual(leaders[-1],9)
+            max_led.append(int(ll.max()))
+        # Historical Martinsville fall races featured ~5-7 leaders and
+        # 156/170/304 laps for their biggest dominator in 2023/24/25.
+        self.assertTrue(4.0<=np.mean(leaders)<=8.0)
+        self.assertGreater(np.mean(max_led),100.)
+        self.assertGreater(max(max_led),200)
+
+    def test_martinsville_incorrect_lap_setting_is_blocked(self):
+        dk=load_dk_slate(self.slate())
+        with self.assertRaisesRegex(ValueError,"Race-distance mismatch"):
+            build_input_features(dk,"Martinsville Speedway",260)
+        features,meta=build_input_features(dk,"Martinsville Speedway",500)
+        self.assertEqual(meta["laps"],500)
+        self.assertTrue((features["track_length"]<1.1).all())
 
     def test_simulated_driver_column_alignment_and_projection_seed(self):
         dk=load_dk_slate(self.slate())
