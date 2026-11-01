@@ -294,6 +294,19 @@ else:
                                "need statistical-component verification before entry.")
                     st.dataframe(_ai2_pd.DataFrame(review_flags),
                                  hide_index=True, use_container_width=True)
+                role_outliers = output_one.get("role_projection_anomalies") or []
+                if role_outliers:
+                    st.warning("NFL simulated workload review: these target, carry, or "
+                               "touchdown forecasts materially exceed prior observed usage. "
+                               "They are warnings, NOT player bans or score caps.")
+                    role_outlier_df = _ai2_pd.DataFrame(role_outliers)
+                    st.dataframe(role_outlier_df, hide_index=True,
+                                 use_container_width=True)
+                    st.download_button(
+                        "Download simulated-vs-observed NFL workload checks",
+                        data=role_outlier_df.to_csv(index=False).encode("utf-8-sig"),
+                        file_name="team_ai2_nfl_workload_plausibility.csv",
+                        mime="text/csv", key="nfl_role_plausibility")
                 role_flags = output_one.get("lineup_role_warnings") or []
                 if role_flags:
                     st.subheader("Selected players whose observed opportunity changed")

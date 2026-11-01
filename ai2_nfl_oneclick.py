@@ -19,6 +19,7 @@ from ai2_nfl_export import export_classic_candidates
 from ai2_nfl_opponent_intelligence import make_opponent_report, report_summary
 from ai2_nfl_input_integrity import input_lineage_rows, lineup_role_warnings
 from ai2_nfl_projection_review import projection_review_flags
+from ai2_nfl_role_plausibility import compare_simulated_role_to_history
 import pandas as pd
 
 def _slate_week(saved_salaries):
@@ -96,6 +97,9 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         ) from exc
     simulation_component_audit_error = None
     high_mean_flags = projection_review_flags(simulation_component_audit, pool)
+    observed_role_flags = compare_simulated_role_to_history(
+        simulation_component_audit, raw_rates,
+        research.get("injury_context_report") or [])
     means = dict(zip(players["ID"].astype(str), draws.mean(axis=0).tolist()))
     prepared = []
     from collections import Counter
@@ -227,6 +231,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "audit": audit, "seed": seed, "pregame_report": pregame_report,
         "player_simulation_audit": simulation_component_audit,
         "projection_review_flags": high_mean_flags,
+        "role_projection_anomalies": observed_role_flags,
         "player_simulation_audit_error": simulation_component_audit_error,
         "opponent_matchup_report": opposing_report,
         "opponent_matchup_summary": opposing_summary,

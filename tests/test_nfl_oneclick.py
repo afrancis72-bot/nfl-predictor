@@ -50,7 +50,7 @@ class OneClickTests(unittest.TestCase):
         # A prior week's changed opinion must not become an invisible ban.
         players.loc[0, "Name"] = "Malik Willis"
         players.loc[2, "Name"] = "Adonai Mitchell"
-        raw = pd.DataFrame([{"player": "P0"}])
+        raw = pd.DataFrame([{"player": "P0", "team": "DAL", "position": "WR", "games_played": 7, "source": "nflverse weekly stats", "targets_pg": 5.0, "carries_pg": 0.0}])
         outs = [{"player": "Unavailable", "team": "DAL"}]
         model_pool.return_value = (players, raw, outs, {"complete_games":1})
         simulation.return_value = (players, np.full((10000,9), 11.0),
