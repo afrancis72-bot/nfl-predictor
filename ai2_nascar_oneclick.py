@@ -12,7 +12,7 @@ from nascar_predictor_pro import (Config, build_features, simulate,
     optimize_scenario_portfolio, portfolio_exposure, scenario_summary)
 
 ROOT=Path(__file__).resolve().parent
-PRACTICE_COLS=("single_lap_rank","avg5_rank","avg10_rank","avg15_rank","avg20_rank")
+PRACTICE_COLS=("single_lap_rank","avg5_rank","avg10_rank","avg15_rank","avg20_rank","avg25_rank","avg30_rank")
 
 def track_catalog():
     return pd.read_csv(ROOT/"track_catalog.csv")
@@ -132,6 +132,8 @@ def practice_updates(raw,dk,return_report=False):
        "avg10_rank":("avg10_speed","10 lap average speed"),
        "avg15_rank":("avg15_speed","15 lap average speed"),
        "avg20_rank":("avg20_speed","20 lap average speed"),
+       "avg25_rank":("avg25_speed","25 lap average speed"),
+       "avg30_rank":("avg30_speed","30 lap average speed"),
     }
     for target in PRACTICE_COLS:
         hit=next((columns.get(_colkey(c)) for c in (target,target.replace("_"," ")) if _colkey(c) in columns),None)
