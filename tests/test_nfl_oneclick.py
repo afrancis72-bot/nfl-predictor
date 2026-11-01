@@ -69,7 +69,7 @@ class OneClickTests(unittest.TestCase):
             {"Player":p["Name"],"Team":p["TeamAbbrev"],
              "Position":p["Position"],"DraftKings ID":str(p["ID"]),
              "Audit status":"Verified: per-simulation DK points match components",
-             "Rebuilt mean DK":11.0}
+             "Sim mean DK":11.0,"Rebuilt mean DK":11.0}
             for p in players.to_dict("records")
         ]
         with patch("ai2_nfl_oneclick.summarize_simulated_players",
