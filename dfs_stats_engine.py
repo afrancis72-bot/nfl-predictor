@@ -11,6 +11,7 @@ from injury_opportunity import redistribute
 from ai2_nfl_game_market import market_tds_prior
 from ai2_nfl_receiving_tds import receiving_td_factors
 from ai2_nfl_defensive_efficiency import matchup_yard_multiplier
+from ai2_nfl_other_yard_reconcile import reconcile_other_yards
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
 TEAM_ALIASES={"JAC":"JAX","WAS":"WSH","LA":"LAR"}
@@ -200,7 +201,8 @@ def _resolve_baselines(pool, rates):
 def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_players=None, allow_role_proxies=True,
                              team_environment=None, snap_profiles=None, injury_presence=None,
                              role_share_concentration=None, market_game_totals=None, market_weight=0.,
-                             receiving_td_weight=0.,defense_profiles=None,defense_weight=0.):
+                             receiving_td_weight=0.,defense_profiles=None,defense_weight=0.,
+                             other_yard_strength=0.):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -580,9 +582,29 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             oth_c=rng.binomial(oth_t,team_catch_rate)
             oth_y=np.where(oth_c>0,rng.gamma(np.maximum(oth_c,1)*2.0,4.5),0.)
             team_comp+=oth_c; team_rec_yd+=oth_y
-            # Blend receiver-generated yards toward QB historical yards/attempt without breaking correlation.
-            hist_ypa=pass_yd_pg/max(pass_pg,1); generated_ypa=team_rec_yd/np.maximum(attempts,1)
+            # When some team's receivers are absent from the DK/player pool,
+            # routing all missing QB passing yards to the modeled receivers
+            # can overcredit a high-target player. An experimental OTHER-only
+            # allocation first absorbs limited yards on REAL other catches.
+            # This cannot create new targets, catches or touchdowns.
+            hist_ypa=pass_yd_pg/max(pass_pg,1)
+            desired_team_yards=hist_ypa*attempts
+            oth_y,team_rec_yd,other_yd_shift=reconcile_other_yards(
+                oth_y,oth_c,team_rec_yd,desired_team_yards,
+                strength=other_yard_strength)
+            generated_ypa=team_rec_yd/np.maximum(attempts,1)
             scale=np.clip(hist_ypa/np.maximum(generated_ypa,.1),.72,1.35)
+            stat_draws[f'__YARD_RECONCILIATION__|{team}']={
+                'other_receiver_yards_adjustment':other_yd_shift,
+                'yards_scale_factor':scale,
+                'mean_other_receiver_yards_adjustment':float(other_yd_shift.mean()),
+                'mean_receiver_yard_scale_factor':float(scale.mean()),
+                'fraction_receiver_yards_scaled_up_20pct':float((scale>1.2).mean()),
+                'strength':float(other_yard_strength),
+                'mode':('EXPERIMENTAL_OTHER_BUCKET_FIRST'
+                        if other_yard_strength else 'CURRENT_UNIFORM_RECIPIENT_SCALE'),
+                'warning':'Experimental: not active in one-click lineup scoring'
+            }
             team_rec_yd*=scale
             oth_y*=scale
             for j in player_rec:
