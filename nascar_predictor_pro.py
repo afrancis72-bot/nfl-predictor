@@ -32,8 +32,10 @@ def _z(s, higher_better=True):
     return z if higher_better else -z
 
 def _rank_signal(df):
-    cols = ["avg20_rank","avg15_rank","avg10_rank","avg5_rank","single_lap_rank"]
-    weights = [0.30,0.25,0.22,0.15,0.08]
+    # Longer sustained runs provide the strongest dominator signal when
+    # published; renormalization below leaves older 10/15/20 CSVs supported.
+    cols = ["avg30_rank","avg25_rank","avg20_rank","avg15_rank","avg10_rank","avg5_rank","single_lap_rank"]
+    weights = [0.24,0.22,0.20,0.16,0.12,0.04,0.02]
     vals = []
     wts = []
     for c,w in zip(cols,weights):
@@ -131,7 +133,7 @@ def build_features(dk, priors, track, updates=None):
     df = df.merge(priors.drop(columns=["Salary","AvgPointsPerGame"],errors="ignore"), on="Name", how="left")
     if updates is not None:
         df = df.merge(updates, on="Name", how="left")
-    for c in ["single_lap_rank","avg5_rank","avg10_rank","avg15_rank","avg20_rank","qualifying_position"]:
+    for c in ["single_lap_rank","avg5_rank","avg10_rank","avg15_rank","avg20_rank","avg25_rank","avg30_rank","qualifying_position"]:
         if c not in df.columns:
             df[c] = np.nan
 
@@ -211,7 +213,7 @@ def build_features(dk, priors, track, updates=None):
     track_history = (0.70*df["track_history_finish_z"].clip(-2,2) +
                      0.30*df["track_history_led_z"].clip(-2,2))
 
-    practice_available = df[["single_lap_rank","avg5_rank","avg10_rank","avg15_rank","avg20_rank"]].notna().any(axis=1)
+    practice_available = df[["single_lap_rank","avg5_rank","avg10_rank","avg15_rank","avg20_rank","avg25_rank","avg30_rank"]].notna().any(axis=1)
     qual_available = df["qualifying_position"].notna()
     qual_z = _z(df["qualifying_position"], False) if qual_available.any() else pd.Series(0.0,index=df.index)
 
