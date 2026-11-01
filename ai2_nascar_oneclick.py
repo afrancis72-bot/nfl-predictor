@@ -164,7 +164,8 @@ def reference_signals(dk,selected_track):
     blended=blend_driver_dna(dk,ref)
     return ref,blended
 
-def build_input_features(dk,track_name,laps,practice=None,reference=None):
+def build_input_features(dk,track_name,laps,practice=None,reference=None,
+                         allow_lap_override=False):
     dk=load_dk_slate(dk)
     catalog=track_catalog()
     track=catalog.loc[catalog["track"]==track_name].copy()
@@ -172,6 +173,14 @@ def build_input_features(dk,track_name,laps,practice=None,reference=None):
         raise ValueError("Select a track from the NASCAR track catalog.")
     if not 25<=int(laps)<=700:
         raise ValueError("Race laps must be between 25 and 700; confirm scheduled race distance.")
+    scheduled_laps=int(track["laps"].iloc[0])
+    if int(laps)!=scheduled_laps and not allow_lap_override:
+        raise ValueError(
+            f"Race-distance mismatch: {track_name} is scheduled for {scheduled_laps} laps "
+            f"in the track catalog, but the build requested {int(laps)}. "
+            "Correct the laps setting or explicitly confirm an official distance change. "
+            "Unconfirmed mismatched distances cannot generate lineups."
+        )
     track.loc[:,"laps"]=int(laps)
     update,practice_drivers,practice_report=practice_updates(practice,dk,return_report=True)
     prior=_baseline(dk)
@@ -234,14 +243,16 @@ def dk_roster_csv(lineups):
 
 def run_oneclick(dk,track,laps,sims=25000,seed=42,portfolio_size=10,
                  max_exposure=.35,max_overlap=4,salary_floor=47000,
-                 practice=None,reference=None,excluded_drivers=()):
+                 practice=None,reference=None,excluded_drivers=(),
+                 allow_lap_override=False):
     if sims not in (1000,10000,25000,50000,100000):
         raise ValueError("Unsupported simulation count.")
     if not 1<=int(portfolio_size)<=50:
         raise ValueError("Portfolio size must be 1–50.")
     if not .15<=float(max_exposure)<=1:
         raise ValueError("Exposure cap must be between 15% and 100%.")
-    f,meta=build_input_features(dk,track,laps,practice,reference)
+    f,meta=build_input_features(dk,track,laps,practice,reference,
+                                allow_lap_override=allow_lap_override)
     cfg=Config(sims=int(sims),seed=int(seed),laps=int(laps),salary_cap=50000,
                roster_size=6,max_overlap=int(max_overlap))
     projections,draws=simulate(f,cfg)
