@@ -461,6 +461,100 @@ def optimize_lineups(proj, n_lineups=10, salary_cap=50000, roster_size=6, max_ov
     return pd.DataFrame(rows)
 
 
+
+def optimize_balanced_portfolio_seed(proj, n_lineups=5, salary_cap=50000,
+                                     roster_size=6, max_overlap=4,
+                                     max_exposure=0.60, salary_floor=47000):
+    """Joint mixed-integer seed: maximize the WEAKEST lineup's expected score.
+
+    Sequential lineup optimization can burn all top driver exposures in the
+    first three entries, forcing two much weaker entries. A small portfolio
+    needs joint allocation of salary, exposure and pairwise overlap.
+    Pair-intersection auxiliaries are continuous because binary driver picks
+    force the correct lower bounds. Candidate scenario P90 is still calculated
+    downstream using correlated race draws; this seed is NOT the final ranking.
+    """
+    if not 2 <= int(n_lineups) <= 8:
+        return pd.DataFrame()  # avoid huge quadratic formulation for large fields
+    from scipy.optimize import milp, LinearConstraint, Bounds
+    from scipy.sparse import lil_matrix
+    from itertools import combinations
+
+    n=len(proj); k=int(n_lineups)
+    if n < roster_size: return pd.DataFrame()
+    mean=proj["proj_dk"].to_numpy(float)
+    salary=proj["Salary"].to_numpy(float)
+    cap=max(1,int(np.floor(k*max_exposure+1e-9)))
+    conf=pd.to_numeric(proj.get("model_confidence",pd.Series(.90,index=proj.index)),
+                       errors="coerce").fillna(.45).to_numpy(float)
+    cov=pd.to_numeric(proj.get("data_coverage",pd.Series(1.,index=proj.index)),
+                      errors="coerce").fillna(.15).to_numpy(float)
+    driver_caps=np.full(n,cap,dtype=int)
+    low=(conf<.55)|(cov<.35)
+    med=((conf<.75)|(cov<.60)) & ~low
+    driver_caps[low]=np.minimum(driver_caps[low],max(1,int(np.floor(k*.30+1e-9))))
+    driver_caps[med]=np.minimum(driver_caps[med],max(1,int(np.floor(k*.45+1e-9))))
+
+    pairs=list(combinations(range(k),2))
+    picks=k*n
+    total=picks+len(pairs)*n+1
+    minimum=total-1
+    rows=[]; lowers=[]; uppers=[]
+    def add(indices,values,lb=-np.inf,ub=np.inf):
+        rows.append((indices,values)); lowers.append(lb); uppers.append(ub)
+    for i in range(k):
+        ix=[i*n+j for j in range(n)]
+        add(ix,[1.]*n,roster_size,roster_size)
+        add(ix,salary.tolist(),salary_floor,salary_cap)
+        add(ix+[minimum],mean.tolist()+[-1.],0.,np.inf)
+    for j in range(n):
+        add([i*n+j for i in range(k)],[1.]*k,0.,int(driver_caps[j]))
+    for pi,(i,j) in enumerate(pairs):
+        ix=[picks+pi*n+d for d in range(n)]
+        for d,aux in enumerate(ix):
+            add([i*n+d,j*n+d,aux],[1.,1.,-1.],-np.inf,1.)
+        add(ix,[1.]*n,-np.inf,max_overlap)
+
+    mat=lil_matrix((len(rows),total))
+    for row,(ix,values) in enumerate(rows):
+        for j,v in zip(ix,values): mat[row,j]=v
+    lower=np.zeros(total);upper=np.ones(total);upper[minimum]=float(max(0.,mean.max()*roster_size))
+    integers=np.zeros(total);integers[:picks]=1
+    obj=np.zeros(total)
+    obj[minimum]=-1.
+    # Small tiebreak favors stronger total portfolio, not only the weakest slot.
+    obj[:picks]=np.tile(-0.001*mean,k)
+    outcome=milp(
+        c=obj,integrality=integers,bounds=Bounds(lower,upper),
+        constraints=LinearConstraint(mat.tocsr(),lowers,uppers),
+        options={"time_limit":12,"mip_rel_gap":.01},
+    )
+    if outcome.x is None: return pd.DataFrame()
+    chosen=[]
+    for i in range(k):
+        ix=np.flatnonzero(outcome.x[i*n:(i+1)*n]>.5)
+        if len(ix)!=roster_size: return pd.DataFrame()
+        chosen.append(ix)
+    # Explicit verify: time-limited MILP incumbents are not assumed feasible.
+    appearances=np.zeros(n,dtype=int)
+    for ix in chosen:
+        appearances[ix]+=1
+        if not salary_floor-1e-5<=salary[ix].sum()<=salary_cap+1e-5:
+            return pd.DataFrame()
+    if np.any(appearances>driver_caps):return pd.DataFrame()
+    if any(len(set(chosen[i])&set(chosen[j]))>max_overlap
+           for i,j in pairs):return pd.DataFrame()
+    out=[]
+    for i,ix in enumerate(chosen,1):
+        sub=proj.iloc[ix]
+        out.append({"Lineup":i,"Drivers":" | ".join(sub["Name"]),
+                    "Salary":int(sub["Salary"].sum()),
+                    "Projected":round(float(sub["proj_dk"].sum()),2),
+                    "CeilingScore":round(float(sub["ceiling_p90"].sum()),2),
+                    "IDs":" | ".join(sub["ID"].astype(str))})
+    return pd.DataFrame(out)
+
+
 def optimize_race_sim_lineups(proj, sim_matrix, n_lineups=10, salary_cap=50000,
                               roster_size=6, max_overlap=4, candidate_pool=2500,
                               seed=42, risk_mode="gpp", salary_floor=0):
@@ -609,9 +703,16 @@ def optimize_scenario_portfolio(features, sim_matrix, n_lineups=10, salary_cap=5
     # Seed the candidate bank with a guaranteed-feasible portfolio under the
     # requested exposure/overlap rules. The scenario search can improve on it,
     # but will not get trapped with fewer than the requested number of lineups.
-    seed_port=optimize_lineups(features,n_lineups=n_lineups,salary_cap=salary_cap,
-                              roster_size=roster_size,max_overlap=max_overlap,
-                              objective="ceiling",max_exposure=max_exposure,salary_floor=salary_floor)
+    seed_port=optimize_balanced_portfolio_seed(
+        features,n_lineups=n_lineups,salary_cap=salary_cap,
+        roster_size=roster_size,max_overlap=max_overlap,
+        max_exposure=max_exposure,salary_floor=salary_floor
+    )
+    if len(seed_port)!=n_lineups:
+        seed_port=optimize_lineups(features,n_lineups=n_lineups,salary_cap=salary_cap,
+                                  roster_size=roster_size,max_overlap=max_overlap,
+                                  objective="ceiling",max_exposure=max_exposure,
+                                  salary_floor=salary_floor)
     if len(seed_port):
         base=pd.concat([base,seed_port],ignore_index=True,sort=False).drop_duplicates("Drivers").reset_index(drop=True)
     idxs, valid=_candidate_lineup_matrix(base,features)
@@ -793,6 +894,16 @@ def optimize_scenario_portfolio(features, sim_matrix, n_lineups=10, salary_cap=5
             if best is not None:
                 _,pos,j=best; chosen[pos]=j
 
+    # The optimizer must never export the low-quality filler it previously
+    # returned when no legal replacement was found under exposure caps.
+    failed=[int(j) for j in chosen if not viable[int(j)]]
+    if failed:
+        raise RuntimeError(
+            f"Only {len(chosen)-len(failed)}/{n_lineups} NASCAR lineups meet "
+            "the model's own mean and GPP viability floors under the current "
+            "exposure/overlap settings. No low-quality filler lineups exported. "
+            "Try adjusting portfolio diversification or candidate settings."
+        )
     rows=[]
     for rank,j in enumerate(chosen,1):
         r=base.iloc[valid[j]].copy()
