@@ -238,6 +238,7 @@ def build_features(dk, priors, track, updates=None):
 
     df["race_strength"] = raw
     df["track_volatility"] = float(getattr(w, "volatility", 0.95))
+    df["track_length"] = float(getattr(w, "track_length", 1.5))
     df["projected_start"] = df["qualifying_position"].fillna((len(df)+1)/2)
     start_front = _z(df["projected_start"], False)
 
@@ -284,6 +285,48 @@ def build_features(dk, priors, track, updates=None):
     df["track_dna_fit"]=(0.45*track_type + 0.25*track_history + 0.30*current)
     return df
 
+def _allocate_dominator_laps(rng, dscore, laps, short_track=False):
+    """Allocate a *finite set of race leaders* and correlated fastest laps.
+
+    Previous full-field Dirichlet allocation assigned leadership to almost every
+    driver in a 500-lap race. For reference, fall Martinsville 2023/24/25 had
+    6/7/5 leaders respectively (published NASCAR results). This transparent
+    prior varies the number of leaders across simulated races rather than
+    asserting that any particular driver must lead laps. Not yet backtested.
+    """
+    n=len(dscore)
+    if n<1 or int(laps)<1:
+        raise ValueError("A race must have positive laps and at least one driver.")
+    # Short-track 500-lappers typically have fewer actual leaders. Wider
+    # fields/other tracks retain more possible leaders, but never the full field.
+    typical=6 if short_track and laps>=350 else (7 if laps>=200 else 5)
+    spread=1.25 if short_track and laps>=350 else 1.75
+    max_leaders=9 if short_track and laps>=350 else 12
+    leaders=int(np.clip(np.rint(rng.normal(typical,spread)),1,min(n,max_leaders)))
+    # Contenders must exhibit plausible *simulated race* strength. The top
+    # group changes every simulated race, so long-run strength, grid, reliability,
+    # incidents and practice can all change the set of leaders.
+    candidate_count=min(n,max(leaders, min(20,max(12,int(np.ceil(n*0.55))))))
+    candidates=np.argsort(-dscore,kind="stable")[:candidate_count]
+    weights=np.exp(1.70*(dscore[candidates]-np.max(dscore[candidates])))
+    weights/=weights.sum()
+    chosen=rng.choice(candidates,size=leaders,replace=False,p=weights)
+    chosen_weights=np.exp(1.30*(dscore[chosen]-np.max(dscore[chosen])))
+    chosen_weights/=chosen_weights.sum()
+    # Allow occasional 200-300+ lap dominators without inventing a driver boost.
+    # Sampling strengths remain model assumptions pending empirical calibration.
+    alpha=0.45+4.0*chosen_weights
+    shares=rng.dirichlet(alpha)
+    led=np.zeros(n,dtype=np.int16)
+    led[chosen]=1+rng.multinomial(int(laps)-leaders,shares)
+    # Fastest laps may belong to non-leaders, but speed and clean air matter.
+    pace=np.exp(1.8*(dscore-np.max(dscore)))
+    pace/=pace.sum()
+    fastest_share=0.65*(led/float(laps))+0.35*pace
+    fastest=rng.multinomial(int(laps),fastest_share).astype(np.int16)
+    return led,fastest
+
+
 def simulate(features, config=Config()):
     rng = np.random.default_rng(config.seed)
     n = len(features); sims = config.sims
@@ -325,21 +368,14 @@ def simulate(features, config=Config()):
         f = np.empty(n,dtype=np.int16); f[order]=np.arange(1,n+1)
         finish[s]=f
 
-        # Dominator events need race-to-race concentration variance. A fixed softmax
-        # followed by a multinomial has the right mean but an unrealistically thin
-        # right tail for laps led. Draw a race-level Dirichlet share around the same
-        # pre-race expectation, then allocate laps from that share. This is symmetric:
-        # no driver is named or boosted, and the expected share remains driven by
-        # pre-race speed / practice / history / starting position.
+        # Keep dominator points concentrated in actual race leaders. Fastest
+        # laps can be spread more widely, but still follow plausible race pace.
         dscore = 0.52*dom + 0.48*latent
-        p = np.exp(dscore - dscore.max()); p /= p.sum()
-        track_vol = float(features["track_volatility"].iloc[0]) if "track_volatility" in features else 0.95
-        concentration = 28.0 / max(track_vol, 0.35)
-        alpha = np.maximum(p * concentration, 0.015)
-        race_share = rng.dirichlet(alpha)
-        ll = rng.multinomial(config.laps, race_share)
-        fast_share = np.sqrt(race_share); fast_share /= fast_share.sum()
-        flp = rng.multinomial(config.laps, fast_share)
+        short_track = bool(
+            "track_length" in features and
+            float(features["track_length"].iloc[0])<=1.1
+        )
+        ll,flp=_allocate_dominator_laps(rng,dscore,config.laps,short_track)
         laps_led[s]=ll; fastest[s]=flp
 
         fp = np.array([FINISH_POINTS.get(int(x),1) for x in f])
