@@ -75,6 +75,42 @@ class RolePlausibilityTests(unittest.TestCase):
             compare_simulated_role_to_history(
                 audit,history.drop(columns=["source"]),injury)
 
+    def test_receiving_and_rushing_yard_efficiency_flag_point_inflation(self):
+        history, audits, injury = self.fixtures()
+        history.loc[history["player"].eq("Puka Nacua"), "receiving_yards_pg"] = 90.
+        history.loc[history["player"].eq("Bijan Robinson"), "rushing_yards_pg"] = 75.
+        # Fixtures model an exaggerated per-opportunity result. These are NOT
+        # actual current-week projections or claims about either player.
+        audits[0]["Mean targets"] = 11.
+        audits[0]["Mean receiving yards"] = 170.
+        audits[1]["Mean carries"] = 20.
+        audits[1]["Mean rushing yards"] = 150.
+        rows = compare_simulated_role_to_history(audits, history, injury)
+        puka = [r for r in rows if r["Player"] == "Puka Nacua"
+                and r["Concern"].startswith("Receiving yards per target")]
+        bijan = [r for r in rows if r["Player"] == "Bijan Robinson"
+                 and r["Concern"].startswith("Rushing yards per carry")]
+        self.assertEqual(len(puka), 1)
+        self.assertEqual(len(bijan), 1)
+        self.assertEqual(puka[0]["Observed yards/opportunity"], 10.)
+        self.assertGreater(puka[0]["Simulated yards/opportunity"], 15.)
+        self.assertEqual(bijan[0]["Observed yards/opportunity"], 5.)
+        self.assertIn("do not automatically", bijan[0]["Required review"])
+
+    def test_efficiency_without_valid_observed_yards_does_not_invent_baseline(self):
+        history, audits, injury = self.fixtures()
+        audits[0]["Mean receiving yards"] = 200.
+        audits[1]["Mean rushing yards"] = 160.
+        rows = compare_simulated_role_to_history(audits, history, injury)
+        self.assertFalse(any("yards per" in row["Concern"].lower() for row in rows))
+        # A four-game sample must not be treated as sufficiently established
+        # efficiency, even with high simulated per-target yardage.
+        history.loc[history["player"].eq("Puka Nacua"), "receiving_yards_pg"] = 50.
+        history.loc[history["player"].eq("Puka Nacua"), "games_played"] = 4
+        rows = compare_simulated_role_to_history(audits, history, injury)
+        self.assertFalse(any(row["Player"] == "Puka Nacua"
+                             and "yards per" in row["Concern"].lower() for row in rows))
+
     def test_role_report_does_not_mutate_predictions_or_selection(self):
         history,audit,injury=self.fixtures()
         before=history.copy(deep=True)
