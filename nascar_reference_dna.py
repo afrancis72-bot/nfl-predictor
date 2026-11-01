@@ -1,4 +1,5 @@
 import re, unicodedata
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from urllib.request import Request, urlopen
 from bs4 import BeautifulSoup
@@ -97,6 +98,9 @@ def parse_profile_text(html):
         "short_track_avg_finish":np.nan,
         "road_course_avg_finish":np.nan,
         "superspeedway_elo":np.nan,
+        "intermediate_elo":np.nan,
+        "short_track_elo":np.nan,
+        "road_course_elo":np.nan,
     }
     for label,key in [("Superspeedway","superspeedway_avg_finish"),
                       ("Intermediate","intermediate_avg_finish"),
@@ -130,9 +134,14 @@ def parse_profile_text(html):
         out["recent_races"]=0
 
     elo=_between(txt,"NR-Rating Elo Ratings","Performance Quality Score")
-    # First Superspeedway occurrence after NR-Rating is the track-type Elo.
-    m=re.search(r"(?:^|\|)\s*(\d{3,4})\s*\|\s*Superspeedway(?:\s*\||$)",elo,re.I)
-    if m: out["superspeedway_elo"]=float(m.group(1))
+    # Each published NR-Rating Elo must stay attached to its ACTUAL track type.
+    # Previously the adapter parsed only superspeedway Elo and used intermediate
+    # average finishes at Martinsville, a short track.
+    for label,field in [("Superspeedway","superspeedway_elo"),
+                        ("Intermediate","intermediate_elo"),
+                        ("Short Track","short_track_elo"),
+                        ("Road Course","road_course_elo")]:
+        out[field]=_metric_before_label(elo,label)
 
     # Advanced Metrics are rendered as "Label | value | confidence..." in page text.
     adv=_between(txt,"Advanced Metrics","Career History")
@@ -145,21 +154,48 @@ def parse_profile_text(html):
     out["late_race_performance"]=metric_after_label("Late-Race Performance")
     return out
 
+def reference_track_family(selected_track):
+    """Map the app's verified track catalog to an actual published Reference split."""
+    catalog=pd.read_csv(Path(__file__).resolve().parent/"track_catalog.csv")
+    rows=catalog.loc[catalog["track"]==str(selected_track)]
+    if len(rows)!=1:
+        raise ValueError("NASCAR Reference track family requires a verified catalog track.")
+    track=rows.iloc[0]
+    # Atlanta races like a superspeedway even at intermediate oval length.
+    if "atlanta" in str(selected_track).casefold() or (
+            float(track.track_length)>=2.0 and float(track.banking)>=25):
+        return "superspeedway"
+    if float(track.road_course)>=0.5:
+        return "road_course"
+    if float(track.track_length)<=1.1:
+        return "short_track"
+    return "intermediate"
+
+
 def build_reference_dna(dk, selected_track):
-    atl="Atlanta" in selected_track
+    family=reference_track_family(selected_track)
+    finish_key={"superspeedway":"superspeedway_avg_finish",
+                "intermediate":"intermediate_avg_finish",
+                "short_track":"short_track_avg_finish",
+                "road_course":"road_course_avg_finish"}[family]
+    elo_key={"superspeedway":"superspeedway_elo",
+             "intermediate":"intermediate_elo",
+             "short_track":"short_track_elo",
+             "road_course":"road_course_elo"}[family]
     def one_driver(name):
         row={"Name":name}
         try:
             parsed=parse_profile_text(driver_page(name))
             row.update(parsed)
-            row["comparable_track_avg_finish"]=(parsed["superspeedway_avg_finish"]
-                if atl else parsed["intermediate_avg_finish"])
+            row["comparable_track_avg_finish"]=parsed[finish_key]
+            row["track_type_elo"]=parsed[elo_key]
+            row["reference_track_family"]=family
             row["reference_ok"]=True
         except Exception:
             row.update({"recent_races":0,"recent_avg_finish":np.nan,"recent_avg_start":np.nan,
                         "recent_place_diff":np.nan,"season_avg_finish":np.nan,"last5_avg_finish":np.nan,
-                        "comparable_track_avg_finish":np.nan,"superspeedway_elo":np.nan,
-                        "reference_ok":False})
+                        "comparable_track_avg_finish":np.nan,"track_type_elo":np.nan,
+                        "reference_track_family":family,"reference_ok":False})
         return row
     # Parallelized driver requests with bounded concurrency; failed requests
     # are visibly marked and never silently treated as measured evidence.
@@ -173,7 +209,7 @@ def build_reference_dna(dk, selected_track):
     x["recent_form_score"]=x[["recent_finish_score","season_finish_score"]].mean(axis=1,skipna=True)
     x["place_diff_score"]=_pct_score(x["recent_place_diff"])
     x["comparable_track_score"]=_pct_score(x["comparable_track_avg_finish"],invert=True)
-    x["track_type_elo_score"]=_pct_score(x["superspeedway_elo"]) if atl else np.nan
+    x["track_type_elo_score"]=_pct_score(x["track_type_elo"])
 
     # Prefer NASCAR Reference's own Reliability metric when present.
     # Fall back to finish consistency rather than inventing a value.
