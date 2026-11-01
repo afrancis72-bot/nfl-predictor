@@ -89,6 +89,49 @@ def compare_simulated_role_to_history(audits, historical_rates, injury_context=N
                                       "do not automatically cap or exclude",
                     "Evidence":"nflverse weighted pregame rates vs same-world NFL simulation",
                 })
+        # Yards per actual opportunity can inflate a DK mean even when the
+        # estimated number of targets/carries is credible. Compare scoring
+        # outcomes with observed prior-game efficiency and flag large departures
+        # for human review; this must NEVER silently change football worlds.
+        if n >= 5 and position in {"RB", "WR", "TE"}:
+            for label, sim_count_key, sim_yards_key, obs_count_key, obs_yards_key, minimum, extra in (
+                ("Receiving yards per target", "Mean targets", "Mean receiving yards",
+                 "targets_pg", "receiving_yards_pg", 4., 2.5),
+                ("Rushing yards per carry", "Mean carries", "Mean rushing yards",
+                 "carries_pg", "rushing_yards_pg", 8., 1.6),
+            ):
+                sim_count = _number(audit.get(sim_count_key))
+                sim_yards = _number(audit.get(sim_yards_key))
+                obs_count = _number(raw.get(obs_count_key))
+                obs_yards = _number(raw.get(obs_yards_key))
+                if (sim_count is None or sim_yards is None or obs_count is None
+                        or obs_yards is None or min(sim_count, obs_count) < minimum
+                        or min(sim_yards, obs_yards) < 0):
+                    continue
+                simulated_efficiency = sim_yards / sim_count
+                historic_efficiency = obs_yards / obs_count
+                if (historic_efficiency <= 0
+                        or simulated_efficiency < 1.35 * historic_efficiency
+                        or simulated_efficiency - historic_efficiency < extra):
+                    continue
+                results.append({
+                    "Player": player, "Team": team, "Position": position,
+                    "Concern": label + " materially exceeds observed efficiency",
+                    "Observed yards/opportunity": round(historic_efficiency, 2),
+                    "Simulated yards/opportunity": round(simulated_efficiency, 2),
+                    "Increase %": round(100. * (
+                        simulated_efficiency / historic_efficiency - 1.), 1),
+                    "Prior player-games": n,
+                    "Current-week injury context": ", ".join(
+                        str(x["player"]) + " (" + str(x["incremental_pct"]) +
+                        "% newly freed)" for x in prior_absences.get(team, [])
+                    ) or "No sourced OUT teammate in injury adjustment",
+                    "Required review": "Check the actual opponent's observed "
+                                       "yardage efficiency and team QB assumptions; "
+                                       "do not automatically reduce or exclude",
+                    "Evidence": "nflverse prior-game yards/opportunity compared "
+                                "with same-world simulated football statistics",
+                })
         # A high share of team touchdowns is a consequential difference from
         # observed player scoring, even when targets/carries are unchanged.
         rec=_number(audit.get("Mean receiving TD")) or 0.
