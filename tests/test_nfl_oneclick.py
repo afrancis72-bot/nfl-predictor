@@ -63,7 +63,18 @@ class OneClickTests(unittest.TestCase):
              "simulated_mean":99.0,"simulated_p90":105.0,
              "simulated_p99":120.0,"p90_per_1000":2.1}
             for i in range(20)]
-        output = build_oneclick_portfolio(self.saved, seed=117)
+        # One-click orchestration test uses a stub scoring ledger. Full
+        # scoring component math is tested in dedicated reconciliation tests.
+        verified = [
+            {"Player":p["Name"],"Team":p["TeamAbbrev"],
+             "Position":p["Position"],"DraftKings ID":str(p["ID"]),
+             "Audit status":"Verified: per-simulation DK points match components",
+             "Sim mean DK":11.0,"Rebuilt mean DK":11.0}
+            for p in players.to_dict("records")
+        ]
+        with patch("ai2_nfl_oneclick.summarize_simulated_players",
+                   return_value=verified):
+            output = build_oneclick_portfolio(self.saved, seed=117)
         self.assertEqual(len(output["summary"]), 20)
         self.assertEqual(output["seed"], 117)
         self.assertEqual(output["csv"], "QB,RB,...\\n")
@@ -83,6 +94,29 @@ class OneClickTests(unittest.TestCase):
                          "Breece Hall")
 
 
+
+    @patch("ai2_nfl_oneclick.run_verified_stat_simulation")
+    @patch("ai2_nfl_oneclick.create_observed_model_pool")
+    @patch("ai2_nfl_oneclick.collect_automatic_baselines")
+    def test_missing_player_stat_details_block_lineup_generation(
+            self, research, pool, simulation):
+        import numpy as np
+        import pandas as pd
+        research.return_value = {
+            "blockers":[],
+            "injury_meta":{"source":"https://www.nfl.com/injuries/"}}
+        players=pd.DataFrame([{
+            "ID":"100","Name":"Sample Receiver","Position":"WR",
+            "Salary":6200,"TeamAbbrev":"DAL","proj":13.0,
+            "projection_source":"nflverse weekly stats"}])
+        pool.return_value=(players,pd.DataFrame([{"player":"Sample Receiver"}]),
+                           [],{"complete_games":1})
+        # Old failure: fantasy points present, no football stats.
+        simulation.return_value=(players,np.full((10000,1),11.),
+                                 {"__MODEL_VERSION__":"broken"})
+        with self.assertRaisesRegex(ValueError,
+                                    "scoring components could not be verified"):
+            build_oneclick_portfolio(self.saved,seed=10)
 
     def test_seed_bounds(self):
         with self.assertRaisesRegex(ValueError, "seed"):

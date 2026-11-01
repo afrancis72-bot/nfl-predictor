@@ -12,7 +12,7 @@ from ai2_nfl_inputs import parse_csv_payload
 from ai2_nfl_auto_intelligence import collect_automatic_baselines
 from ai2_nfl_model_pool import create_observed_model_pool
 from ai2_nfl_simulation_adapter import run_verified_stat_simulation
-from ai2_nfl_player_audit import summarize_simulated_players
+from ai2_nfl_player_audit import summarize_simulated_players, require_reconciled_player_audit
 from ai2_nfl_candidate_builder import build_classic_candidates
 from ai2_nfl_sim_portfolio import select_simulated_portfolio
 from ai2_nfl_export import export_classic_candidates
@@ -84,13 +84,17 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         injury_presence=research.get("injury_presence", {}))
     if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
         raise ValueError("Incomplete NFL simulation; refusing to export lineups")
+    # Required scoring safety check, not an optional diagnostic. A high-mean
+    # player must never reach the optimizer with missing DK components.
     try:
         simulation_component_audit = summarize_simulated_players(players, draws, stat_draws)
-        simulation_component_audit_error = None
-    except (ValueError, KeyError, TypeError) as exc:
-        # Diagnostic-only feature must never invalidate otherwise legal lineups.
-        simulation_component_audit = []
-        simulation_component_audit_error = str(exc)
+        require_reconciled_player_audit(players, draws, simulation_component_audit)
+    except (ValueError, KeyError, TypeError, IndexError) as exc:
+        raise ValueError(
+            "NFL fantasy scoring components could not be verified for every "
+            "eligible player; no lineup export was generated. " + str(exc)
+        ) from exc
+    simulation_component_audit_error = None
     high_mean_flags = projection_review_flags(simulation_component_audit, pool)
     means = dict(zip(players["ID"].astype(str), draws.mean(axis=0).tolist()))
     prepared = []

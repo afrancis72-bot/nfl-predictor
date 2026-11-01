@@ -129,3 +129,46 @@ def summarize_simulated_players(players, point_draws, stat_draws):
         item["Audit status"] = "Verified: per-simulation DK points match components"
         result.append(item)
     return result
+
+
+def require_reconciled_player_audit(players, point_draws, report):
+    """One-click MUST NOT export if offensive player DK points are unauditable.
+
+    Scoring reconciliation in summarize_simulated_players verifies every
+    scenario. This extra check prevents truncated or ambiguously identified
+    report rows from being silently accepted after an exception or refactor.
+    DST is audited separately against opposing team event totals.
+    """
+    if not isinstance(report, list) or not report:
+        raise ValueError("No reconciled player simulation audit; refusing NFL lineup export")
+    if point_draws.ndim != 2 or point_draws.shape[1] != len(players):
+        raise ValueError("NFL scoring audit does not match the game simulations")
+    records = {}
+    for row in report:
+        key = str(row.get("DraftKings ID", "")).strip()
+        if not key or key in records:
+            raise ValueError("Ambiguous or duplicated DraftKings identity in NFL scoring audit")
+        records[key] = row
+    for col, (_, player) in enumerate(players.iterrows()):
+        pos = str(player["Position"]).upper().strip()
+        if pos not in {"QB", "RB", "WR", "TE"}:
+            continue
+        ident = str(player["ID"])
+        audit = records.get(ident)
+        if audit is None or not str(audit.get("Audit status", "")).startswith(
+                "Verified: per-simulation DK points match components"):
+            raise ValueError(
+                f"Unreconciled NFL scoring for {player['Name']} ({player['TeamAbbrev']}); "
+                "no lineup export permitted")
+        if (str(audit.get("Player")) != str(player["Name"])
+                or str(audit.get("Team")) != str(player["TeamAbbrev"])
+                or str(audit.get("Position")) != pos):
+            raise ValueError(
+                f"Misidentified NFL scoring audit for {player['Name']}; "
+                "no lineup export permitted")
+        mean = float(np.asarray(point_draws[:, col], dtype=float).mean())
+        if not np.isfinite(mean) or abs(float(audit["Rebuilt mean DK"]) - mean) > .025:
+            raise ValueError(
+                f"Scoring audit and simulated mean disagree for {player['Name']}; "
+                "no lineup export permitted")
+    return True
