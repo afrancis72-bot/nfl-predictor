@@ -86,6 +86,48 @@ class NascarUnifiedTests(unittest.TestCase):
         self.assertEqual(updates["qualifying_position"].tolist(),dk["Starting"].tolist())
         self.assertEqual(updates["avg10_rank"].iloc[:3].tolist(),[3,1,2])
 
+    def test_extra_practice_name_is_ignored_and_reported(self):
+        dk=load_dk_slate(self.slate())
+        uploaded=pd.DataFrame({
+            "Name":[dk["Name"].iloc[0],dk["Name"].iloc[1],dk["Name"].iloc[2],
+                    "Driver Outside DK Slate"],
+            "avg10_rank":[1,2,3,4], "avg20_rank":[2,1,3,4],
+        })
+        updates,n,report=practice_updates(uploaded,dk,return_report=True)
+        self.assertEqual(n,3)
+        self.assertEqual(report["unmatched_practice_names"],["Driver Outside DK Slate"])
+        self.assertEqual(report["practice_rows"],4)
+        self.assertEqual(len(updates),len(dk))
+        self.assertTrue(updates.loc[3:,"avg10_rank"].isna().all())
+        self.assertEqual(updates.loc[:2,"avg10_rank"].tolist(),[1,2,3])
+
+    def test_known_driver_aliases_match_without_guessing(self):
+        dk=load_dk_slate(self.slate())
+        dk.loc[:2,"Name"]=["John H. Nemechek","Ricky Stenhouse","Chris Bell"]
+        practice=pd.DataFrame({
+            "Name":["John Hunter Nemechek","Ricky Stenhouse Jr.","Christopher Bell"],
+            "avg20_rank":[3,2,1],
+        })
+        updates,n,report=practice_updates(practice,dk,return_report=True)
+        self.assertEqual(n,3)
+        self.assertFalse(report["unmatched_practice_names"])
+        self.assertEqual(updates.loc[:2,"avg20_rank"].tolist(),[3,2,1])
+
+    def test_wrong_race_practice_is_blocked_and_duplicates_do_not_map_twice(self):
+        dk=load_dk_slate(self.slate())
+        mismatch=pd.DataFrame({
+            "Name":[dk["Name"].iloc[0],"Unrelated 1","Unrelated 2","Unrelated 3"],
+            "avg20_rank":[1,2,3,4],
+        })
+        with self.assertRaisesRegex(ValueError,"SAME race and series"):
+            practice_updates(mismatch,dk)
+        duplicate=pd.DataFrame({
+            "Name":[dk["Name"].iloc[0],dk["Name"].iloc[0],dk["Name"].iloc[1]],
+            "avg10_rank":[1,2,3],
+        })
+        with self.assertRaisesRegex(ValueError,"Duplicate practice drivers"):
+            practice_updates(duplicate,dk)
+
     def test_simulated_driver_column_alignment_and_projection_seed(self):
         dk=load_dk_slate(self.slate())
         features,meta=build_input_features(dk,"Phoenix Raceway",312)
