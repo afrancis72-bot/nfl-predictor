@@ -1,0 +1,60 @@
+name: NFL OTHER receiver yards - scored realism & held-out DK
+on:
+  pull_request:
+    paths:
+      - 'dfs_stats_engine.py'
+      - 'ai2_nfl_other_yard_reconcile.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/backtest_nfl_other_receiver_yards.py'
+      - 'tests/test_nfl_other_receiver_yard_reconciliation.py'
+      - '.github/workflows/nfl-other-yards-holdout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  receiver-yard-reconciliation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install simulation dependencies
+        run: python -m pip install numpy pandas scipy beautifulsoup4
+      - name: Verify football-stat accounting and no default score changes
+        run: |
+          python -m compileall -q ai2_nfl_other_yard_reconcile.py dfs_stats_engine.py scripts/backtest_nfl_other_receiver_yards.py
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_other_receiver_yard_reconciliation.py' -v
+      - name: Backtest star yard scaling from pregame data 2025 and 2026
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          PYTHONPATH=. python -u scripts/backtest_nfl_other_receiver_yards.py > /tmp/other_yards.json 2>/tmp/other_yards_error.log
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            cat /tmp/other_yards_error.log
+            if [ -n "$PR_NUMBER" ]; then
+              { echo 'OTHER receiver yardage test failed:'; echo '```'; tail -35 /tmp/other_yards_error.log; echo '```'; } >/tmp/other_yards_failed.md
+              gh pr comment "$PR_NUMBER" --body-file /tmp/other_yards_failed.md || true
+            fi
+            exit "$status"
+          fi
+          cat /tmp/other_yards.json
+          python - <<'PY' > /tmp/other_yards_report.md
+          import json
+          x=json.load(open('/tmp/other_yards.json'))
+          print('**OTHER receiver gap: prevent unmodeled teammate yards from being attributed disproportionately to stars**')
+          print(f'Pre-2026 training-selected weight: {x["train_selected_strength"]}. Independent {x["independent_heldout"]}.')
+          for w,s in x['variants'].items():
+              a,b=s['training'],s['heldout']
+              print(f'- Weight {w}: training mean MAE {a["sim_mean_mae"]}, holdout player DK MAE {b["sim_mean_mae"]}, bias {b["sim_mean_signed_bias"]}, P90 coverage {b["simulated_p90_actual_coverage_pct"]}%, n {b["n"]}')
+          print(f'Heldout mean improved {x["heldout_mean_mae_improved"]}; P90 closer 90% {x["heldout_p90_coverage_nearer90"]}.')
+          print('Disabled in one-click by default. Never creates targets, receptions, TDs or eligible receivers.')
+          PY
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body-file /tmp/other_yards_report.md || true
+          fi
