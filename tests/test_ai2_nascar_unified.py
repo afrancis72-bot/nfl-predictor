@@ -8,7 +8,7 @@ from ai2_nascar_oneclick import (
     load_dk_slate, practice_updates, build_input_features, run_oneclick,
     validate_portfolio, dk_roster_csv, track_catalog,
 )
-from nascar_predictor_pro import Config, simulate, optimize_lineups, _allocate_dominator_laps
+from nascar_predictor_pro import Config, simulate, optimize_lineups, _allocate_dominator_laps, optimize_balanced_portfolio_seed
 from nascar_reference_dna import build_reference_dna, reference_track_family, parse_profile_text
 
 class NascarUnifiedTests(unittest.TestCase):
@@ -196,6 +196,24 @@ class NascarUnifiedTests(unittest.TestCase):
         self.assertFalse(np.array_equal(m1,m3))
         np.testing.assert_allclose(m1.mean(0),p1["proj_dk"].to_numpy(),atol=.003)
         np.testing.assert_array_equal(p1["ID"].to_numpy(),p2["ID"].to_numpy())
+
+    def test_joint_five_lineup_seed_avoids_two_throwaway_entries(self):
+        dk=load_dk_slate(self.slate(24))
+        dk["proj_dk"]=[48.0-0.45*abs(i-9) for i in range(len(dk))]
+        dk["ceiling_p90"]=dk["proj_dk"]*1.65
+        dk["model_confidence"]=0.90
+        dk["data_coverage"]=1.0
+        portfolio=optimize_balanced_portfolio_seed(
+            dk,n_lineups=5,max_exposure=0.60,max_overlap=4,
+            salary_floor=47000
+        )
+        self.assertEqual(len(portfolio),5)
+        self.assertTrue(validate_portfolio(portfolio,dk,5,0.60,4,floor=47000))
+        # Across five entries, the optimizer must manage the weakest lineup
+        # instead of spending all best-driver exposures on first three.
+        self.assertGreater(float(portfolio["Projected"].min()),210.)
+        self.assertTrue((portfolio["Salary"]>=47000).all())
+        self.assertTrue((portfolio["Salary"]<=50000).all())
 
     def test_lineup_and_exposure_audit_blocks_illegal_outputs(self):
         dk=load_dk_slate(self.slate())
