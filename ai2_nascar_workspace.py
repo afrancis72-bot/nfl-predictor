@@ -202,7 +202,23 @@ if result:
     if not meta["practice_drivers"]:
         st.info("No measured practice speeds supplied. The model does NOT assume or invent practice pace.")
     else:
-        st.caption(f"Actual practice data used for {meta['practice_drivers']} drivers.")
+        practice_report=meta.get("practice_report",{})
+        st.caption(
+            f"Actual practice data matched for {meta['practice_drivers']} drivers "
+            f"out of {practice_report.get('practice_rows',meta['practice_drivers'])} supplied practice rows."
+        )
+        unmatched=practice_report.get("unmatched_practice_names",[])
+        if unmatched:
+            st.warning(
+                f"{len(unmatched)} unmatched practice driver(s) were excluded, "
+                "NOT attributed to another driver: "+", ".join(unmatched[:12])
+            )
+        missing=practice_report.get("dk_without_practice",[])
+        if missing:
+            st.caption(
+                f"No published long-run practice data matched {len(missing)} DK driver(s): "
+                +", ".join(missing[:12])+". Their missing speeds remain neutral."
+            )
 
     tab_lineups,tab_drivers,tab_scripts=st.tabs([
         "🏆 DraftKings lineups","🏎️ Driver race projections","🎲 Race scripts / diagnostics"
