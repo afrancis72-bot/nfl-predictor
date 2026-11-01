@@ -9,6 +9,7 @@ from ai2_nascar_oneclick import (
     validate_portfolio, dk_roster_csv, track_catalog,
 )
 from nascar_predictor_pro import Config, simulate, optimize_lineups
+from nascar_reference_dna import build_reference_dna, reference_track_family, parse_profile_text
 
 class NascarUnifiedTests(unittest.TestCase):
     def slate(self,n=24):
@@ -23,6 +24,42 @@ class NascarUnifiedTests(unittest.TestCase):
     def test_track_catalog_and_post_qualifying_slate(self):
         self.assertIn("Phoenix Raceway",set(track_catalog()["track"]))
         self.assertEqual(len(load_dk_slate(self.slate())),24)
+
+    def test_martinsville_reference_uses_short_track_not_intermediate(self):
+        self.assertEqual(reference_track_family("Martinsville Speedway"),"short_track")
+        self.assertEqual(reference_track_family("Atlanta Motor Speedway"),"superspeedway")
+        def profile(intermediate, short_track, short_elo):
+            return ("<html><body><div>Performance Profile</div>"
+                    "<div>14.0</div><div>Superspeedway</div>"
+                    f"<div>{intermediate}</div><div>Intermediate</div>"
+                    f"<div>{short_track}</div><div>Short Track</div>"
+                    "<div>18.0</div><div>Road Course</div>"
+                    "<div>2026 Cup Season</div><div>25</div><div>Races</div>"
+                    "<div>10.0</div><div>Avg Finish</div>"
+                    "<div>Best Tracks</div>"
+                    "<div>NR-Rating Elo Ratings</div>"
+                    "<div>1450</div><div>Superspeedway</div>"
+                    "<div>1680</div><div>Intermediate</div>"
+                    f"<div>{short_elo}</div><div>Short Track</div>"
+                    "<div>1400</div><div>Road Course</div>"
+                    "<div>Performance Quality Score</div></body></html>")
+        one=profile(21.0,9.0,1620)
+        two=profile(7.0,23.0,1410)
+        self.assertEqual(parse_profile_text(one)["short_track_avg_finish"],9.)
+        self.assertEqual(parse_profile_text(one)["short_track_elo"],1620.)
+        dk=pd.DataFrame({"Name":["Driver A","Driver B"],
+                         "Salary":[9000,8000],"AvgPointsPerGame":[40.,35.]})
+        with patch("nascar_reference_dna.driver_page",side_effect=lambda name:one if name=="Driver A" else two):
+            ref=build_reference_dna(dk,"Martinsville Speedway")
+        data=ref.set_index("Name")
+        self.assertEqual(float(data.loc["Driver A","comparable_track_avg_finish"]),9.)
+        self.assertEqual(float(data.loc["Driver B","comparable_track_avg_finish"]),23.)
+        self.assertEqual(float(data.loc["Driver A","track_type_elo"]),1620.)
+        self.assertGreater(float(data.loc["Driver A","comparable_track_score"]),
+                           float(data.loc["Driver B","comparable_track_score"]))
+        self.assertGreater(float(data.loc["Driver A","track_type_elo_score"]),
+                           float(data.loc["Driver B","track_type_elo_score"]))
+        self.assertTrue((ref["reference_track_family"]=="short_track").all())
 
     def test_start_grid_is_never_fabricated(self):
         dk=self.slate()
