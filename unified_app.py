@@ -296,8 +296,8 @@ else:
                                  hide_index=True, use_container_width=True)
                 role_outliers = output_one.get("role_projection_anomalies") or []
                 if role_outliers:
-                    st.warning("NFL simulated workload review: these target, carry, or "
-                               "touchdown forecasts materially exceed prior observed usage. "
+                    st.warning("NFL simulated workload review: these target, carry, touchdown, or "
+                               "yards-per-opportunity forecasts materially exceed prior observed usage. "
                                "They are warnings, NOT player bans or score caps.")
                     role_outlier_df = _ai2_pd.DataFrame(role_outliers)
                     st.dataframe(role_outlier_df, hide_index=True,
