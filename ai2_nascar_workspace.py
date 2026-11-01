@@ -53,7 +53,7 @@ if salary_file is not None:
 
 with st.expander("Optional practice data and model controls",expanded=False):
     st.caption(
-        "Practice improves driver speed estimates, especially long-run 10/15/20-lap pace. "
+        "Practice improves driver speed estimates, especially sustained 20/25/30-lap pace. "
         "Leave it empty for normal one-file use; missing practice is disclosed and not invented."
     )
     practice_file=st.file_uploader(
@@ -71,7 +71,8 @@ with st.expander("Optional practice data and model controls",expanded=False):
                        "nascar_optional_practice.csv",mime="text/csv")
     st.caption(
         "Recognized columns include single_lap_rank, avg5_rank, avg10_rank, avg15_rank, "
-        "avg20_rank—or corresponding actual mph speed columns. Speed converts to ranks automatically."
+        "avg20_rank, avg25_rank and avg30_rank—or corresponding actual mph speed columns. "
+        "Speed converts to ranks automatically; missing ranks are left unknown."
     )
 
 controls=st.columns(4)
