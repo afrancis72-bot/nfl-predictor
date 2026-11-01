@@ -86,6 +86,31 @@ class NascarUnifiedTests(unittest.TestCase):
         self.assertEqual(updates["qualifying_position"].tolist(),dk["Starting"].tolist())
         self.assertEqual(updates["avg10_rank"].iloc[:3].tolist(),[3,1,2])
 
+    def test_long_run_25_30_practice_ranks_feed_dominator_model(self):
+        dk=load_dk_slate(self.slate())
+        n=len(dk)
+        practice=pd.DataFrame({
+            "Name":dk["Name"],
+            "avg10_rank":[12]*n,
+            "avg15_rank":[12]*n,
+            "avg20_rank":[12]*n,
+            "avg25_rank":list(range(1,n+1)),
+            "avg30_rank":list(range(1,n+1)),
+        })
+        updates,count=practice_updates(practice,dk)
+        self.assertEqual(count,n)
+        self.assertEqual(float(updates.loc[0,"avg30_rank"]),1.)
+        full,_=build_input_features(dk,"Martinsville Speedway",500,practice=practice)
+        # Measured long runs must influence the model, not merely display.
+        self.assertGreater(float(full.loc[0,"practice_z"]),float(full.loc[n-1,"practice_z"]))
+        self.assertTrue(full["avg25_rank"].notna().all())
+        self.assertTrue(full["avg30_rank"].notna().all())
+        short=practice.drop(columns=["avg25_rank","avg30_rank"])
+        short_features,_=build_input_features(dk,"Martinsville Speedway",500,practice=short)
+        self.assertNotAlmostEqual(
+            float(full.loc[0,"dominator_strength"]),
+            float(short_features.loc[0,"dominator_strength"]),places=5)
+
     def test_extra_practice_name_is_ignored_and_reported(self):
         dk=load_dk_slate(self.slate())
         uploaded=pd.DataFrame({
