@@ -369,6 +369,9 @@ if run is not None and run["run_key"] == run_key:
                 help="Only selected games use event odds requests. You can keep the full slate for NBA simulations.",
             )
             n_odds_games = len(odds_games)
+            odds_request_signature = (
+                book_title, tuple(sorted(odds_games)), tuple(sorted(market_choices))
+            )
             st.caption(
                 f"{n_odds_games} game(s) × {len(market_choices)} market(s) selected. "
                 f"The provider may bill separately for each requested event and market; "
@@ -403,6 +406,7 @@ if run is not None and run["run_key"] == run_key:
                         )
                     st.session_state["nba_odds_snapshot"] = {
                         "market_key":market_key, "book":book_title,
+                        "request_signature":odds_request_signature,
                         "data":incoming, "details":provenance,
                     }
                     if incoming.empty:
@@ -412,7 +416,8 @@ if run is not None and run["run_key"] == run_key:
                 except Exception as exc:
                     st.error(f"Unable to retrieve actual sportsbook odds: {exc}")
             latest_odds = st.session_state.get("nba_odds_snapshot")
-            if latest_odds and latest_odds.get("market_key") == market_key:
+            if (latest_odds and latest_odds.get("market_key") == market_key
+                    and latest_odds.get("request_signature") == odds_request_signature):
                 details = latest_odds["details"]
                 st.caption(
                     f"Last fetch: {details.get('retrieved_utc','unknown')} · "
@@ -448,7 +453,9 @@ if run is not None and run["run_key"] == run_key:
                     st.warning("Unmatched player rows: " + ", ".join(imported["unmatched"][:10]))
             except Exception as exc:
                 st.error(f"Could not import prop CSV: {exc}")
-        elif (st.session_state.get("nba_odds_snapshot") or {}).get("market_key") == market_key:
+        elif (st.session_state.get("nba_odds_snapshot") or {}).get("market_key") == market_key and (
+                st.session_state["nba_odds_snapshot"].get("request_signature") == odds_request_signature
+        ):
             bet_grid = st.session_state["nba_odds_snapshot"]["data"].copy()
             if not bet_grid.empty:
                 st.caption("Using actual lines imported from " +
