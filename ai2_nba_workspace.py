@@ -337,16 +337,69 @@ if run is not None and run["run_key"] == run_key:
                 value=os.environ.get("THE_ODDS_API_KEY", saved_api_key),
                 type="password", key="nba_odds_access_key"
             )
-            st.caption("The fetch button is intentional: each request may consume your provider's API credits. No automatic or repeated polling occurs. You can start with a free key, but verify your plan's prop-market availability.")
+            st.caption("The fetch button is intentional: each request may consume provider API credits. There is no automatic polling.")
+            # Odds retrieval can use a smaller game selection than the
+            # independent player projections. An all-games NBA slate routinely
+            # has more than ten events; do not silently charge for every game.
+            odds_pairs = {
+                f"{a} vs {b}": (a, b)
+                for a, b in sorted({
+                    tuple(sorted((norm_team(t), norm_team(opp))))
+                    for t, opp in run["teams_map"].items()
+                    if norm_team(t) != norm_team(opp)
+                })
+            }
+            selected_player_teams = set(
+                projections.loc[
+                    projections["player_id"].astype(str).isin(
+                        [names[n] for n in chosen]
+                    ), "team"
+                ].map(norm_team)
+            )
+            suggested_games = [
+                label for label, pair in odds_pairs.items()
+                if any(team in selected_player_teams for team in pair)
+            ][:3]
+            default_games = suggested_games or list(odds_pairs)[:3]
+            odds_games = st.multiselect(
+                "Games to retrieve actual sportsbook odds for",
+                list(odds_pairs),
+                default=default_games,
+                key=f"nba_odds_games_{market_key}",
+                help="Only selected games use event odds requests. You can keep the full slate for NBA simulations.",
+            )
+            n_odds_games = len(odds_games)
+            st.caption(
+                f"{n_odds_games} game(s) × {len(market_choices)} market(s) selected. "
+                f"The provider may bill separately for each requested event and market; "
+                f"check your remaining credits. The app makes no automatic requests."
+            )
+            quota_confirmed = True
+            if n_odds_games > 10:
+                st.warning(
+                    f"Full-slate retrieval requests {n_odds_games} games. "
+                    "The odds provider may charge significant API quota."
+                )
+                quota_confirmed = st.checkbox(
+                    "I understand the API quota cost for more than 10 games",
+                    key=f"nba_odds_large_slate_confirm_{market_key}",
+                )
             if st.button("Import current actual sportsbook prop lines",
-                         type="secondary", disabled=not provided_api_key.strip(),
+                         type="secondary",
+                         disabled=not (provided_api_key.strip() and odds_games
+                                       and market_choices and quota_confirmed),
                          key=f"nba_fetch_props_{market_key}"):
                 try:
+                    allowed_pairs = {frozenset(odds_pairs[label]) for label in odds_games}
+                    odds_teams_map = {
+                        team: opponent for team, opponent in run["teams_map"].items()
+                        if frozenset((norm_team(team), norm_team(opponent))) in allowed_pairs
+                    }
                     with st.spinner("Retrieving quoted NBA player props for the selected games…"):
                         incoming, provenance = load_current_props(
-                            projections, run["teams_map"], provided_api_key.strip(),
+                            projections, odds_teams_map, provided_api_key.strip(),
                             bookmaker_key=BOOKMAKERS[book_title], markets=market_choices,
-                            target_day=target,
+                            target_day=target, max_events=max(10, n_odds_games),
                         )
                     st.session_state["nba_odds_snapshot"] = {
                         "market_key":market_key, "book":book_title,
