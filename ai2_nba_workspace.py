@@ -369,28 +369,46 @@ if run is not None and run["run_key"] == run_key:
                 help="Only selected games use event odds requests. You can keep the full slate for NBA simulations.",
             )
             n_odds_games = len(odds_games)
+            per_fetch_limit = st.slider(
+                "Maximum API credits allowed for this import",
+                min_value=5, max_value=50, value=25, step=5,
+                key=f"nba_odds_max_credit_spend_{market_key}",
+                help="Hard limit on one download. We also reserve your last 50 monthly credits.",
+            )
+            estimated_credits = n_odds_games * len(set(market_choices))
             odds_request_signature = (
                 book_title, tuple(sorted(odds_games)), tuple(sorted(market_choices))
             )
             st.caption(
-                f"{n_odds_games} game(s) × {len(market_choices)} market(s) selected. "
-                f"The provider may bill separately for each requested event and market; "
-                f"check your remaining credits. The app makes no automatic requests."
+                f"**Worst-case charge: {estimated_credits} credits** "
+                f"({n_odds_games} games × {len(set(market_choices))} prop markets). "
+                f"Free plan: 500 per month. This app reserves 50 monthly credits "
+                f"and will not proceed without a provider-reported balance."
             )
-            quota_confirmed = True
-            if n_odds_games > 10:
+            too_costly = estimated_credits > per_fetch_limit
+            if too_costly:
                 st.warning(
-                    f"Full-slate retrieval requests {n_odds_games} games. "
-                    "The odds provider may charge significant API quota."
+                    f"Import blocked: up to {estimated_credits} credits would exceed "
+                    f"your {per_fetch_limit}-credit per-import limit. "
+                    "Select fewer games or markets."
                 )
-                quota_confirmed = st.checkbox(
-                    "I understand the API quota cost for more than 10 games",
-                    key=f"nba_odds_large_slate_confirm_{market_key}",
+            prior_snapshot = st.session_state.get("nba_odds_snapshot") or {}
+            already_loaded = (
+                prior_snapshot.get("market_key") == market_key
+                and prior_snapshot.get("request_signature") == odds_request_signature
+            )
+            refresh_existing = False
+            if already_loaded:
+                st.info("These sportsbook odds are already imported for your current selection.")
+                refresh_existing = st.checkbox(
+                    "Refresh these same odds (spends additional API credits)",
+                    key=f"nba_odds_repeat_confirm_{market_key}",
                 )
             if st.button("Import current actual sportsbook prop lines",
                          type="secondary",
                          disabled=not (provided_api_key.strip() and odds_games
-                                       and market_choices and quota_confirmed),
+                                       and market_choices and not too_costly
+                                       and (not already_loaded or refresh_existing)),
                          key=f"nba_fetch_props_{market_key}"):
                 try:
                     allowed_pairs = {frozenset(odds_pairs[label]) for label in odds_games}
@@ -403,6 +421,8 @@ if run is not None and run["run_key"] == run_key:
                             projections, odds_teams_map, provided_api_key.strip(),
                             bookmaker_key=BOOKMAKERS[book_title], markets=market_choices,
                             target_day=target, max_events=max(10, n_odds_games),
+                            max_credits_per_fetch=per_fetch_limit,
+                            min_remaining_credits=50,
                         )
                     st.session_state["nba_odds_snapshot"] = {
                         "market_key":market_key, "book":book_title,
@@ -425,7 +445,15 @@ if run is not None and run["run_key"] == run_key:
                     f"{len(latest_odds['data'])} quoted lines"
                 )
                 if details.get("quota"):
-                    st.caption("API quota: " + ", ".join(f"{k}: {v}" for k,v in details["quota"].items()))
+                    st.caption("Provider API quota: " + ", ".join(
+                        f"{k}: {v}" for k, v in details["quota"].items()
+                    ))
+                if details.get("credits_remaining") is not None:
+                    st.caption(
+                        f"Remaining monthly credits: **{details['credits_remaining']}**. "
+                        f"Maximum charge budgeted for this import: "
+                        f"{details.get('max_credits_estimate', 'unknown')}."
+                    )
                 if details.get("unmatched_player_names"):
                     st.warning("Unmatched player names (not silently assigned): " +
                                ", ".join(details["unmatched_player_names"][:10]))
