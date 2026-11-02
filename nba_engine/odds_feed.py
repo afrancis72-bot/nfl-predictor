@@ -152,12 +152,31 @@ def _api_get(url, api_key, **params):
         # Exception URLs may include the key; never stringify them.
         raise ValueError("The odds provider did not respond. Check connectivity and try again.") from None
 
+def _remaining_provider_credits(quota_headers: dict) -> int:
+    """Require a trustworthy provider balance before a paid odds request."""
+    value = quota_headers.get("x-requests-remaining")
+    try:
+        remaining = int(value)
+    except (ValueError, TypeError):
+        raise ValueError(
+            "The odds provider did not report remaining monthly API credits. "
+            "For safety, no paid odds requests were made."
+        ) from None
+    if remaining < 0:
+        raise ValueError("Invalid monthly credit balance from the odds provider; no paid requests made.")
+    return remaining
+
+
 def load_current_props(projections: pd.DataFrame, teams_map: dict, api_key: str,
                        bookmaker_key: str = "hardrockbet_fl", markets=None,
-                       target_day: date | None = None, max_events: int = 10):
-    """Fetch only matching events, explicitly requested once by the user.
+                       target_day: date | None = None, max_events: int = 10,
+                       max_credits_per_fetch: int = 25,
+                       min_remaining_credits: int = 50):
+    """Fetch selected event props, never exceeding the user-specified credit cap.
 
-    Makes one 'events' request and ONE priced event request per matched matchup.
+    An events lookup is free. Before ANY paid event call, validate the provider's
+    remaining-credit response and the worst-case event x market quota cost.
+    Preserve a monthly reserve, and fail closed if headers are unavailable.
     Missing bookmaker markets are missing data, not betting edges.
     """
     if not api_key or len(api_key.strip()) < 6:
@@ -170,6 +189,9 @@ def load_current_props(projections: pd.DataFrame, teams_map: dict, api_key: str,
         raise ValueError("Unsupported markets: " + ", ".join(sorted(unknown)))
     if not markets:
         raise ValueError("Select at least one market.")
+    if (not 1 <= int(max_credits_per_fetch) <= 50
+            or not 0 <= int(min_remaining_credits) <= 500):
+        raise ValueError("Invalid API credit safety limits.")
     raw_events, credits = _api_get(f"{BASE}/sports/{SPORT}/events", api_key)
     allowed_pairs = {frozenset((str(t),str(opp))) for t,opp in teams_map.items()}
     matching = []
@@ -189,9 +211,34 @@ def load_current_props(projections: pd.DataFrame, teams_map: dict, api_key: str,
         matching.append(ev)
     if len(matching) > max_events:
         raise ValueError(f"{len(matching)} events found; select fewer games to control API quota.")
+    # The Odds API charges at most one credit per returned market per region.
+    # One specified bookmaker is one region equivalent. Estimate the WORST case.
+    requested_markets = list(dict.fromkeys(MODEL_TO_MARKET[m] for m in markets))
+    per_event_max_cost = len(requested_markets)
+    maximum_total_cost = len(matching) * per_event_max_cost
+    if maximum_total_cost > int(max_credits_per_fetch):
+        raise ValueError(
+            f"Credit safety limit: this fetch may use up to {maximum_total_cost} "
+            f"credits, above your {max_credits_per_fetch}-credit per-fetch cap. "
+            "Select fewer games or prop markets."
+        )
+    remaining = _remaining_provider_credits(credits)
+    if remaining - maximum_total_cost < int(min_remaining_credits):
+        raise ValueError(
+            f"Credit safety limit: provider reports {remaining} credits left. "
+            f"This fetch may use up to {maximum_total_cost}; the app reserves "
+            f"{min_remaining_credits} credits for the rest of your month. "
+            "No paid odds requests were made."
+        )
     rows, unresolved = [], set()
-    markets_arg=",".join(MODEL_TO_MARKET[m] for m in markets)
+    markets_arg = ",".join(requested_markets)
+    # Check reported balance after EVERY call. Don't spend through quota.
     for event in matching:
+        if remaining - per_event_max_cost < int(min_remaining_credits):
+            raise ValueError(
+                "The provider's remaining monthly credits fell below the "
+                "safety reserve. Stopped additional paid odds requests."
+            )
         data, current_credits = _api_get(
             f"{BASE}/sports/{SPORT}/events/{event['id']}/odds", api_key,
             bookmakers=bookmaker_key,
@@ -199,6 +246,7 @@ def load_current_props(projections: pd.DataFrame, teams_map: dict, api_key: str,
             oddsFormat="american",
         )
         credits.update(current_credits)
+        remaining = _remaining_provider_credits(credits)
         new_rows, unmatched = parse_event_props(data, projections, bookmaker_key)
         rows.extend(new_rows)
         unresolved.update(unmatched)
@@ -216,6 +264,8 @@ def load_current_props(projections: pd.DataFrame, teams_map: dict, api_key: str,
         "unmatched_player_names":sorted(unresolved)[:30],
         "retrieved_utc":datetime.now().astimezone().isoformat(),
         "quota":credits,
+        "max_credits_estimate":maximum_total_cost,
+        "credits_remaining":remaining,
     }
 
 
