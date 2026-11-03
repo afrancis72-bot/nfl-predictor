@@ -77,7 +77,10 @@ with tab_tournament:
             "OTIS is optional; without measured golfer skill/form/course fit, "
             "the one-button DK-only simulator is a clearly labeled "
             "salary-market research baseline, NOT an independently calibrated forecast. "
-            "OTIS ranking/model columns are audit-only, not forecast inputs."
+            "OTIS ranking/model columns are audit-only, not forecast inputs. " 
+            "The RRG Stats Bank also contains Recent -1S to -8S and Hist YEAR finishes. "
+            "Recent results receive only a SMALL uncalibrated adjustment; historical "
+            "event results are shown as evidence, NOT automatically counted as SG."
         )
         holes_file=st.file_uploader("Verified 18-hole par CSV (optional)",
                                  type=["csv"],key="ai2_pga_holes")
@@ -188,7 +191,7 @@ with tab_tournament:
                         no_cut=cut_type.startswith("No cut"),
                         cut_size=cut_size,hole_frame=holes,otis_raw=otis_raw,
                         independent_raw=independent_raw,course_fit_raw=rrg_fit_raw,
-                        weather_raw=forecast,
+                        weather_raw=forecast,event_year=start_date.year,
                         sims=sims,seed=seed,lineup_count=lineup_count,
                         max_exposure=exposure_pct/100,
                         salary_floor=salary_floor,min_unique=min_unique,
@@ -237,6 +240,22 @@ with tab_tournament:
                 "to per-round scoring expectation, not an independently validated prediction. "
                 "Its FIT-only fallback receives reduced weight."
             )
+        if meta.get("recent_form_matched",0):
+            st.caption(
+                f"RunGood recent-result evidence used for {meta['recent_form_matched']}/"
+                f"{meta['field_size']} golfers (up to eight previous starts); "
+                f"event-history results available for {meta['historical_event_matched']}/"
+                f"{meta['field_size']}. The per-round recent-form tilt is bounded "
+                "to 0.12 strokes and is NOT historically calibrated. "
+                "Tour levels and dates of individual starts were not verified. "
+                "Event-history results are audit-only, not an assumed course-fit bonus."
+            )
+        elif meta["independent_sg_match"]:
+            st.warning(
+                "RunGood SG loaded, but no usable recent finishing history was identified. "
+                "Recent five-to-eight-event results, cut trends and event-history records "
+                "were NOT applied to golfer projections."
+            )
         if not meta["hole_pars_verified"]:
             st.info("Generic provisional hole pars were used; verify actual course layout to strengthen the model.")
         if meta["weather_hours"]:
@@ -246,7 +265,18 @@ with tab_tournament:
                        "No individual tee-wave assignments were inferred.")
         else:
             st.caption("No verified location-specific current weather was loaded.")
+        st.caption(
+            "Cut Equity now weighs modeled golfer cut probability; Balanced weighs "
+            "cut likelihood and mean; GPP Ceiling emphasizes simulated P90. "
+            "Different objectives can still select overlapping lineups."
+        )
         st.dataframe(result["summary"],hide_index=True,use_container_width=True)
+        st.download_button(
+            "Download six-of-six and lineup simulation audit",
+            result["summary"].to_csv(index=False).encode("utf-8-sig"),
+            "team_ai2_pga_lineup_simulation_audit.csv",mime="text/csv",
+            key="ai2_pga_lineup_joint_audit",
+        )
         st.dataframe(result["lineups"],hide_index=True,use_container_width=True)
         st.download_button("Download lineup review CSV",
             result["lineups"].to_csv(index=False).encode("utf-8-sig"),

@@ -17,6 +17,7 @@ import pandas as pd
 
 from pga_predictor_pro import Config as PGAConfig, predict_from_dataframes
 from golf_first_v11 import simulate_golf_first
+from ai2_pga_historical_evidence import name_key, extract_finish_history
 from portfolio_optimizer import PortfolioSettings, optimize_portfolio
 from round_parlay import (build_round_ratings,simulate_groups,build_six_leg_tickets,
                           normalize_live_results,normalize_groupings_upload)
@@ -52,7 +53,7 @@ def parse_dk(upload):
         raise ValueError("Need at least six valid golfers from the tournament slate.")
     if out["salary"].isna().any() or (~out["salary"].between(3000,20000)).any():
         raise ValueError("Invalid or missing DraftKings golf salary.")
-    if out["player"].map(key).duplicated().any():
+    if out["player"].map(name_key).duplicated().any():
         raise ValueError("Duplicate golfer names in DraftKings slate.")
     if out["dk_id"].ne("").any() and (out["dk_id"].eq("").any() or out["dk_id"].duplicated().any()):
         raise ValueError("DraftKings golfer IDs are missing or duplicated.")
@@ -85,9 +86,9 @@ def normalize_otis(raw,dk):
     out["player"]=out["player"].astype(str).str.strip()
     if out["player"].map(key).duplicated().any():
         raise ValueError("Duplicate golfer in OTIS Course-Fit CSV.")
-    out["merge_key"]=out["player"].map(key)
+    out["merge_key"]=out["player"].map(name_key)
     names=dk[["player"]].copy()
-    names["merge_key"]=names["player"].map(key)
+    names["merge_key"]=names["player"].map(name_key)
     out=names.merge(out.drop(columns=["player"]),on="merge_key",how="left",validate="one_to_one").drop(columns="merge_key")
     numeric=[c for c in out.columns if c!="player"]
     for c in numeric:
@@ -131,14 +132,14 @@ def normalize_independent_stats(raw,dk):
     if not any(found[k] for k in sg_keys):
         raise ValueError("Independent stats CSV has no measured SG Total, APP, OTT, ARG, or PUTT column.")
     vals=pd.DataFrame({"player":frame[name].astype(str).str.strip()})
-    vals["match_key"]=vals["player"].map(key)
+    vals["match_key"]=vals["player"].map(name_key)
     if vals["match_key"].duplicated().any():
         raise ValueError("Duplicate golfer in independent stats CSV.")
     for k,source in found.items():
         if source:
             vals[k]=pd.to_numeric(frame[source],errors="coerce")
     names=dk[["player"]].copy()
-    names["match_key"]=names["player"].map(key)
+    names["match_key"]=names["player"].map(name_key)
     aligned=names.merge(vals.drop(columns=["player"]),on="match_key",how="left",validate="one_to_one").drop(columns=["match_key"])
     covered=int(aligned[list(k for k in sg_keys if k in aligned)].notna().any(axis=1).sum())
     if covered/max(1,len(dk))<.70:
@@ -180,7 +181,7 @@ def normalize_rrg_course_fit(raw,dk):
     if not any(sources[x] for x in evidence):
         raise ValueError("RRG Course Fit needs FIT or category columns: OTT, APP, ARG, PUTT, SCORING. Rank or salary is not enough.")
     values=pd.DataFrame({"player":frame[name].astype(str).str.strip()})
-    values["_key"]=values["player"].map(key)
+    values["_key"]=values["player"].map(name_key)
     if values["_key"].duplicated().any() or values["_key"].isin(["","nan","none"]).any():
         raise ValueError("RRG Course Fit golfer names must be nonblank and unique.")
     for target,original in sources.items():
@@ -191,7 +192,7 @@ def normalize_rrg_course_fit(raw,dk):
                     .str.replace("−","-",regex=False))
             values[target]=pd.to_numeric(cleaned,errors="coerce")
     names=dk[["player"]].copy()
-    names["_key"]=names.player.map(key)
+    names["_key"]=names.player.map(name_key)
     aligned=names.merge(values.drop(columns=["player"]),on="_key",
                         how="left",validate="one_to_one").drop(columns="_key")
     cols=[c for c in evidence if c in aligned]
@@ -326,7 +327,7 @@ def group_ratings_source(model):
     return p[["player","otis_true_skill","otis_course_fit","otis_form"]], "DK salary-derived proxy ONLY, not observed SG or independent course fit"
 
 def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
-                   otis_raw=None,independent_raw=None,course_fit_raw=None,weather_raw=None,sims=3000,seed=42,lineup_count=10,
+                   otis_raw=None,independent_raw=None,course_fit_raw=None,weather_raw=None,event_year=None,sims=3000,seed=42,lineup_count=10,
                    max_exposure=.20,salary_floor=46500,min_unique=3,
                    strategy="Balanced / Single Entry",locks=(),excludes=()):
     if not str(tournament).strip():
@@ -344,6 +345,7 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
     otis,matched=normalize_otis(otis_raw,dk)
     independent,observed_match=normalize_independent_stats(independent_raw,dk)
     course_fit,course_fit_meta=normalize_rrg_course_fit(course_fit_raw,dk)
+    recent_form,form_meta=extract_finish_history(independent_raw,dk,event_year=event_year)
     weather=(weather_raw.copy() if isinstance(weather_raw,pd.DataFrame) else pd.DataFrame())
     if not independent.empty:
         base=predict_from_dataframes(
@@ -373,10 +375,22 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
     if base[["expected_round","round_sd"]].isna().any().any():
         raise ValueError("PGA forecast contains missing golfer baseline. No portfolio exported.")
     base=apply_rrg_course_fit(base,course_fit)
+    if not recent_form.empty:
+        # RRG last-50 export already contains recent finished-event and Hist YEAR
+        # columns. Do not throw them away or interpret them as observed SG.
+        base=base.merge(recent_form,on="player",how="left",validate="one_to_one")
+        base["expected_round_before_recent_form"]=pd.to_numeric(
+            base["expected_round"],errors="coerce")
+        base["expected_round"]=(
+            base["expected_round_before_recent_form"]+
+            base["recent_form_adjustment_strokes"].fillna(0.))
     predicted,draws,diagnostics=simulate_golf_first(
         base,sims=int(sims),seed=int(seed),course_par=int(course_par),
         no_cut=bool(no_cut),cut_size=int(cut_size),hole_pars=holes
     )
+    cuts=diagnostics.pop("made_cut_samples",None)
+    if cuts is None or cuts.shape!=draws.shape:
+        raise ValueError("Golf cut-event simulation was not aligned with scores. No portfolio exported.")
     predicted=_ensure_coverage_for_optimizer(predicted)
     settings=PortfolioSettings(lineup_count=int(lineup_count),salary_cap=50000,
         salary_floor=int(salary_floor),min_player_salary=3000,roster_size=6,
@@ -404,10 +418,13 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
             "sim_lineup_mean":round(float(v.mean()),2),
             "sim_lineup_p10":round(float(np.quantile(v,.10)),2),
             "sim_lineup_p90":round(float(np.quantile(v,.90)),2),
-            "sim_lineup_p95":round(float(np.quantile(v,.95)),2)})
+            "sim_lineup_p95":round(float(np.quantile(v,.95)),2),
+            "sim_lineup_p99":round(float(np.quantile(v,.99)),2),
+            "sim_lineup_6of6_pct":round(100.*float(np.all(cuts[:,picks],axis=1).mean()),2)})
     summary=summary.merge(pd.DataFrame(same_world),on="lineup",how="left",validate="one_to_one")
     return {"projections":predicted,"lineups":portfolio,"summary":summary,
         "exposure":exposure,"otis":otis,"independent":independent,"course_fit":course_fit,"raw_draws":draws,
+        "raw_cuts":cuts,
         "diagnostics":diagnostics,
         "metadata":{"tournament":str(tournament),"course_par":int(course_par),
             "hole_pars_verified":holes is not None,"field_size":len(dk),
@@ -417,6 +434,12 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
             "rrg_fit_components":course_fit_meta["components"],
             "rrg_fit_overall_only":course_fit_meta["overall_only"],
             "rrg_fit_columns":course_fit_meta["used"],
+            "recent_form_matched":form_meta["recent_matched"],
+            "historical_event_matched":form_meta["historical_event_matched"],
+            "recent_form_source":form_meta["source"],
+            "recent_form_columns":form_meta["recent_finish_columns"],
+            "historical_event_columns":form_meta["event_history_columns"],
+            "recent_form_is_calibrated":False,
             "weather_hours":len(weather),"weather_wind_mph":(
                 round(float(pd.to_numeric(weather["wind_mph"],errors="coerce").mean()),1)
                 if "wind_mph" in weather and weather["wind_mph"].notna().any() else None),

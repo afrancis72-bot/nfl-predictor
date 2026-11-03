@@ -168,4 +168,5 @@ def simulate_golf_first(projections:pd.DataFrame, sims:int=5000, seed:int=42,
                      'field_mean_to_par_assumption':round_field_mean_to_par,
                      'hole_pars_source':'provided course hole pars' if hole_pars is not None else 'generic provisional template',
                      'probability_source':'illustrative baseline, not calibrated to Yokohama hole-level stats',
-                     'golfer_count':n}
+                     'golfer_count':n,
+                     'made_cut_samples':made_cut.copy()}

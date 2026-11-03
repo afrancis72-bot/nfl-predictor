@@ -170,15 +170,26 @@ def rebuild_reviewed(result: dict, *, vetoes=(), locks=(), lineup_count=10,
     if not summary.salary.between(salary_floor,50000).all():
         raise ValueError("Lineup salary limits violated.")
     lookup={name:i for i,name in enumerate(sim_players)}
+    cuts=result.get("raw_cuts")
+    if cuts is not None:
+        cuts=np.asarray(cuts)
+        if cuts.shape!=draws.shape:
+            raise ValueError("Review cut-event worlds do not match the original simulator.")
     worlds=[]
     for no,g in portfolio.groupby("lineup"):
-        subset=draws[:,[lookup[name] for name in g.player]]
+        indices=[lookup[name] for name in g.player]
+        subset=draws[:,indices]
         scores=subset.sum(axis=1)
-        worlds.append({"lineup":int(no),
+        row={"lineup":int(no),
             "sim_lineup_mean":round(float(scores.mean()),2),
             "sim_lineup_p10":round(float(np.quantile(scores,.10)),2),
             "sim_lineup_p90":round(float(np.quantile(scores,.90)),2),
-            "sim_lineup_p95":round(float(np.quantile(scores,.95)),2)})
+            "sim_lineup_p95":round(float(np.quantile(scores,.95)),2),
+            "sim_lineup_p99":round(float(np.quantile(scores,.99)),2)}
+        if cuts is not None:
+            row["sim_lineup_6of6_pct"]=round(
+                100.*float(np.all(cuts[:,indices],axis=1).mean()),2)
+        worlds.append(row)
     summary=summary.merge(pd.DataFrame(worlds),on="lineup",how="left",validate="one_to_one")
     return {"lineups":portfolio,"summary":summary,"exposure":exposure,
             "vetoes":sorted(vetoes),"locks":sorted(locks)}
