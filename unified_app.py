@@ -285,7 +285,7 @@ else:
                     "Player", "Team", "Position", "Salary", "Historical role validation",
                     "Model mean DK", "Model median DK", "Model P10 DK", "Model P90 DK",
                     "Model non-TD DK", "Model expected TD DK",
-                    "Model chance 1+ scoring TD %",
+                    "Model chance 1+ TD involvement %",
                     "Model chance 10+ DK without TD %",
                     "Model chance 10+ DK %", "Model chance 15+ DK %",
                     "Model chance <=5 DK %",
