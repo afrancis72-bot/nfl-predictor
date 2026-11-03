@@ -163,7 +163,7 @@ else:
         import pandas as _ai2_pd
 
         st.caption("NFL Classic · Upload DraftKings salaries, then select 15, 20, 50, or 150 lineups. No projections upload required.")
-        st.caption("NFL release 2026-11-03 • QB/WR-TE GUIDED CANDIDATES & STACK COVERAGE AUDIT • approved rosters unchanged")
+        st.caption("NFL release 2026-11-03 • SALARY-CONSTRAINED QB STACK SEARCH + 3,000 HELD-OUT SCENARIOS • human approval required")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
         saved_one = get_upload("NFL", "DraftKings salaries")
         if saved_one:
@@ -330,6 +330,23 @@ else:
                         data=role_outlier_df.to_csv(index=False).encode("utf-8-sig"),
                         file_name="team_ai2_nfl_workload_plausibility.csv",
                         mime="text/csv", key="nfl_role_plausibility")
+                risky = output_one.get("role_risk_exposure") or []
+                if risky:
+                    severe = [x for x in risky if str(x.get("Review priority","")).startswith("HIGH")]
+                    if severe:
+                        st.warning(
+                            f"{len(severe)} heavily used player(s) have simulated workloads "
+                            "substantially above observed history. The model has NOT "
+                            "proved that the increase is justified. Do not approve "
+                            "the lineup portfolio without checking these players.")
+                    st.markdown("**Workload assumption exposure in selected lineups**")
+                    st.dataframe(_ai2_pd.DataFrame(risky),
+                                 use_container_width=True,hide_index=True)
+                    st.download_button(
+                        "Download flagged-workload portfolio exposure",
+                        _ai2_pd.DataFrame(risky).to_csv(index=False).encode("utf-8-sig"),
+                        file_name="team_ai2_nfl_workload_exposure_review.csv",
+                        mime="text/csv",key="nfl_workload_exposure_review")
                 role_flags = output_one.get("lineup_role_warnings") or []
                 if role_flags:
                     st.subheader("Selected players whose observed opportunity changed")
@@ -459,6 +476,24 @@ else:
                 qb_report = output_one.get("qb_selection_audit") or []
                 qb_stats = output_one.get("qb_selection_diagnostics") or {}
                 if qb_report:
+                    holdout=output_one.get("counterfactual_holdout") or {}
+                    if holdout:
+                        st.info(
+                            "Lineup candidates and selections use the first 7,000 "
+                            "game simulations. QB counterfactuals and the final "
+                            "portfolio are evaluated on the last "
+                            f"{holdout.get('holdout_worlds',0):,} game simulations "
+                            "that were NOT used for lineup selection. "
+                            "This tests sensitivity to simulated outcomes, "
+                            "not accuracy against actual NFL games."
+                        )
+                        st.caption(
+                            "Selected lineup average modeled mean: "
+                            f"{holdout.get('selected_training_avg_mean','n/a')} DK (selection), "
+                            f"{holdout.get('selected_holdout_avg_mean','n/a')} DK (held-out). "
+                            "See each QB's best legal stack receivers, salary, "
+                            "held-out P90/P99 and gap versus the selected portfolio below."
+                        )
                     st.caption(
                         f"{qb_stats.get('final_stacked_lineups', 0)} of {len(ranked)} "
                         "final lineups feature a direct QB/WR-or-TE stack; "

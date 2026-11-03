@@ -621,6 +621,14 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # Shared TD/turnover scoring uses historical rates only.
             rush_td_prior=max(.3,team_rush*.035)
             expected_td,fg_mean=_team_scoring_budget(pass_td_pg,rush_td_prior)
+            original_td_prior=float(expected_td)
+            team_td_evidence=env.get("expected_offensive_tds")
+            if team_td_evidence is not None:
+                # Actual pregame team scoring matters in addition to selected
+                # QB rates. Keep the combination conservative until historical
+                # out-of-time calibration identifies a defensible weight.
+                expected_td=float(np.clip(
+                    .65*expected_td+.35*float(team_td_evidence),.35,4.8))
             market_key=tuple(sorted((team,opp)))
             market_info=market_game_totals.get(market_key) or {}
             market_line=market_info.get("total_points")
@@ -638,7 +646,14 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             total_td=np.minimum(rng.binomial(team_plays,td_probability),8)
             fgs=rng.poisson(fg_mean,size=ns)
             stat_draws[f'__TEAM_SCORING__|{team}']={
-                'scoring_source':'historical_rates_only',
+                'scoring_source':(
+                    'pregame_nflverse_team_scoring_plus_QB_observed_shrinkage'
+                    if team_td_evidence is not None else 'historical_QB_rates_only'),
+                'source_team_expected_tds':(
+                    float(team_td_evidence) if team_td_evidence is not None else None),
+                'prior_expected_tds_before_team_scoring':original_td_prior,
+                'team_scoring_model_weight':.35 if team_td_evidence is not None else 0.,
+                'team_scoring_calibrated':False,
                 'expected_offensive_tds':float(expected_td),
                 'market_total_line':market_line,
                 'market_weight':float(market_weight) if market_line is not None else 0.,
@@ -650,6 +665,12 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'simulated_offensive_points':7*total_td+3*fgs,
             }
             pass_share=np.clip(pass_td_pg/max(pass_td_pg+rush_td_prior,.1),.35,.78)
+            if team_td_evidence is not None:
+                observed_pass=float(env["expected_passing_tds"])
+                observed_rush=float(env["expected_rushing_tds"])
+                observed_share=observed_pass/max(observed_pass+observed_rush,.10)
+                pass_share=float(np.clip(
+                    .65*pass_share+.35*observed_share,.35,.78))
             pass_td=rng.binomial(total_td,pass_share)
             # A passing touchdown must be a completed pass. Preserve the team
             # touchdown budget by moving any excess to rushing opportunities.

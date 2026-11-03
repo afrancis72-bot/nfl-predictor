@@ -9,6 +9,7 @@ from random import Random
 from ai2_nfl_lineup import check_classic_lineup
 from ai2_nfl_matchups import canonical_team
 from ai2_nfl_qb_audit import qb_and_partners
+from ai2_nfl_qb_conditional import anchored_qb_stack
 
 def build_classic_candidates(rows, *, count=5, attempts=30000, seed=7,
                              salary_floor=49600, salary_cap=50000,
@@ -100,6 +101,23 @@ def build_classic_candidates(rows, *, count=5, attempts=30000, seed=7,
         else:
             for _ in range(min(150, directed_budget)):
                 try_lineup(qb=qb)
+    # An independent, salary-constrained QB search prevents random sampling
+    # from being mistaken for proof that a costly passing stack is nonviable.
+    # We solve once for the strongest legal single and double receiver stack
+    # per eligible QB. Each roster still has to pass the EXACT Classic guard.
+    # These are comparison paths, never mandatory final portfolio entries.
+    for qb in pools["QB"]:
+        for min_partners in (1,2):
+            lineup=anchored_qb_stack(
+                pools,qb,min_receivers=min_partners,
+                salary_floor=salary_floor,salary_cap=salary_cap,time_limit=.45)
+            if lineup is None:
+                continue
+            signature=tuple(sorted(str(p["ID"]) for p in lineup))
+            score=sum(float(p["proj"]) for p in lineup)
+            if signature not in best or score>best[signature][0]:
+                best[signature]=(score,lineup)
+
     # Improve the best legal random seeds with targeted same-position upgrades.
     # This discovers balanced salary trades that pure random sampling misses.
     ordered_seeds = sorted(best.values(), key=lambda x: x[0], reverse=True)

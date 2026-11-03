@@ -80,6 +80,7 @@ def qb_selection_report(pool,candidates,ranked,*,diagnostics=None,
     after=diagnostics.get("scored_qbs_after_efficiency",{})
     stacked_after=diagnostics.get("stacked_qbs_after_efficiency",{})
     best_p99=diagnostics.get("qb_best_simulated_p99",{})
+    counterfactual=diagnostics.get("qb_counterfactuals",{})
     rows=[]
     for qb in sorted(qbs,key=lambda r:(-float(r.get("proj",0)),str(r.get("Name","")))):
         ident=str(qb["ID"])
@@ -95,7 +96,11 @@ def qb_selection_report(pool,candidates,ranked,*,diagnostics=None,
         elif not stacked_after.get(ident,0):
             reason="Stacked candidates failed simulated P90 salary-efficiency filter and credible ceiling gate"
         elif not final_counts[ident]:
-            reason="Simulated portfolio, salary efficiency, value and exposure favored alternatives"
+            gap=counterfactual.get(ident,{}).get("Mean gap vs selected portfolio median")
+            if gap is not None and gap>=-3:
+                reason="Competitive legal QB stack excluded by portfolio selection; requires counterfactual review"
+            else:
+                reason="Simulated portfolio, salary efficiency, value and exposure favored alternatives"
         else:
             reason="Selected in final portfolio; no QB is guaranteed exposure"
         rows.append({
@@ -120,5 +125,6 @@ def qb_selection_report(pool,candidates,ranked,*,diagnostics=None,
             "Prior-game pass attempts expected":observed.get("expected_pass_attempts"),
             "Team environment source":observed.get("source","not available"),
             "QB selection status":reason,
+            **counterfactual.get(ident,{}),
         })
     return rows

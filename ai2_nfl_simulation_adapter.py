@@ -116,6 +116,17 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
             if games < 3 or not (np.isfinite(plays) and 48 <= plays <= 80
                                   and np.isfinite(attempts) and 18 <= attempts <= 50):
                 raise ValueError("Unverified or implausible team game environment")
+            scoring=("expected_offensive_tds","expected_passing_tds","expected_rushing_tds")
+            if any(k in profile for k in scoring):
+                if not all(k in profile for k in scoring):
+                    raise ValueError("Team touchdown prior must include passing, rushing and total")
+                if not str(profile.get("team_scoring_source") or "").startswith("nflverse"):
+                    raise ValueError("Team TD budget requires observed pregame team scoring source")
+                td=[float(profile[k]) for k in scoring]
+                if (not np.isfinite(td).all() or not .35<=td[0]<=4.8
+                        or not 0<=td[1]<=4.8 or not 0<=td[2]<=4.8
+                        or abs(min(4.8,td[1]+td[2])-td[0])>.02):
+                    raise ValueError("Invalid team touchdown prior")
     if snap_profiles is not None:
         if not isinstance(snap_profiles, dict):
             raise ValueError("Snap opportunity profiles must be keyed observed player roles")
