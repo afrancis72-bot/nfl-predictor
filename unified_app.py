@@ -24,6 +24,10 @@ from ai2_nfl_export import export_classic_candidates
 from ai2_market_challenge import freeze_simulation, compare_frozen_to_props
 from ai2_market_identity import parse_identity_csv
 from ai2_market_provider import retrieve_market_props
+from ai2_build_identity import deployed_build_identity
+from ai2_nfl_correlation_guard import (correlation_audit_rows,
+                                       opposing_dst_lineup_budget)
+from ai2_nfl_portfolio_audit import portfolio_audit_csv
 
 SPORTS = {
     "PGA": {"icon": "⛳", "description": "Classic · Showdown · 3-ball matchups"},
@@ -44,6 +48,7 @@ def get_upload(sport, kind):
     return load_file(DATA_DIR, sport, kind)
 
 st.set_page_config(page_title="TEAM AI² Pro", page_icon="🎯", layout="wide", initial_sidebar_state="collapsed")
+_LIVE_BUILD = deployed_build_identity()
 # Unified preview: suppress legacy multipage links without deleting their files.
 # Legacy pages remain available in the repository for migration and audit.
 st.markdown("""<style>
@@ -108,6 +113,8 @@ def go_home():
 
 if st.session_state.sport is None:
     st.title("TEAM AI² PRO")
+    st.caption(f"Build fingerprint: {_LIVE_BUILD['fingerprint']} · expected source: "
+               f"{_LIVE_BUILD['repo']} / {_LIVE_BUILD['branch']} / {_LIVE_BUILD['entrypoint']}")
     # New wide photo dashboard is preferred when installed; keep the
     # original four-sport emblem as a safe fallback.
     banner = Path(__file__).parent / "assets" / "team_ai2_sports_dashboard.jpg"
@@ -151,6 +158,8 @@ else:
         go_home()
         st.rerun()
     st.title(f"{SPORTS[sport]['icon']} {sport}")
+    st.caption(f"Build: {_LIVE_BUILD['fingerprint']} · Git commit: {_LIVE_BUILD['git_commit']} · "
+               f"{_LIVE_BUILD['branch']} / {_LIVE_BUILD['entrypoint']}")
     st.caption("TEAM AI² Pro · NFL portfolio builder and NBA player-prop research engine. Models remain experimental.")
     if sport == "NFL":
         from hashlib import sha256 as _ai2_sha256
@@ -184,6 +193,19 @@ else:
                     raise ValueError("Upload your DraftKings salary CSV first.")
                 with st.spinner(f"Checking current NFL injuries and simulating {requested_count} legal lineups..."):
                     output_one = build_oneclick_portfolio(salaries_one, seed=int(seed_one), count=int(requested_count))
+                # Persist audit bytes independently of Streamlit's temporary
+                # browser download URL. SQLite history can restore the last
+                # generated audit if a UI session or download expires.
+                audit_name = f"team_ai2_nfl_simulation_audit_seed_{int(seed_one)}.csv"
+                audit_bytes = portfolio_audit_csv(output_one["ranked"], seed=int(seed_one))
+                st.session_state["ai2_nfl_audit_filename"] = audit_name
+                st.session_state["ai2_nfl_audit_bytes"] = audit_bytes
+                try:
+                    _ai2_save_file(DATA_DIR, "NFL", "Simulation audit",
+                                   audit_name, audit_bytes)
+                    st.session_state.pop("ai2_nfl_audit_storage_warning", None)
+                except (OSError, sqlite3.Error) as audit_exc:
+                    st.session_state["ai2_nfl_audit_storage_warning"] = str(audit_exc)
                 st.session_state["ai2_oneclick_result"] = output_one
                 st.session_state["ai2_oneclick_seed"] = int(seed_one)
                 st.session_state["ai2_oneclick_count"] = int(requested_count)
@@ -229,6 +251,34 @@ else:
             st.caption("Roster-ID CSV contains player IDs, not an official contest-entry template. Verify the DraftKings import format.")
 
             st.subheader("Reports & diagnostics")
+            st.caption("Official NFL builds use the same deployed source shown above; "
+                       "the code fingerprint changes with the live optimizer.")
+            audit_bytes = portfolio_audit_csv(ranked, seed=int(seed_one))
+            st.download_button(
+                "Download full lineup simulation audit (CSV)",
+                data=audit_bytes,
+                file_name=f"team_ai2_nfl_simulation_audit_seed_{int(seed_one)}.csv",
+                mime="text/csv", key="ai2_nfl_live_sim_audit_download",
+                on_click="ignore")
+            if st.session_state.get("ai2_nfl_audit_storage_warning"):
+                st.warning("The audit is downloadable now, but storage backup failed: " +
+                           st.session_state["ai2_nfl_audit_storage_warning"])
+            correlations = correlation_audit_rows(ranked)
+            conflict_count = sum(int(row["Conflicted"]) for row in correlations)
+            correlation_cap = opposing_dst_lineup_budget(len(ranked))
+            st.info(f"Opposing WR/TE against rostered defense: "
+                    f"{conflict_count} of {len(ranked)} lineups; "
+                    f"portfolio maximum {correlation_cap}. "
+                    "This applies to Classic only; Showdown is unchanged.")
+            with st.expander("Defense versus opposing pass catcher audit"):
+                st.dataframe(_ai2_pd.DataFrame(correlations), hide_index=True,
+                             use_container_width=True)
+                st.download_button(
+                    "Download DST correlation checks",
+                    data=_ai2_pd.DataFrame(correlations).to_csv(index=False).encode("utf-8-sig"),
+                    file_name="team_ai2_nfl_defense_correlation_audit.csv",
+                    mime="text/csv", key="ai2_nfl_correlation_audit_download",
+                    on_click="ignore")
             with st.expander("Model inputs & workload plausibility reports", expanded=False):
                 st.caption("SCORED = changes the forecast; OPTIMIZER_ONLY = changes selection; "
                            "ELIGIBILITY_ONLY = roster gate; RESEARCH_ONLY = collected but NOT scored; "
@@ -1498,6 +1548,14 @@ else:
     with tab_results:
         st.info("Saved portfolios, bets and post-event audits will appear here.")
     with tab_health:
+        st.subheader("Deployed build identity")
+        st.write("Expected repository:", _LIVE_BUILD["repo"])
+        st.write("Expected branch:", _LIVE_BUILD["branch"])
+        st.write("Entry point:", _LIVE_BUILD["entrypoint"])
+        st.code(_LIVE_BUILD["fingerprint"], language=None)
+        st.caption("Git commit: " + _LIVE_BUILD["git_commit"] +
+                   ". This fingerprint hashes deployed files; check Streamlit "
+                   "deployment settings to verify the source branch.")
         st.error("Engine status: NOT CONNECTED")
         if sport == "NFL":
             st.subheader("NFL quality gate (diagnostic only)")
