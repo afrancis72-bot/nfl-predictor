@@ -78,6 +78,7 @@ class NFLAccountabilityTests(unittest.TestCase):
                  for i,pos in enumerate(positions)]
         roster2=[p.copy() for p in roster1]
         roster2[0]=player("otherQB","QB","B",5500)
+        roster2[3]=player("otherWR","WR","B",5500)
         all_players={str(p["ID"]):p for row in (roster1,roster2) for p in row}
         names=list(all_players)
         idx={x:i for i,x in enumerate(names)}
