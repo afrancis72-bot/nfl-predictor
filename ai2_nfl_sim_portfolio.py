@@ -205,19 +205,25 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
     def efficient(item):
         return item["simulated_p90"] / (float(item["candidate"]["salary"]) / 1000)
     primary=[x for x in scored if efficient(x)>=efficiency_floor]
-    # A single global P90/$1K threshold can eliminate every QB stack for a
-    # viable quarterback. Preserve up to 3 evidence-backed stacked alternatives
-    # PER QB only when close to the global efficiency floor (within 6%).
-    # Never rescue an unstacked or low-efficiency punt just for QB exposure.
+    # Ranking all roster combinations by a single global P90/$1K cutoff
+    # can erase *every* stack for a legitimately viable QB. Recover the
+    # strongest stacked alternatives per QB, but only if they have credible
+    # fantasy ceiling AND are reasonably close to the global efficiency floor.
+    # This is CANDIDATE PRESERVATION, not forcing QB exposure or a stack.
     retained_qbs={str(qb["ID"]) for item in primary
                   for qb,partners in [qb_and_partners(item["candidate"]["players"])]
                   if qb is not None and partners}
     rescued=[]
     pool_by_qb={}
+    best_p99=max(item["simulated_p99"] for item in scored)
     for item in scored:
         qb,partners=qb_and_partners(item["candidate"]["players"])
-        if (qb is not None and partners and str(qb["ID"]) not in retained_qbs
-                and efficient(item)>=efficiency_floor*.94):
+        if not qb or not partners or str(qb["ID"]) in retained_qbs:
+            continue
+        # Both tests matter: cheap but no-upside combinations are not rescued.
+        # The QB audit lists cases rejected by these thresholds.
+        if (efficient(item)>=efficiency_floor*.85
+                and item["simulated_p99"]>=best_p99*.88):
             pool_by_qb.setdefault(str(qb["ID"]),[]).append(item)
     for qb_id,items in pool_by_qb.items():
         rescued.extend(sorted(items,key=lambda item:(
@@ -228,8 +234,14 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
         qb,_=qb_and_partners(item["candidate"]["players"])
         if qb is not None:
             after[str(qb["ID"])]+=1
+    after_stacks=Counter()
+    for item in scored:
+        qb,partners=qb_and_partners(item["candidate"]["players"])
+        if qb is not None and partners:
+            after_stacks[str(qb["ID"])]+=1
     if diagnostics is not None:
         diagnostics.update({
+            "stacked_qbs_after_efficiency":dict(after_stacks),
             "scored_qbs_before_efficiency":dict(by_qb_before),
             "scored_qbs_after_efficiency":dict(after),
             "qb_best_simulated_p99":best_qb_p99,
@@ -335,6 +347,29 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             value_max_appearances=value_max_appearances,
             premium_value_max_appearances=premium_value_max_appearances,
             premium_excluded_ids=premium_excluded_ids)
+    # Final portfolio checks are independent of the greedy/MILP decision path.
+    # The whole-slate cap is floor(count * max_exposure), not a rounded-up
+    # approximation. A single QB is also a player subject to this rule.
+    final_exposure=Counter(str(p["ID"]) for item in chosen
+                           for p in item["candidate"]["players"])
+    if len(chosen)!=count or any(value>limit for value in final_exposure.values()):
+        raise ValueError("Incomplete NFL portfolio or overall exposure cap violated; no export")
+    final_qbs=Counter()
+    final_stacks=Counter()
+    for item in chosen:
+        qb,partners=qb_and_partners(item["candidate"]["players"])
+        if qb is not None:
+            final_qbs[str(qb["ID"])]+=1
+            if partners:
+                final_stacks[str(qb["ID"])]+=1
+    if diagnostics is not None:
+        diagnostics.update({
+            "final_qb_counts":dict(final_qbs),
+            "final_qb_stacked_counts":dict(final_stacks),
+            "final_stack_count":sum(final_stacks.values()),
+            "final_qb_max_allowed":limit,
+            "selection_method":"MILP joint" if used_joint_solver else "simulated greedy",
+        })
     if any(str(p["ID"]) in premium_excluded_ids
            for i in premium_ids for p in chosen[i]["candidate"]["players"]):
         raise ValueError("Premium player exclusion violated; refusing to export portfolio")
