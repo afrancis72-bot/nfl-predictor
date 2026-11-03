@@ -172,7 +172,7 @@ else:
         import pandas as _ai2_pd
 
         st.caption("NFL Classic · Upload DraftKings salaries, then select 15, 20, 50, or 150 lineups. No projections upload required.")
-        st.caption("NFL release 2026-11-03 • 28% total exposure • 12% capped limited-role RBs • maximum 6 shared players • DST correlation guard • human approval required")
+        st.caption("NFL release 2026-11-03 • 28% exposure • 12% limited-role RBs • 8% flagged returning-starter RB competition • maximum six shared players • human approval required")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
         saved_one = get_upload("NFL", "DraftKings salaries")
         if saved_one:
@@ -261,9 +261,31 @@ else:
             st.subheader("Reports & diagnostics")
             st.caption("NFL Classic portfolio risk: maximum 28% overall player exposure "
                        "(14 of 50), 12% for RBs with sourced limited-role evidence "
-                       "(6 of 50), and no two lineups sharing more than six players. "
-                       "These limits are diversification controls, not guarantees of "
-                       "better projections or winning outcomes.")
+                       "(6 of 50), and 8% for RBs facing a potential returning "
+                       "high-volume teammate (4 of 50). No two lineups share "
+                       "more than six players. These are risk controls, not "
+                       "calibrated playing probabilities or winning guarantees.")
+            returning_watch = output_one.get("returning_rb_watch") or []
+            with st.expander("Possible returning RBs — source and availability review",
+                             expanded=bool(returning_watch)):
+                if returning_watch:
+                    st.warning("Possible return is NOT confirmation. Historical "
+                               "usage and the current injury designation create "
+                               "a review flag; report dates and active game status "
+                               "must be independently verified before entry.")
+                    st.dataframe(_ai2_pd.DataFrame(returning_watch),
+                                 hide_index=True, use_container_width=True)
+                    st.download_button(
+                        "Download returning RB competition audit",
+                        data=_ai2_pd.DataFrame(returning_watch).to_csv(index=False).encode("utf-8-sig"),
+                        file_name="team_ai2_nfl_returning_rb_watch.csv",
+                        mime="text/csv",key="ai2_nfl_returning_rb_watch",
+                        on_click="ignore")
+                else:
+                    st.info("No high-volume returning RB candidate was verified "
+                            "from the uploaded slate and current observed data. "
+                            "This does not certify that no injury-driven role "
+                            "changes exist.")
             role_limits = (output_one.get("qb_selection_diagnostics") or {}).get(
                 "uncertain_running_back_exposures") or {}
             if role_limits:
