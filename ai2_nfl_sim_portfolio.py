@@ -10,6 +10,7 @@ from ai2_nfl_lineup import check_classic_lineup
 from ai2_nfl_role_evidence import player_opportunity_evidence
 from ai2_nfl_qb_audit import qb_and_partners
 from ai2_nfl_qb_counterfactual import quarterback_counterfactuals
+from ai2_nfl_stack_intelligence import score_stack_lift
 from ai2_nfl_correlation_guard import (opposing_pass_catcher_dst_pairs,
                                        opposing_dst_lineup_budget)
 from ai2_nfl_portfolio_risk import (
@@ -120,18 +121,18 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
         return (x - x.min()) / max(span, 1e-6)
 
     # Balanced entries favor mean and P90; premium entries emphasize ceiling.
-    stacked = np.array([
-        bool(qb_and_partners(item["candidate"]["players"])[1])
-        for item in scored], dtype=float)
-    # Only a modest preference, and primarily in premium GPP entries:
-    # simulation outcomes remain decisive, unstacked QB ceilings remain legal.
+    stack_lifts = np.array([
+        float(item.get("stack_lift",0.)) for item in scored], dtype=float)
+    # This is an actual conditional upper-tail association in simulated
+    # worlds, not a categorical bonus for simply having teammates.
+    # Simulated co-ceiling frequency is NOT historically verified DFS ROI.
     opposing_dst = np.array([
         bool(opposing_pass_catcher_dst_pairs(item["candidate"]["players"]))
         for item in scored], dtype=float)
     regular = (.65 * scaled(means) + .25 * scaled(p90) +
-               .10 * scaled(p99) + .08 * stacked - .35 * opposing_dst)
+               .10 * scaled(p99) + .02 * stack_lifts - .35 * opposing_dst)
     premium = (.15 * scaled(means) + .25 * scaled(p90) +
-               .60 * scaled(p99) + .14 * stacked - .45 * opposing_dst)
+               .60 * scaled(p99) + .12 * stack_lifts - .45 * opposing_dst)
     matrix = coo_matrix((data, (rows, cols)),
                         shape=(len(lows), 2 * n)).tocsr()
     result = milp(c=-np.concatenate((regular, premium)),
@@ -228,6 +229,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
         scored.append(dict(candidate=candidate, simulated_mean=float(scores.mean()),
                            simulated_p90=float(np.percentile(scores, 90)),
                            simulated_p99=float(np.percentile(scores, 99)),
+                           stack_lift=score_stack_lift(roster,index,matrix),
                            opposing_dst_conflicts=len(opposing_pass_catcher_dst_pairs(roster))))
     if not scored:
         raise ValueError("No simulated candidates available")
@@ -303,12 +305,11 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                               # Premium/upside gets a small, evidence-only
                               # QB/WR/TE stack preference, not a hard mandate.
                               (scored[i]["simulated_p99"] *
-                               (1.06 if qb_and_partners(scored[i]["candidate"]["players"])[1]
-                                else 1.0) -
+                               (1.0 + .06 * scored[i]["stack_lift"]) -
                                18.0 * bool(scored[i]["opposing_dst_conflicts"]))
                               if role == "upside" else
                               (scored[i]["simulated_mean"] +
-                               2.0 * bool(qb_and_partners(scored[i]["candidate"]["players"])[1]) -
+                               .35 * scored[i]["stack_lift"] -
                                14.0 * bool(scored[i]["opposing_dst_conflicts"])),
                               scored[i]["simulated_p90"]), reverse=True)
         selected_role = 0
@@ -445,6 +446,10 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             "opposing_dst_candidates_before_filter":sum(
                 bool(x["opposing_dst_conflicts"]) for x in all_scored),
             "max_shared_players":MAX_SHARED_PLAYERS,
+            "selected_lineup_stack_lift": {
+                str(i+1): float(x.get("stack_lift",0.))
+                for i,x in enumerate(chosen)
+            },
             "overall_max_exposure":max_exposure,
             "uncertain_running_back_exposures":{
                 str(p.get("Name", p["ID"])): {
@@ -493,6 +498,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                               "Same-team QB/WR-TE stack considered; modeled ceiling evaluated on shared simulated worlds"),
             "player_opportunity_evidence": evidence,
             "simulated_p90_per_1000": item["p90_per_1000"],
+            "simulated_qb_receiver_upper_tail_lift": item.get("stack_lift",0.),
             "opposing_pass_catchers_vs_dst": opposing_pass_catcher_dst_pairs(roster),
         }
     return sorted(chosen, key=lambda x: (x["contest_tier"] != "$3", -x["simulated_p99"]))
