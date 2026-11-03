@@ -16,6 +16,15 @@ def fixture():
                          carries=9, targets=3, rushing_yards=53,
                          rushing_tds=0, receptions=3,
                          receiving_yards=45, receiving_tds=0))
+    # Earlier lead rusher loses opportunity in the two games before the
+    # test slate; this is observable, but NOT proof he was injured.
+    for week in range(1, 6):
+        carries = 18 if week <= 3 else 3
+        rows.append(dict(season=2026, week=week,
+                         player_name="Competing Lead Runner", recent_team="LAR",
+                         position="RB", carries=carries, targets=2,
+                         rushing_yards=carries * 4, rushing_tds=0,
+                         receptions=1, receiving_yards=5, receiving_tds=0))
     # Singletary-like four-game role: one major increase, little else.
     for week, carries, yards in zip(range(2, 6), [2, 3, 17, 2], [5, 12, 55, 8]):
         rows.append(dict(season=2026, week=week, player_name="One Spike",
@@ -58,6 +67,8 @@ class PregameConsistencyTests(unittest.TestCase):
         self.assertEqual(results["x"]["Role gate"], "BLOCK")
         self.assertEqual(results["p"]["Role gate"], "NOT_LOW_SALARY")
         self.assertGreaterEqual(results["c"]["Meaningful opportunities"], 4)
+        self.assertIn("Competing Lead Runner: DECLINING OBSERVED ROLE",
+                      results["c"]["Same-position teammate pregame trends"])
 
     def test_does_not_use_target_week_outcomes_to_establish_prior_role(self):
         history, salary = fixture()
