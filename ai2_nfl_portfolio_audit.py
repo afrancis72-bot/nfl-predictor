@@ -26,6 +26,7 @@ def portfolio_audit_csv(ranked, *, seed):
         "Portfolio conflicted lineup cap", "All players",
         "Role-limited RBs", "Maximum RB role-risk appearances",
         "Overall maximum exposure", "Maximum shared players across two lineups",
+        "Simulated QB/WR-TE upper-tail lift", "Potential returning RB competition",
     ])
     writer.writeheader()
     for i, item in enumerate(ranked, 1):
@@ -60,5 +61,11 @@ def portfolio_audit_csv(ranked, *, seed):
                 for p in roster if uncertain_running_back_reason(p)),
             "Overall maximum exposure": f"{DEFAULT_MAX_EXPOSURE:.0%}",
             "Maximum shared players across two lineups": MAX_SHARED_PLAYERS,
+            "Simulated QB/WR-TE upper-tail lift": round(
+                float(item.get("stack_lift",0.)),4),
+            "Potential returning RB competition": "; ".join(
+                str(p.get("Name",p.get("ID"))) + ": " +
+                str(p.get("return_competition_reason"))
+                for p in roster if p.get("return_competition_reason")),
         })
     return buff.getvalue().encode("utf-8-sig")
