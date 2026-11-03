@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from portfolio_optimizer import PortfolioSettings, optimize_portfolio
+from ai2_pga_portfolio_scenarios import audit_portfolio_worlds
 
 STAT_LABELS = {
     "sg_approach": "Approach SG",
@@ -161,35 +162,42 @@ def rebuild_reviewed(result: dict, *, vetoes=(), locks=(), lineup_count=10,
         strategy=strategy,candidate_samples=15000,target_candidates=1100,
         candidate_pool_size=min(len(predictions),80),
         seed=int(seed if seed is not None else result["metadata"]["seed"]))
+    cuts=result.get("raw_cuts")
+    if cuts is not None:
+        cuts=np.asarray(cuts)
+        if cuts.shape!=draws.shape or cuts.dtype!=np.bool_:
+            raise ValueError("Review cut-event worlds do not match the original simulator.")
     portfolio,summary,exposure=optimize_portfolio(
-        predictions,settings,locks=sorted(locks),excludes=sorted(vetoes))
+        predictions,settings,locks=sorted(locks),excludes=sorted(vetoes),
+        scenario_scores=draws if cuts is not None else None,
+        scenario_cuts=cuts)
     if len(summary)!=lineup_count or bool(set(portfolio.player)&vetoes):
         raise ValueError("Reviewed portfolio could not meet lineup and veto constraints.")
     if (exposure["exposure_pct"] > 100*float(max_exposure)+1e-6).any():
         raise ValueError("Golfer exposure limit violated.")
     if not summary.salary.between(salary_floor,50000).all():
         raise ValueError("Lineup salary limits violated.")
-    lookup={name:i for i,name in enumerate(sim_players)}
-    cuts=result.get("raw_cuts")
     if cuts is not None:
-        cuts=np.asarray(cuts)
-        if cuts.shape!=draws.shape:
-            raise ValueError("Review cut-event worlds do not match the original simulator.")
-    worlds=[]
-    for no,g in portfolio.groupby("lineup"):
-        indices=[lookup[name] for name in g.player]
-        subset=draws[:,indices]
-        scores=subset.sum(axis=1)
-        row={"lineup":int(no),
-            "sim_lineup_mean":round(float(scores.mean()),2),
-            "sim_lineup_p10":round(float(np.quantile(scores,.10)),2),
-            "sim_lineup_p90":round(float(np.quantile(scores,.90)),2),
-            "sim_lineup_p95":round(float(np.quantile(scores,.95)),2),
-            "sim_lineup_p99":round(float(np.quantile(scores,.99)),2)}
-        if cuts is not None:
-            row["sim_lineup_6of6_pct"]=round(
-                100.*float(np.all(cuts[:,indices],axis=1).mean()),2)
-        worlds.append(row)
-    summary=summary.merge(pd.DataFrame(worlds),on="lineup",how="left",validate="one_to_one")
+        joint_lines,portfolio_audit=audit_portfolio_worlds(
+            portfolio,predictions,draws,cuts,strategy=strategy)
+        summary=summary.merge(joint_lines,on="lineup",how="left",validate="one_to_one")
+    else:
+        # Older research fixtures did not preserve the made-cut event matrix.
+        # Their audits remain incomplete rather than inventing 6/6 outcomes.
+        lookup={name:i for i,name in enumerate(sim_players)}
+        worlds=[]
+        for no,g in portfolio.groupby("lineup"):
+            scores=draws[:,[lookup[name] for name in g.player]].sum(axis=1)
+            worlds.append({
+                "lineup":int(no),
+                "sim_lineup_mean":round(float(scores.mean()),2),
+                "sim_lineup_p10":round(float(np.quantile(scores,.10)),2),
+                "sim_lineup_p90":round(float(np.quantile(scores,.90)),2),
+                "sim_lineup_p95":round(float(np.quantile(scores,.95)),2),
+                "sim_lineup_p99":round(float(np.quantile(scores,.99)),2),
+            })
+        summary=summary.merge(pd.DataFrame(worlds),on="lineup",how="left",validate="one_to_one")
+        portfolio_audit=None
     return {"lineups":portfolio,"summary":summary,"exposure":exposure,
+            "portfolio_audit":portfolio_audit,
             "vetoes":sorted(vetoes),"locks":sorted(locks)}
