@@ -60,7 +60,7 @@ class StatFirstPropRegression(unittest.TestCase):
         self.assertEqual(row["Model non-TD DK"],12.0)
         self.assertEqual(row["Model expected TD DK"],2.10)
         self.assertEqual(row["Model mean DK"],14.10)
-        self.assertEqual(row["Model chance 1+ scoring TD %"],35.0)
+        self.assertEqual(row["Model chance 1+ TD involvement %"],35.0)
         self.assertEqual(row["Model chance 10+ DK without TD %"],100.0)
 
     def test_inconsistent_fantasy_points_are_rejected(self):
