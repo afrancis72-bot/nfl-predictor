@@ -22,7 +22,8 @@ def deployed_build_identity():
              "ai2_nfl_correlation_guard.py", "ai2_nfl_portfolio_audit.py",
              "ai2_nfl_portfolio_risk.py", "ai2_nfl_role_intelligence.py",
              "ai2_nfl_stack_intelligence.py", "ai2_nfl_model_pool.py",
-             "ai2_nfl_auto_intelligence.py", "dfs_stats_engine.py")
+             "ai2_nfl_auto_intelligence.py", "dfs_stats_engine.py",
+             "ai2_nfl_pregame_consistency.py", "ai2_nfl_input_integrity.py")
     digest = hashlib.sha256()
     for name in paths:
         path = root / name
