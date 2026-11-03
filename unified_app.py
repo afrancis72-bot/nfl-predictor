@@ -172,7 +172,7 @@ else:
         import pandas as _ai2_pd
 
         st.caption("NFL Classic · Upload DraftKings salaries, then select 15, 20, 50, or 150 lineups. No projections upload required.")
-        st.caption("NFL release 2026-11-03 • QB stack search + DST/opposing receiver exposure guard + restorable simulation audit • human approval required")
+        st.caption("NFL release 2026-11-03 • 28% total exposure • 12% capped limited-role RBs • maximum 6 shared players • DST correlation guard • human approval required")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
         saved_one = get_upload("NFL", "DraftKings salaries")
         if saved_one:
@@ -259,6 +259,20 @@ else:
             st.caption("Roster-ID CSV contains player IDs, not an official contest-entry template. Verify the DraftKings import format.")
 
             st.subheader("Reports & diagnostics")
+            st.caption("NFL Classic portfolio risk: maximum 28% overall player exposure "
+                       "(14 of 50), 12% for RBs with sourced limited-role evidence "
+                       "(6 of 50), and no two lineups sharing more than six players. "
+                       "These limits are diversification controls, not guarantees of "
+                       "better projections or winning outcomes.")
+            role_limits = (output_one.get("qb_selection_diagnostics") or {}).get(
+                "uncertain_running_back_exposures") or {}
+            if role_limits:
+                st.subheader("Limited-role running back exposure review")
+                st.dataframe(_ai2_pd.DataFrame([
+                    {"Player": name, "Actual lineups": info["lineups"],
+                     "Exposure cap": info["cap"], "Reason": info["reason"]}
+                    for name,info in sorted(role_limits.items())
+                ]), hide_index=True, use_container_width=True)
             st.caption("Official NFL builds use the same deployed source shown above; "
                        "the code fingerprint changes with the live optimizer.")
             audit_bytes = portfolio_audit_csv(ranked, seed=int(seed_one))
