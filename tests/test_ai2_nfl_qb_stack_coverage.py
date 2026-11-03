@@ -25,7 +25,7 @@ def player(ident,pos,team,salary,proj=12):
 def build_fixture():
     players=[]
     for team,proj in (("A",20),("B",17),("C",15)):
-        players.append(player("QB"+team,"QB",team,7000,proj))
+        players.append(player("QB"+team,"QB",team,7100,proj))
     players.extend(player("RB"+str(i),"RB","R"+str(i),6500,13)
                    for i in range(10))
     for team in ("A","B","C","OTHER"):
