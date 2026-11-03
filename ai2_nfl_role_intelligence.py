@@ -11,8 +11,8 @@ import pandas as pd
 from ai2_nfl_matchups import canonical_team
 from ai2_nfl_auto_baselines import _norm_name
 
-ABSENT = {"IR", "INACTIVE", "PUP", "NFI", "SUSPENDED", "O", "OUT"}
-UNCERTAIN = {"Q", "QUESTIONABLE", "", "ACTIVE", "HEALTHY"}
+ABSENT = {"IR", "INACTIVE", "PUP", "NFI", "SUSPENDED"}
+UNCERTAIN = {"Q", "QUESTIONABLE", "", "ACTIVE", "HEALTHY", "O", "OUT"}
 
 
 def returning_rb_competition(baselines, raw_rates, *, season, week):
@@ -61,7 +61,16 @@ def returning_rb_competition(baselines, raw_rates, *, season, week):
         status = str(item.get("current_status") or "").strip().upper()
         if status in ABSENT or status not in UNCERTAIN:
             continue
+        # An OUT designation from a generic undated NFL.com injury page
+        # might be for the *previous* game. It is not treated as clearance
+        # to play, but cannot alone eliminate return uncertainty for the
+        # next slate. Keep a conservative teammate exposure watch until
+        # an explicitly target-week designation is independently checked.
+        status_note = ("OUT designation; report's target week not independently verified"
+                       if status in {"OUT","O"} else
+                       "Current status does not verify game-day availability")
         watched.append({
+            "status_note":status_note,
             "returning_player":str(item["Name"]),
             "returning_player_id":str(item["ID"]),
             "team":team,"current_status":status or "NOT_DESIGNATED",
@@ -69,7 +78,7 @@ def returning_rb_competition(baselines, raw_rates, *, season, week):
             "observed_carries_pg":round(carries,2),"observed_games":games,
             "risk_level":"REENTRY_UNCONFIRMED",
             "source":"nflverse current-season pregame rushing usage + DK/official injury designation",
-            "interpretation":"Potential returning high-volume teammate; do not assume prior backup workload persists",
+            "interpretation":"Potential returning high-volume teammate; do not assume prior backup workload persists or that he is active",
         })
     risk = {}
     for watch in watched:
