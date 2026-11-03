@@ -37,8 +37,15 @@ class RBReturnWatch(unittest.TestCase):
             "return_competition_reason":"Breece Hall return unconfirmed"}
         self.assertEqual(maximum_player_appearances(rb,50,.28),4)
 
-    def test_confirmed_out_not_assumed_returned(self):
+    def test_out_on_undated_injury_page_is_a_watch_not_clearance(self):
         baselines,rates=self.base(veteran_status="OUT")
+        risk,watch=returning_rb_competition(baselines,rates,season=2026,week=9)
+        self.assertEqual(len(watch),1)
+        self.assertIn("not independently verified",watch[0]["status_note"])
+        self.assertIn("allen",risk)
+
+    def test_ir_status_does_not_create_reentry_watch(self):
+        baselines,rates=self.base(veteran_status="IR")
         risk,watch=returning_rb_competition(baselines,rates,season=2026,week=9)
         self.assertEqual((risk,watch),({},[]))
 
