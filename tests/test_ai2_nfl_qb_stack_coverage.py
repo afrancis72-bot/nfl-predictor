@@ -87,7 +87,7 @@ class QBStackLiveTests(unittest.TestCase):
             player(qb_id,"QB",qb_team,7000),
             player("RB1","RB","R1",6500),
             player("RB2","RB","R2",6500),
-            player("WA","WR","A",5500),
+            player("WA","WR","A",5600),
             player("WX","WR","X",5500),
             player("WY","WR","Y",5500),
             player("TE","TE","T",4500),
@@ -98,9 +98,7 @@ class QBStackLiveTests(unittest.TestCase):
     def _run_two(self,qb_bonus):
         stacked=self._roster("QBA","A")
         standalone=self._roster("QBB","B")
-        self.assertEqual(check_classic_lineup(stacked,salary_floor=49600),
-                         ["Salary outside configured floor/cap or nonpositive salary"]
-                         if False else [])
+        self.assertEqual(check_classic_lineup(stacked,salary_floor=49600),[])
         self.assertEqual(check_classic_lineup(standalone,salary_floor=49600),[])
         all_players={str(p["ID"]):p for roster in (stacked,standalone)
                      for p in roster}
@@ -110,8 +108,8 @@ class QBStackLiveTests(unittest.TestCase):
         matrix[:,qbi["QBB"]]+=qb_bonus
         notes={}
         out=select_simulated_portfolio([
-            {"players":stacked,"salary":49500},
-            {"players":standalone,"salary":49500}
+            {"players":stacked,"salary":49600},
+            {"players":standalone,"salary":49600}
             ],frame,matrix,count=1,max_exposure=1,premium_count=1,
             upside_share=1,require_opportunity=True,diagnostics=notes)
         return out[0],notes
