@@ -10,6 +10,7 @@ from props_data import fetch_weekly, make_rates
 from ai2_nfl_workload import redistribute_opportunities
 from ai2_nfl_matchup_diagnostics import defensive_allowance
 from ai2_nfl_input_integrity import player_role_trends
+from ai2_nfl_pregame_consistency import build_pregame_role_evidence
 from ai2_nfl_team_environment import predict_team_environment
 from ai2_nfl_snap_roles import fetch_snap_counts, predict_snap_roles
 from ai2_nfl_injury_context import official_off_slate_out, estimate_injury_presence
@@ -64,6 +65,11 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
     # Observable pregame usage changes must be visible in the review, not
     # silently confused with independent current-week role verification.
     role_trends = player_role_trends(history, salary_rows, season, week)
+    # This runs BEFORE the simulation and before any candidate-generation.
+    # Only source games preceding the slate are considered; no Sunday result
+    # can promote an unreliable cheap player after the fact.
+    pregame_role_evidence = build_pregame_role_evidence(
+        history, salary_rows, season, week)
     statuses = {(str(row["Name"]), str(row.get("Team", ""))): str(row["current_status"])
                 for _, row in baseline.iterrows()}
     adjusted_rates, opportunity_changes = redistribute_opportunities(rates, statuses)
@@ -151,6 +157,7 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         "players": baseline, "raw_rates": rates, "adjusted_rates": adjusted_rates,
         "opponent_allowances": opponent_allowances, "opponent_history_issue": opponent_issue,
         "opportunity_changes": opportunity_changes, "role_trends": role_trends,
+        "pregame_role_evidence": pregame_role_evidence,
         "team_environment": team_environment,
         "snap_profiles": snap_profiles,
         "snap_issue": snap_issue,
