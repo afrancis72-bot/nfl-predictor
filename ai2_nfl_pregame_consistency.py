@@ -64,6 +64,65 @@ def build_pregame_role_evidence(history, salary_rows, season, week):
     team_games = {}
     for team, group in h.groupby("_team"):
         team_games[str(team)] = sorted(set(int(w) for w in group["week"].dropna()))
+    # Same-position competition is observed from the same prior team games.
+    # A teammate missing a recent box score is an observed absence, NOT proof
+    # of injury or clearance. Never substitute this for official game status.
+    group_by_team_position = defaultdict(list)
+    for group in groups.values():
+        for r in group:
+            group_by_team_position[(r["_team"], r["_position"])].append(r)
+
+    def teammate_context(team, position, person_key):
+        weeks = team_games.get(team, [])[-5:]
+        if len(weeks) < 3:
+            return ""
+        last_two = set(weeks[-2:])
+        earlier = set(weeks[:-2])
+        details = []
+        peer_names = {}
+        for r in group_by_team_position.get((team, position), []):
+            key = r["_name"]
+            if key == person_key or int(r["week"]) not in weeks:
+                continue
+            peer_names.setdefault(key, r["player_name"])
+        for peer, name in peer_names.items():
+            games = [r for r in group_by_team_position[(team, position)]
+                     if r["_name"] == peer and int(r["week"]) in weeks]
+            def count_opportunities(r):
+                c = _numeric(r.get("carries"))
+                t = _numeric(r.get("targets"))
+                if t is None or (position == "RB" and c is None):
+                    return None
+                return ((c or 0) + t) if position == "RB" else t
+            before = [count_opportunities(r) for r in games
+                      if int(r["week"]) in earlier]
+            after = [count_opportunities(r) for r in games
+                     if int(r["week"]) in last_two]
+            before = [v for v in before if v is not None]
+            after = [v for v in after if v is not None]
+            if not before:
+                continue
+            first_avg = float(np.mean(before))
+            recent_avg = float(np.mean(after)) if after else None
+            # Only surface materially involved peers; omit a backup with
+            # negligible prior opportunity so the report remains focused.
+            if first_avg < (4.0 if position == "RB" else 3.0):
+                continue
+            if not after:
+                trend = "NO RECENT RECORDED APPEARANCE"
+            elif recent_avg < .60 * first_avg:
+                trend = "DECLINING OBSERVED ROLE"
+            elif recent_avg > 1.45 * first_avg:
+                trend = "INCREASING OBSERVED ROLE"
+            else:
+                trend = "SIMILAR OBSERVED ROLE"
+            if trend != "SIMILAR OBSERVED ROLE":
+                details.append((first_avg, f"{name}: {trend} "
+                                f"({first_avg:.1f} earlier to "
+                                f"{recent_avg:.1f} recent)" if recent_avg is not None
+                                else f"{name}: {trend} ({first_avg:.1f} prior opportunities/game)"))
+        return "; ".join(x[1] for x in sorted(details, reverse=True)[:3])
+
     findings = {}
     for player in salary_rows:
         position = str(player.get("Position") or "").strip().upper().replace("D/ST", "DST")
@@ -147,6 +206,8 @@ def build_pregame_role_evidence(history, salary_rows, season, week):
                                                  for v in observed],
             "Recent individual weeks": seen_weeks[-5:],
             "Ambiguous historical identity": ambiguous,
+            "Same-position teammate pregame trends": teammate_context(
+                team, position, _norm_name(name)),
             "Price tier evaluated": below,
         }
     return findings
@@ -195,6 +256,7 @@ def historical_value_replay(history, historical_salary_rows, season, target_week
             "Pregame rationale": evidence["Role rationale"],
             "Prior meaningful games": evidence["Meaningful opportunities"],
             "Prior 10+ DK games": evidence["Prior games with 10+ partial DK points"],
+            "Pregame teammate role changes": evidence["Same-position teammate pregame trends"],
             "Actual partial DK points": score,
             "Actual points per $1K": round(ratio, 2) if ratio is not None else None,
             "Value breakout": breakout,
