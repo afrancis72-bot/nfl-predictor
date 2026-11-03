@@ -3,6 +3,10 @@ import csv
 import io
 from ai2_nfl_qb_audit import qb_and_partners
 from ai2_nfl_correlation_guard import opposing_pass_catcher_dst_pairs, opposing_dst_lineup_budget
+from ai2_nfl_portfolio_risk import (
+    uncertain_running_back_reason, maximum_player_appearances,
+    DEFAULT_MAX_EXPOSURE, MAX_SHARED_PLAYERS,
+)
 
 
 def portfolio_audit_csv(ranked, *, seed):
@@ -20,6 +24,8 @@ def portfolio_audit_csv(ranked, *, seed):
         "QB", "QB team", "QB passing teammates", "DST", "DST team",
         "Opposing pass catchers vs DST", "Pass catcher/DST conflicts",
         "Portfolio conflicted lineup cap", "All players",
+        "Role-limited RBs", "Maximum RB role-risk appearances",
+        "Overall maximum exposure", "Maximum shared players across two lineups",
     ])
     writer.writeheader()
     for i, item in enumerate(ranked, 1):
@@ -46,5 +52,13 @@ def portfolio_audit_csv(ranked, *, seed):
             "Portfolio conflicted lineup cap": opposing_dst_lineup_budget(count),
             "All players": " | ".join(str(p.get("Name", p.get("ID", "")))
                                        for p in roster),
+            "Role-limited RBs": ", ".join(
+                str(p.get("Name", p.get("ID", ""))) for p in roster
+                if uncertain_running_back_reason(p)),
+            "Maximum RB role-risk appearances": ", ".join(
+                f"{p.get('Name',p.get('ID'))}: {maximum_player_appearances(p,count,DEFAULT_MAX_EXPOSURE)}/{count}"
+                for p in roster if uncertain_running_back_reason(p)),
+            "Overall maximum exposure": f"{DEFAULT_MAX_EXPOSURE:.0%}",
+            "Maximum shared players across two lineups": MAX_SHARED_PLAYERS,
         })
     return buff.getvalue().encode("utf-8-sig")
