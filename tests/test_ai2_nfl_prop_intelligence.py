@@ -10,7 +10,9 @@ class StatFirstPropRegression(unittest.TestCase):
         n=7000
         # Model 6 rushing yards per carry; ten carries each simulation
         rushing=np.arange(n,dtype=float)%140
-        points=0.1*rushing
+        # Two receptions and the 100-yard rushing bonus must reconcile
+        # to the SAME points worlds.
+        points=2.0+0.1*rushing+3.0*(rushing>=100)
         players=pd.DataFrame([{"ID":"rb","Name":"Sample Runner","Position":"RB",
                                 "TeamAbbrev":"LAR","Salary":5100}])
         stats={"Sample Runner":{
@@ -34,6 +36,45 @@ class StatFirstPropRegression(unittest.TestCase):
         self.assertGreater(row["Rushing yards model over %"],50)
         self.assertEqual(row["Model mean DK"],round(float(points.mean()),2))
         self.assertIn("estimated unit EV",row)
+
+    def test_rb_total_yards_and_touchdown_expected_points_not_double_counted(self):
+        n=7000
+        rushing=np.full(n,65.)
+        receiving=np.full(n,25.)
+        catches=np.full(n,3.)
+        td=np.zeros(n)
+        td[:2450]=1.
+        # 65 rush + 25 receiving = 90 total; plus 3 receptions;
+        # 35% TD chance creates 2.10 expected extra fantasy points.
+        points=0.1*(rushing+receiving)+catches+6.*td
+        player=pd.DataFrame([{"ID":"rb","Name":"Repeatable Runner",
+                               "Position":"RB","TeamAbbrev":"LAR",
+                               "Salary":5100}])
+        stats={"Repeatable Runner":{
+            "carries":np.full(n,13.),
+            "rushing_yards":rushing,"targets":np.full(n,4.),
+            "receptions":catches,"receiving_yards":receiving,
+            "rushing_tds":td,"receiving_tds":np.zeros(n)}}
+        row=player_prop_decisions(player,stats,points.reshape(-1,1))[0]
+        self.assertEqual(row["Total scrimmage yards projection"],90.0)
+        self.assertEqual(row["Model non-TD DK"],12.0)
+        self.assertEqual(row["Model expected TD DK"],2.10)
+        self.assertEqual(row["Model mean DK"],14.10)
+        self.assertEqual(row["Model chance 1+ scoring TD %"],35.0)
+        self.assertEqual(row["Model chance 10+ DK without TD %"],100.0)
+
+    def test_inconsistent_fantasy_points_are_rejected(self):
+        n=100
+        player=pd.DataFrame([{"ID":"rb","Name":"Broken Runner",
+                               "Position":"RB","TeamAbbrev":"NYG",
+                               "Salary":4600}])
+        stats={"Broken Runner":{
+            "carries":np.ones(n),"rushing_yards":np.full(n,65.),
+            "targets":np.ones(n),"receptions":np.ones(n),
+            "receiving_yards":np.zeros(n),"rushing_tds":np.zeros(n),
+            "receiving_tds":np.zeros(n)}}
+        with self.assertRaisesRegex(ValueError,"does not reconcile"):
+            player_prop_decisions(player,stats,np.full((n,1),1.))
 
     def test_no_market_line_means_no_real_over_claim(self):
         n=7000
