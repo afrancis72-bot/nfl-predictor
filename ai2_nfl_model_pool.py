@@ -82,10 +82,14 @@ def create_observed_model_pool(research):
         # enter the football simulator; inflated simulated targets cannot
         # retroactively make a one-game breakout sustainable.
         evidence = pregame_role.get(ident)
-        if (pos in {"RB", "WR", "TE"} and
-                evidence is not None and evidence.get("Role gate") == "BLOCK"):
+        # Fail closed for *missing* individual evidence too. An unnamed
+        # backup must not bypass the gate because one CSV ID failed to join.
+        from ai2_nfl_pregame_consistency import LOW_PRICE
+        cheap = pos in LOW_PRICE and salary < LOW_PRICE[pos]
+        if cheap and (not evidence or evidence.get("Role gate") != "PASS"):
             excluded.append((name, "prebuild recurring-opportunity gate: " +
-                            str(evidence.get("Role rationale", "no evidence"))))
+                            str((evidence or {}).get("Role rationale",
+                                                   "No matching individual pregame usage evidence"))))
             continue
         key = (_norm_name(name), team, pos)
         r = lookup.get(key)
