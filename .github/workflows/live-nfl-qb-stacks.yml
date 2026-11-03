@@ -6,6 +6,8 @@ on:
       - 'ai2_nfl_sim_portfolio.py'
       - 'ai2_nfl_qb_audit.py'
       - 'ai2_nfl_oneclick.py'
+      - 'ai2_nfl_pregame_consistency.py'
+      - 'tests/test_ai2_nfl_pregame_consistency.py'
       - 'ai2_nfl_correlation_guard.py'
       - 'ai2_nfl_portfolio_audit.py'
       - 'ai2_nfl_portfolio_risk.py'
@@ -29,6 +31,8 @@ on:
       - 'ai2_nfl_sim_portfolio.py'
       - 'ai2_nfl_qb_audit.py'
       - 'ai2_nfl_oneclick.py'
+      - 'ai2_nfl_pregame_consistency.py'
+      - 'tests/test_ai2_nfl_pregame_consistency.py'
       - 'ai2_nfl_correlation_guard.py'
       - 'ai2_nfl_portfolio_audit.py'
       - 'ai2_nfl_portfolio_risk.py'
@@ -57,7 +61,7 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements.txt
       - name: Compile actual unified NFL production modules
-        run: python -m compileall -q unified_app.py ai2_build_identity.py ai2_nfl_portfolio_audit.py ai2_nfl_portfolio_risk.py ai2_nfl_role_intelligence.py ai2_nfl_stack_intelligence.py ai2_nfl_model_pool.py ai2_nfl_input_integrity.py ai2_nfl_correlation_guard.py ai2_nfl_candidate_builder.py ai2_nfl_sim_portfolio.py ai2_nfl_qb_audit.py ai2_nfl_oneclick.py
+        run: python -m compileall -q unified_app.py ai2_build_identity.py ai2_nfl_portfolio_audit.py ai2_nfl_portfolio_risk.py ai2_nfl_role_intelligence.py ai2_nfl_stack_intelligence.py ai2_nfl_pregame_consistency.py ai2_nfl_model_pool.py ai2_nfl_input_integrity.py ai2_nfl_correlation_guard.py ai2_nfl_candidate_builder.py ai2_nfl_sim_portfolio.py ai2_nfl_qb_audit.py ai2_nfl_oneclick.py
       - name: Test exact QB candidate and stacking regressions
         run: python -m unittest discover -s tests -p test_ai2_nfl_qb_stack_regression.py -v
       - name: Test live DST correlation guard, downloadable audit and build identity
@@ -66,5 +70,7 @@ jobs:
         run: python -m unittest discover -s tests -p test_ai2_nfl_portfolio_risk.py -v
       - name: Test observed returning RB competition and same-world QB stack lift
         run: python -m unittest discover -s tests -p test_ai2_nfl_role_intelligence.py -v && python -m unittest discover -s tests -p test_ai2_nfl_stack_intelligence.py -v
+      - name: Test historical NFL low-price consistency and hindsight leakage
+        run: python -m unittest discover -s tests -p test_ai2_nfl_pregame_consistency.py -v
       - name: Test existing candidate and simulated portfolio safety
         run: python -m unittest discover -s tests -p test_ai2_nfl_candidate_builder.py -v && python -m unittest discover -s tests -p test_ai2_nfl_sim_portfolio.py -v
