@@ -19,7 +19,10 @@ def deployed_build_identity():
     root = Path(__file__).resolve().parent
     paths = ("unified_app.py", "ai2_nfl_oneclick.py",
              "ai2_nfl_candidate_builder.py", "ai2_nfl_sim_portfolio.py",
-             "ai2_nfl_correlation_guard.py", "ai2_nfl_portfolio_audit.py")
+             "ai2_nfl_correlation_guard.py", "ai2_nfl_portfolio_audit.py",
+             "ai2_nfl_portfolio_risk.py", "ai2_nfl_role_intelligence.py",
+             "ai2_nfl_stack_intelligence.py", "ai2_nfl_model_pool.py",
+             "ai2_nfl_auto_intelligence.py", "dfs_stats_engine.py")
     digest = hashlib.sha256()
     for name in paths:
         path = root / name
