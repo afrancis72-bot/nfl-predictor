@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from ai2_nfl_lineup import check_classic_lineup
 from ai2_nfl_role_evidence import player_opportunity_evidence
+from ai2_nfl_qb_audit import qb_and_partners
 
 
 from collections import defaultdict
@@ -94,8 +95,13 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
         return (x - x.min()) / max(span, 1e-6)
 
     # Balanced entries favor mean and P90; premium entries emphasize ceiling.
-    regular = .65 * scaled(means) + .25 * scaled(p90) + .10 * scaled(p99)
-    premium = .15 * scaled(means) + .25 * scaled(p90) + .60 * scaled(p99)
+    stacked = np.array([
+        bool(qb_and_partners(item["candidate"]["players"])[1])
+        for item in scored], dtype=float)
+    # Only a modest preference, and primarily in premium GPP entries:
+    # simulation outcomes remain decisive, unstacked QB ceilings remain legal.
+    regular = .65 * scaled(means) + .25 * scaled(p90) + .10 * scaled(p99) + .012 * stacked
+    premium = .15 * scaled(means) + .25 * scaled(p90) + .60 * scaled(p99) + .06 * stacked
     matrix = coo_matrix((data, (rows, cols)),
                         shape=(len(lows), 2 * n)).tocsr()
     result = milp(c=-np.concatenate((regular, premium)),
@@ -138,7 +144,8 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                                premium_count=5, premium_value_max_appearances=1,
                                min_wr_salary=4000, min_rb_salary=4500,
                                require_opportunity=True, p90_efficiency_retention=0.95,
-                               premium_excluded_ids=frozenset()):
+                               premium_excluded_ids=frozenset(),
+                               diagnostics=None):
     premium_excluded_ids = frozenset(str(x) for x in premium_excluded_ids)
     if not 1 <= count <= 150 or not 0 < max_exposure <= 1 or not 0 <= upside_share <= 1:
         raise ValueError("Invalid portfolio parameters")
@@ -184,17 +191,66 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                            simulated_p99=float(np.percentile(scores, 99))))
     if not scored:
         raise ValueError("No simulated candidates available")
+    by_qb_before=Counter()
+    best_qb_p99={}
+    for item in scored:
+        qb,_=qb_and_partners(item["candidate"]["players"])
+        if qb is not None:
+            ident=str(qb["ID"])
+            by_qb_before[ident]+=1
+            best_qb_p99[ident]=max(best_qb_p99.get(ident,float("-inf")),
+                                   item["simulated_p99"])
     best_p90_efficiency = max(x["simulated_p90"] / (float(x["candidate"]["salary"]) / 1000) for x in scored)
     efficiency_floor = best_p90_efficiency * p90_efficiency_retention
-    scored = [x for x in scored if x["simulated_p90"] / (float(x["candidate"]["salary"]) / 1000) >= efficiency_floor]
+    def efficient(item):
+        return item["simulated_p90"] / (float(item["candidate"]["salary"]) / 1000)
+    primary=[x for x in scored if efficient(x)>=efficiency_floor]
+    # A single global P90/$1K threshold can eliminate every QB stack for a
+    # viable quarterback. Preserve up to 3 evidence-backed stacked alternatives
+    # PER QB only when close to the global efficiency floor (within 6%).
+    # Never rescue an unstacked or low-efficiency punt just for QB exposure.
+    retained_qbs={str(qb["ID"]) for item in primary
+                  for qb,partners in [qb_and_partners(item["candidate"]["players"])]
+                  if qb is not None and partners}
+    rescued=[]
+    pool_by_qb={}
+    for item in scored:
+        qb,partners=qb_and_partners(item["candidate"]["players"])
+        if (qb is not None and partners and str(qb["ID"]) not in retained_qbs
+                and efficient(item)>=efficiency_floor*.94):
+            pool_by_qb.setdefault(str(qb["ID"]),[]).append(item)
+    for qb_id,items in pool_by_qb.items():
+        rescued.extend(sorted(items,key=lambda item:(
+            item["simulated_p99"],item["simulated_p90"]),reverse=True)[:3])
+    scored=primary+rescued
+    after=Counter()
+    for item in scored:
+        qb,_=qb_and_partners(item["candidate"]["players"])
+        if qb is not None:
+            after[str(qb["ID"])]+=1
+    if diagnostics is not None:
+        diagnostics.update({
+            "scored_qbs_before_efficiency":dict(by_qb_before),
+            "scored_qbs_after_efficiency":dict(after),
+            "qb_best_simulated_p99":best_qb_p99,
+            "global_p90_efficiency_floor":round(float(efficiency_floor),4),
+            "rescued_stacked_candidates":len(rescued),
+            "simulated_candidate_count":sum(by_qb_before.values()),
+            "retained_candidate_count":len(scored),
+        })
     limit = max(1, int(np.floor(count * max_exposure)))
     chosen, exposures, used = [], Counter(), set()
     for role, quota in (("upside", round(count * upside_share)),
                         ("balanced", count-round(count * upside_share))):
         ordering = sorted(range(len(scored)),
-                          key=lambda i: (scored[i]["simulated_p99"] if role == "upside"
-                                         else scored[i]["simulated_mean"],
-                                         scored[i]["simulated_p90"]), reverse=True)
+                          key=lambda i: (
+                              # Premium/upside gets a small, evidence-only
+                              # QB/WR/TE stack preference, not a hard mandate.
+                              scored[i]["simulated_p99"] *
+                              (1.025 if qb_and_partners(scored[i]["candidate"]["players"])[1]
+                               else 1.0)
+                              if role == "upside" else scored[i]["simulated_mean"],
+                              scored[i]["simulated_p90"]), reverse=True)
         selected_role = 0
         for i in ordering:
             if selected_role >= quota:
@@ -285,10 +341,8 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
     for i, item in enumerate(chosen):
         item["contest_tier"] = "$3" if i in premium_ids else "$0.50"
         roster = item["candidate"]["players"]
-        qb = next(p for p in roster if str(p.get("Position", "")).upper() == "QB")
-        teammates = [p.get("Name", str(p["ID"])) for p in roster
-                     if p is not qb and p.get("TeamAbbrev") == qb.get("TeamAbbrev")
-                     and p.get("Position") in {"WR", "TE", "RB"}]
+        qb, direct_receivers=qb_and_partners(roster)
+        teammates=[p.get("Name",str(p["ID"])) for p in direct_receivers]
         evidence = {}
         for p in roster:
             good, why = player_opportunity_evidence(p, value_ceiling=value_salary_ceiling)
@@ -306,9 +360,11 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                 "These statistics explain modeled opportunity, not a guaranteed outcome."
             )
         item["selection_explanation"] = {
-            "contest_assignment": "Ranked by simulated P99, then P90 and mean; restricted low-salary exposure" if i in premium_ids else "Selected by portfolio simulation and exposure constraints",
+            "contest_assignment": "Simulated P99/P90 and mean with modest receiving-stack preference; restricted low-salary exposure" if i in premium_ids else "Selected by portfolio simulation and exposure constraints",
             "qb_receiving_teammates": teammates,
-            "qb_stack_note": "No teammate receiving stack" if not teammates else "Same-team QB receiving correlation; strength not independently certified",
+            "qb_stack_note": ("No direct QB/WR-TE receiving stack; standalone QB ceiling was allowed"
+                              if not teammates else
+                              "Same-team QB/WR-TE stack considered; modeled ceiling evaluated on shared simulated worlds"),
             "player_opportunity_evidence": evidence,
             "simulated_p90_per_1000": item["p90_per_1000"]
         }

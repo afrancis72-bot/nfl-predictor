@@ -15,6 +15,7 @@ from ai2_nfl_simulation_adapter import run_verified_stat_simulation
 from ai2_nfl_player_audit import summarize_simulated_players, require_reconciled_player_audit
 from ai2_nfl_candidate_builder import build_classic_candidates
 from ai2_nfl_sim_portfolio import select_simulated_portfolio
+from ai2_nfl_qb_audit import qb_selection_report
 from ai2_nfl_export import export_classic_candidates
 from ai2_nfl_opponent_intelligence import make_opponent_report, report_summary
 from ai2_nfl_input_integrity import input_lineage_rows, lineup_role_warnings
@@ -132,7 +133,9 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
             f"Only {len(candidates)} legal candidates under role and salary rules. "
             "No partial portfolio exported.")
     errors = []
+    qb_selection_diagnostics = {}
     for efficiency in (0.95, 0.90, 0.85):
+        qb_selection_diagnostics.clear()
         try:
             ranked = select_simulated_portfolio(
                 candidates, players, draws, count=count,
@@ -141,12 +144,26 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
                 value_salary_ceiling=5000, value_max_appearances=(2 if count <= 20 else max(2, int(count*0.35))),
                 premium_value_max_appearances=1, require_opportunity=True,
                 p90_efficiency_retention=efficiency,
-                premium_excluded_ids=premium_excluded_ids)
+                premium_excluded_ids=premium_excluded_ids,
+                diagnostics=qb_selection_diagnostics)
             break
         except ValueError as exc:
             errors.append(str(exc))
     else:
         raise ValueError("The model could not produce qualifying lineups: " + errors[-1])
+    # Explain every verified QB's journey from salary slate / eligible WR-TE
+    # partners to legal candidates, simulated P90 filter, and FINAL exposure.
+    # This report is a diagnosis, not a request to force a particular QB.
+    qb_audit=qb_selection_report(
+        prepared,candidates,ranked,diagnostics=qb_selection_diagnostics,
+        team_environment=research.get("team_environment"))
+    qb_missing_stacks=[
+        r for r in qb_audit
+        if r["Eligible passing partners"] and not r["Stacked QB candidates"]]
+    qb_selected_stacks=sum(r["Final QB/WR-TE stacks"] for r in qb_audit)
+    qb_selection_diagnostics["final_stacked_lineups"]=qb_selected_stacks
+    qb_selection_diagnostics["final_unstacked_lineups"]=len(ranked)-qb_selected_stacks
+    qb_selection_diagnostics["qb_with_verified_receiver_but_no_candidate_stack"]=len(qb_missing_stacks)
     # Display the exact official injury source and practice participation
     # inspected during this build. Neither an empty game-status cell nor a
     # full practice automatically certifies a player's Sunday workload.
@@ -226,6 +243,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "input_lineage": input_lineage_rows(research),
         "role_trends": role_trends,
         "lineup_role_warnings": lineup_role_warnings(ranked, role_trends),
+        "qb_selection_audit": qb_audit,
+        "qb_selection_diagnostics": qb_selection_diagnostics,
         "summary": summary, "ranked": ranked,
         "csv": export_classic_candidates([x["candidate"] for x in ranked]),
         "audit": audit, "seed": seed, "pregame_report": pregame_report,

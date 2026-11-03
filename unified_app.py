@@ -163,6 +163,7 @@ else:
         import pandas as _ai2_pd
 
         st.caption("NFL Classic · Upload DraftKings salaries, then select 15, 20, 50, or 150 lineups. No projections upload required.")
+        st.caption("NFL release 2026-11-03 • QB/WR-TE GUIDED CANDIDATES & STACK COVERAGE AUDIT • approved rosters unchanged")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
         saved_one = get_upload("NFL", "DraftKings salaries")
         if saved_one:
@@ -454,6 +455,35 @@ else:
                 st.dataframe(_ai2_pd.DataFrame(diversity["lineup_scripts"]),
                              hide_index=True, use_container_width=True)
                 st.caption("High overlap is a risk/return decision, not automatically a defect. Game totals, market ownership and receiver coverage matchups are not yet validated inputs to this optimizer.")
+                st.markdown("**QB candidate-to-final decision audit**")
+                qb_report = output_one.get("qb_selection_audit") or []
+                qb_stats = output_one.get("qb_selection_diagnostics") or {}
+                if qb_report:
+                    st.caption(
+                        f"{qb_stats.get('final_stacked_lineups', 0)} of {len(ranked)} "
+                        "final lineups feature a direct QB/WR-or-TE stack; "
+                        f"{qb_stats.get('rescued_stacked_candidates', 0)} "
+                        "efficient QB stack candidates rescued from the global "
+                        "P90/$1K filter. The report identifies eligible QBs "
+                        "and where they were excluded rather than choosing them "
+                        "by name or postgame results."
+                    )
+                    st.dataframe(_ai2_pd.DataFrame(qb_report),hide_index=True,
+                                 use_container_width=True)
+                    st.download_button(
+                        "Download QB stack coverage / exclusion explanations",
+                        _ai2_pd.DataFrame(qb_report).to_csv(index=False).encode("utf-8-sig"),
+                        file_name="team_ai2_nfl_qb_stack_selection_audit.csv",
+                        mime="text/csv",key="ai2_nfl_qb_stack_selection_audit")
+                    if qb_stats.get("qb_with_verified_receiver_but_no_candidate_stack"):
+                        st.warning(
+                            f"{qb_stats['qb_with_verified_receiver_but_no_candidate_stack']} "
+                            "QB(s) had an eligible passing teammate but no legal "
+                            "stacked candidate under current salary and role rules. "
+                            "Inspect their individual explanations; missing legal "
+                            "stack combinations are NOT treated as zero upside.")
+                else:
+                    st.warning("QB selection audit unavailable; do not interpret a missing QB as low projected upside.")
 
             with st.expander("Player exposure and lineup explanations"):
                 st.dataframe(exposures, hide_index=True, use_container_width=True)
