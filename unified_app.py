@@ -271,19 +271,29 @@ else:
             st.subheader("Stat-by-stat player predictions — before lineup selection")
             if prop_rows:
                 st.caption(output_one.get("prop_model_method", ""))
-                st.info("These are OUR simulated prop-like predictions, not sportsbook "
-                        "lines, betting recommendations, or independently calibrated "
-                        "over probabilities. Only a real, time-stamped market line "
-                        "and odds would allow an over/under value comparison.")
+                st.info("Model-only NFL prop-style forecasts: NO sportsbook line upload "
+                        "required. Yardage, receptions, touchdown expectation and bonuses "
+                        "reconcile to the same simulated fantasy points. These probabilities "
+                        "are not independently calibrated betting recommendations.")
+                st.caption("Total scrimmage yards = rushing + receiving yards. It is "
+                           "a cross-check, NEVER a third scoring component. Non-TD "
+                           "DK includes yards, receptions and applicable bonuses; "
+                           "expected TD DK is added exactly once. Compare our model "
+                           "forecasts with any real sportsbook line outside the app.")
                 forecast_df = _ai2_pd.DataFrame(prop_rows)
                 preferred_columns = [
                     "Player", "Team", "Position", "Salary", "Historical role validation",
                     "Model mean DK", "Model median DK", "Model P10 DK", "Model P90 DK",
+                    "Model non-TD DK", "Model expected TD DK",
+                    "Model chance 1+ scoring TD %",
+                    "Model chance 10+ DK without TD %",
                     "Model chance 10+ DK %", "Model chance 15+ DK %",
-                    "Model chance <=5 DK %", "Passing yards projection",
-                    "Rushing yards projection", "Carries projection",
+                    "Model chance <=5 DK %",
+                    "Model mean DK / $1K",
+                    "Carries projection", "Rushing yards projection",
                     "Targets projection", "Receptions projection",
-                    "Receiving yards projection", "Market comparison",
+                    "Receiving yards projection", "Total scrimmage yards projection",
+                    "Passing yards projection", "Passing TDs projection",
                 ]
                 st.dataframe(forecast_df[[c for c in preferred_columns
                                           if c in forecast_df.columns]],
