@@ -97,11 +97,16 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
             "eligible player; no lineup export was generated. " + str(exc)
         ) from exc
     simulation_component_audit_error = None
+    # Strictly disjoint, seed-deterministic football worlds: the first 70%
+    # select players and lineups; the last 30% NEVER enter optimization.
+    # This tests simulation overfitting but is not independent historical truth.
+    selection_draws=draws[:7000]
+    evaluation_draws=draws[7000:]
     high_mean_flags = projection_review_flags(simulation_component_audit, pool)
     observed_role_flags = compare_simulated_role_to_history(
         simulation_component_audit, raw_rates,
         research.get("injury_context_report") or [])
-    means = dict(zip(players["ID"].astype(str), draws.mean(axis=0).tolist()))
+    means = dict(zip(players["ID"].astype(str), selection_draws.mean(axis=0).tolist()))
     prepared = []
     from collections import Counter
     repeated_names = Counter(str(n) for n in pool["Name"])
@@ -120,8 +125,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
             carries = np.asarray(detail.get("carries", []), dtype=float)
             if (targets.shape == (10000,) and carries.shape == (10000,)
                     and np.isfinite(targets).all() and np.isfinite(carries).all()):
-                player["projected_targets"] = float(targets.mean())
-                player["projected_touches"] = float((targets + carries).mean())
+                player["projected_targets"] = float(targets[:7000].mean())
+                player["projected_touches"] = float((targets[:7000] + carries[:7000]).mean())
         player["projection_source"] += "; 10,000 football-stat scenarios"
         prepared.append(player)
     candidates = build_classic_candidates(
@@ -138,14 +143,15 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         qb_selection_diagnostics.clear()
         try:
             ranked = select_simulated_portfolio(
-                candidates, players, draws, count=count,
+                candidates, players, selection_draws, count=count,
                 max_exposure=0.35, upside_share=0.25,
                 premium_count=(5 if count == 20 else 0), min_wr_salary=4000, min_rb_salary=4500,
                 value_salary_ceiling=5000, value_max_appearances=(2 if count <= 20 else max(2, int(count*0.35))),
                 premium_value_max_appearances=1, require_opportunity=True,
                 p90_efficiency_retention=efficiency,
                 premium_excluded_ids=premium_excluded_ids,
-                diagnostics=qb_selection_diagnostics)
+                diagnostics=qb_selection_diagnostics,
+                validation_draws=evaluation_draws)
             break
         except ValueError as exc:
             errors.append(str(exc))
@@ -245,6 +251,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "lineup_role_warnings": lineup_role_warnings(ranked, role_trends),
         "qb_selection_audit": qb_audit,
         "qb_selection_diagnostics": qb_selection_diagnostics,
+        "counterfactual_holdout": qb_selection_diagnostics.get("independent_scenario_audit",{}),
         "summary": summary, "ranked": ranked,
         "csv": export_classic_candidates([x["candidate"] for x in ranked]),
         "audit": audit, "seed": seed, "pregame_report": pregame_report,
