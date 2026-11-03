@@ -93,7 +93,7 @@ def qb_selection_report(pool,candidates,ranked,*,diagnostics=None,
         elif not candidate_stacks[ident]:
             reason="No legal direct receiver stack reached candidate shortlist"
         elif not stacked_after.get(ident,0):
-            reason="Stacked candidates failed simulated P90/salary efficiency and credible ceiling gates"
+            reason="Stacked candidates failed simulated P90 salary-efficiency filter and credible ceiling gate"
         elif not final_counts[ident]:
             reason="Simulated portfolio, salary efficiency, value and exposure favored alternatives"
         else:
