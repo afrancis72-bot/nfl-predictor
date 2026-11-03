@@ -9,6 +9,10 @@ on:
       - 'ai2_nfl_sim_portfolio.py'
       - 'ai2_nfl_qb_audit.py'
       - 'ai2_nfl_oneclick.py'
+      - 'ai2_nfl_team_environment.py'
+      - 'ai2_nfl_simulation_adapter.py'
+      - 'dfs_stats_engine.py'
+      - 'tests/test_ai2_nfl_team_scoring_prior.py'
       - 'unified_app.py'
       - 'tests/test_ai2_nfl_counterfactual_holdout.py'
       - '.github/workflows/live-nfl-qb-counterfactual.yml'
@@ -22,6 +26,10 @@ on:
       - 'ai2_nfl_sim_portfolio.py'
       - 'ai2_nfl_qb_audit.py'
       - 'ai2_nfl_oneclick.py'
+      - 'ai2_nfl_team_environment.py'
+      - 'ai2_nfl_simulation_adapter.py'
+      - 'dfs_stats_engine.py'
+      - 'tests/test_ai2_nfl_team_scoring_prior.py'
       - 'unified_app.py'
       - 'tests/test_ai2_nfl_counterfactual_holdout.py'
       - '.github/workflows/live-nfl-qb-counterfactual.yml'
@@ -37,9 +45,11 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements.txt
       - name: Syntax check actual unified NFL code
-        run: python -m compileall -q ai2_nfl_qb_conditional.py ai2_nfl_qb_counterfactual.py ai2_nfl_projection_accountability.py ai2_nfl_oneclick.py ai2_nfl_candidate_builder.py ai2_nfl_sim_portfolio.py ai2_nfl_qb_audit.py unified_app.py
+        run: python -m compileall -q ai2_nfl_qb_conditional.py ai2_nfl_qb_counterfactual.py ai2_nfl_projection_accountability.py ai2_nfl_oneclick.py ai2_nfl_candidate_builder.py ai2_nfl_sim_portfolio.py ai2_nfl_qb_audit.py ai2_nfl_team_environment.py ai2_nfl_simulation_adapter.py dfs_stats_engine.py unified_app.py
       - name: QB conditional stack, holdout and source-risk regression
         run: python -m unittest discover -s tests -p test_ai2_nfl_counterfactual_holdout.py -v
+      - name: Pregame sourced team offensive scoring and no-lookahead checks
+        run: python -m unittest discover -s tests -p test_ai2_nfl_team_scoring_prior.py -v
       - name: Existing QB coverage and opportunity checks
         run: python -m unittest discover -s tests -p test_ai2_nfl_qb_stack_coverage.py -v && python -m unittest discover -s tests -p test_ai2_nfl_qb_stack_regression.py -v
       - name: Existing candidate and simulated lineup controls
