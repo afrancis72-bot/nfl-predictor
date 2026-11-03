@@ -58,6 +58,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     research = collect_automatic_baselines(salaries, season, week)
     if any("Official NFL injury feed unavailable" in issue for issue in research["blockers"]):
         raise ValueError("Official game-status data cannot be retrieved; please retry when the source is available")
+    if not research.get("pregame_role_evidence"):
+        raise ValueError("Pregame consistency evidence unavailable; refusing to build from historical averages alone")
     pool, raw_rates, outs, audit = create_observed_model_pool(research)
     # A stale source week or an uncertain returning high-volume teammate must
     # not let the optimization treat a reserve RB as the unquestioned starter.
@@ -280,6 +282,14 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "reserve_status_issue": research.get("reserve_status_issue"),
         "input_lineage": input_lineage_rows(research),
         "role_trends": role_trends,
+        "pregame_role_evidence": list(research["pregame_role_evidence"].values()),
+        "pregame_role_blocked_count": sum(
+            x.get("Role gate") == "BLOCK"
+            for x in research["pregame_role_evidence"].values()),
+        "pregame_role_review_method": (
+            "Last five observed PRE-kickoff games by same-team player, with "
+            "repeat targets/carries and 10+ partial-DK scoring history; "
+            "one-game spikes cannot independently qualify cheap players."),
         "returning_rb_watch": returning_watch,
         "returning_rb_affected_ids": {
             ident: [r["returning_player"] for r in matches]
