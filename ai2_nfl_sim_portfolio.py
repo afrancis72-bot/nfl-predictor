@@ -10,6 +10,8 @@ from ai2_nfl_lineup import check_classic_lineup
 from ai2_nfl_role_evidence import player_opportunity_evidence
 from ai2_nfl_qb_audit import qb_and_partners
 from ai2_nfl_qb_counterfactual import quarterback_counterfactuals
+from ai2_nfl_correlation_guard import (opposing_pass_catcher_dst_pairs,
+                                       opposing_dst_lineup_budget)
 
 
 from collections import defaultdict
@@ -67,6 +69,15 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
         if ident in cheap:
             add_constraint([(n + i, 1) for i in indices],
                            0, premium_value_max_appearances)
+    # Cross-lineup restriction: opposing WR/TE against a rostered DST can
+    # occasionally be viable, but may not dominate the portfolio. This is a
+    # whole-portfolio constraint, enforced even if greedy selection fails.
+    conflicted = [i for i, item in enumerate(scored)
+                  if opposing_pass_catcher_dst_pairs(item["candidate"]["players"])]
+    if conflicted:
+        add_constraint([(i, 1) for i in conflicted] +
+                       [(n + i, 1) for i in conflicted],
+                       0, opposing_dst_lineup_budget(count))
     # Premium entries carry more money. The global 35% player limit does
     # not protect a five-entry premium subportfolio by itself.
     premium_qb_limit = max(1, ceil(premium_count * 0.35))
@@ -101,8 +112,13 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
         for item in scored], dtype=float)
     # Only a modest preference, and primarily in premium GPP entries:
     # simulation outcomes remain decisive, unstacked QB ceilings remain legal.
-    regular = .65 * scaled(means) + .25 * scaled(p90) + .10 * scaled(p99) + .012 * stacked
-    premium = .15 * scaled(means) + .25 * scaled(p90) + .60 * scaled(p99) + .06 * stacked
+    opposing_dst = np.array([
+        bool(opposing_pass_catcher_dst_pairs(item["candidate"]["players"]))
+        for item in scored], dtype=float)
+    regular = (.65 * scaled(means) + .25 * scaled(p90) +
+               .10 * scaled(p99) + .08 * stacked - .35 * opposing_dst)
+    premium = (.15 * scaled(means) + .25 * scaled(p90) +
+               .60 * scaled(p99) + .14 * stacked - .45 * opposing_dst)
     matrix = coo_matrix((data, (rows, cols)),
                         shape=(len(lows), 2 * n)).tocsr()
     result = milp(c=-np.concatenate((regular, premium)),
@@ -198,7 +214,8 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
         scores = matrix[:, [index[key] for key in keys]].sum(axis=1)
         scored.append(dict(candidate=candidate, simulated_mean=float(scores.mean()),
                            simulated_p90=float(np.percentile(scores, 90)),
-                           simulated_p99=float(np.percentile(scores, 99))))
+                           simulated_p99=float(np.percentile(scores, 99)),
+                           opposing_dst_conflicts=len(opposing_pass_catcher_dst_pairs(roster))))
     if not scored:
         raise ValueError("No simulated candidates available")
     all_scored=list(scored)  # Preserve pre-efficiency counterfactual opportunities.
@@ -262,23 +279,31 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             "retained_candidate_count":len(scored),
         })
     limit = max(1, int(np.floor(count * max_exposure)))
+    opposing_dst_budget = opposing_dst_lineup_budget(count)
     chosen, exposures, used = [], Counter(), set()
+    selected_opposing_dst = 0
     for role, quota in (("upside", round(count * upside_share)),
                         ("balanced", count-round(count * upside_share))):
         ordering = sorted(range(len(scored)),
                           key=lambda i: (
                               # Premium/upside gets a small, evidence-only
                               # QB/WR/TE stack preference, not a hard mandate.
-                              scored[i]["simulated_p99"] *
-                              (1.025 if qb_and_partners(scored[i]["candidate"]["players"])[1]
-                               else 1.0)
-                              if role == "upside" else scored[i]["simulated_mean"],
+                              (scored[i]["simulated_p99"] *
+                               (1.06 if qb_and_partners(scored[i]["candidate"]["players"])[1]
+                                else 1.0) -
+                               18.0 * bool(scored[i]["opposing_dst_conflicts"]))
+                              if role == "upside" else
+                              (scored[i]["simulated_mean"] +
+                               2.0 * bool(qb_and_partners(scored[i]["candidate"]["players"])[1]) -
+                               14.0 * bool(scored[i]["opposing_dst_conflicts"])),
                               scored[i]["simulated_p90"]), reverse=True)
         selected_role = 0
         for i in ordering:
             if selected_role >= quota:
                 break
             if i in used:
+                continue
+            if scored[i]["opposing_dst_conflicts"] and selected_opposing_dst >= opposing_dst_budget:
                 continue
             keys = [str(p["ID"]) for p in scored[i]["candidate"]["players"]]
             is_premium = False
@@ -297,6 +322,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                                    (float(scored[i]["candidate"]["salary"]) / 1000), 4)))
             exposures.update(keys)
             used.add(i)
+            selected_opposing_dst += bool(scored[i]["opposing_dst_conflicts"])
             selected_role += 1
     used_joint_solver = len(chosen) != count
     premium_ids = set()
@@ -365,6 +391,10 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                            for p in item["candidate"]["players"])
     if len(chosen)!=count or any(value>limit for value in final_exposure.values()):
         raise ValueError("Incomplete NFL portfolio or overall exposure cap violated; no export")
+    final_opposing_dst = sum(bool(opposing_pass_catcher_dst_pairs(
+        item["candidate"]["players"])) for item in chosen)
+    if final_opposing_dst > opposing_dst_budget:
+        raise ValueError("Opposing WR/TE versus DST portfolio safety cap violated; no export")
     final_qbs=Counter()
     final_stacks=Counter()
     for item in chosen:
@@ -380,6 +410,10 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             "final_stack_count":sum(final_stacks.values()),
             "final_qb_max_allowed":limit,
             "selection_method":"MILP joint" if used_joint_solver else "simulated greedy",
+            "opposing_dst_conflicted_lineups":final_opposing_dst,
+            "opposing_dst_max_lineups":opposing_dst_budget,
+            "opposing_dst_candidates_before_filter":sum(
+                bool(x["opposing_dst_conflicts"]) for x in all_scored),
         })
     if holdout is not None and diagnostics is not None:
         counterfactual,validation=quarterback_counterfactuals(
@@ -417,6 +451,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                               if not teammates else
                               "Same-team QB/WR-TE stack considered; modeled ceiling evaluated on shared simulated worlds"),
             "player_opportunity_evidence": evidence,
-            "simulated_p90_per_1000": item["p90_per_1000"]
+            "simulated_p90_per_1000": item["p90_per_1000"],
+            "opposing_pass_catchers_vs_dst": opposing_pass_catcher_dst_pairs(roster),
         }
     return sorted(chosen, key=lambda x: (x["contest_tier"] != "$3", -x["simulated_p99"]))
