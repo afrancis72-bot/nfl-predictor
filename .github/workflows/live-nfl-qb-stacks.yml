@@ -1,0 +1,36 @@
+name: Live unified NFL QB stack and portfolio checks
+on:
+  pull_request:
+    paths:
+      - 'ai2_nfl_candidate_builder.py'
+      - 'ai2_nfl_sim_portfolio.py'
+      - 'ai2_nfl_qb_audit.py'
+      - 'ai2_nfl_oneclick.py'
+      - 'tests/test_ai2_nfl_qb_stack_regression.py'
+      - '.github/workflows/live-nfl-qb-stacks.yml'
+  push:
+    branches: [feature/unified-ai2-platform]
+    paths:
+      - 'ai2_nfl_candidate_builder.py'
+      - 'ai2_nfl_sim_portfolio.py'
+      - 'ai2_nfl_qb_audit.py'
+      - 'ai2_nfl_oneclick.py'
+      - 'tests/test_ai2_nfl_qb_stack_regression.py'
+      - '.github/workflows/live-nfl-qb-stacks.yml'
+  workflow_dispatch:
+jobs:
+  nfl-qb-stack-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Compile actual unified NFL production modules
+        run: python -m compileall -q ai2_nfl_candidate_builder.py ai2_nfl_sim_portfolio.py ai2_nfl_qb_audit.py ai2_nfl_oneclick.py
+      - name: Test exact QB candidate and stacking regressions
+        run: python -m unittest discover -s tests -p test_ai2_nfl_qb_stack_regression.py -v
+      - name: Test existing candidate and simulated portfolio safety
+        run: python -m unittest discover -s tests -p test_ai2_nfl_candidate_builder.py -v && python -m unittest discover -s tests -p test_ai2_nfl_sim_portfolio.py -v
