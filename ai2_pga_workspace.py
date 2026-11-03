@@ -24,7 +24,7 @@ st.caption(
     "hole-by-hole scoring simulator. Live round props use published groupings "
     "and actual completed-round evidence."
 )
-st.caption("PGA DFS release 2026-10-31 • Salary-Tier Review & Vetoes added • 20% default exposure")
+st.caption("PGA DFS release 2026-11-03 • JOINT-SCENARIO PORTFOLIO OPTIMIZER • same-world six-of-six and ceiling audit")
 
 tab_tournament,tab_review,tab_parlay,tab_showdown,tab_audit=st.tabs([
     "🏆 Tournament DFS · One Click",
@@ -202,6 +202,7 @@ with tab_tournament:
                 st.session_state["ai2_pga_result"]=result
                 st.session_state["ai2_pga_signature"]=setup_signature
                 st.session_state.pop("ai2_pga_review_portfolio",None)
+                st.session_state.pop("ai2_pga_objectives_result",None)
                 st.session_state.pop("ai2_pga_3ball",None)
                 st.session_state.pop("ai2_pga_showdown",None)
                 st.success(f"Built {len(result['summary'])} lineups using seed {seed}.")
@@ -216,6 +217,11 @@ with tab_tournament:
         st.info("The tournament, field, or settings have changed. Re-run to refresh the results.")
     if result:
         meta=result["metadata"]
+        if meta.get("portfolio_selection")!="joint-scenario":
+            st.warning(
+                "This saved lineup run predates the joint-scenario portfolio "
+                "optimizer. Re-run the PGA simulation to see newly selected "
+                "cut/GPP/balanced lineups. Approved entries were not changed.")
         st.divider()
         st.subheader("Built portfolio — human review before entering")
         st.info("For salary-tier recommendations and veto decisions, open **🔎 Salary-Tier Review & Vetoes** above before entering lineups.")
