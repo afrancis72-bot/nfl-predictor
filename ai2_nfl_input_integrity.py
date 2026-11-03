@@ -47,7 +47,30 @@ def player_role_trends(history, salary_rows, season, week):
             parsed = pd.to_numeric(pd.Series(raw), errors="coerce")
             values.append(float(parsed.sum()) if parsed.notna().all() else float("nan"))
         observed = len(matching)
+        # Recent unweighted workload protects against a single high-usage
+        # injury replacement game dominating the weighted model baseline.
+        recent_four_games = matching.tail(4)
+        recent_four = {"Last 4 observed games": None,
+                       "Last 4 rushing yards per game": None,
+                       "Last 4 carries per game": None,
+                       "Last 4 targets per game": None}
+        if position == "RB" and len(recent_four_games) >= 4:
+            columns = ["rushing_yards", "carries", "targets"]
+            if set(columns).issubset(recent_four_games.columns):
+                observations = recent_four_games[columns].apply(
+                    pd.to_numeric, errors="coerce")
+                if observations.notna().all().all():
+                    recent_four = {
+                        "Last 4 observed games": len(observations),
+                        "Last 4 rushing yards per game": round(
+                            float(observations["rushing_yards"].mean()), 2),
+                        "Last 4 carries per game": round(
+                            float(observations["carries"].mean()), 2),
+                        "Last 4 targets per game": round(
+                            float(observations["targets"].mean()), 2),
+                    }
         record = {"Player": name, "Team": team, "Position": position,
+                  **recent_four,
                   "Role metric": metric, "Observed current-season games": observed,
                   "Recent 3 per game": None, "Earlier up-to-5 per game": None,
                   "Change %": None, "Role trend": "INSUFFICIENT_HISTORY",
@@ -108,6 +131,9 @@ def input_lineage_rows(research):
         {"Information": "Last-3 versus earlier same-team workload",
          "Data use": "RESEARCH_ONLY" if role_rows else "UNAVAILABLE",
          "Why": "Pregame box-score trend is a warning, not yet a historically calibrated projection adjustment"},
+        {"Information": "Unweighted last-four-game RB carries, targets and rushing yards",
+         "Data use": "OPTIMIZER_ONLY" if role_rows else "UNAVAILABLE",
+         "Why": "Restricts portfolio exposure of backs with limited observed role; does not rewrite simulated football scoring"},
         {"Information": "DraftKings salary, roster constraints and diversification", "Data use": "OPTIMIZER_ONLY",
          "Why": "Filters eligible lineups and assigns exposures; does not set player scoring probabilities"},
         {"Information": "Previous games' observed offensive snap counts and player opportunity",
