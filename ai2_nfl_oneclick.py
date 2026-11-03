@@ -23,6 +23,7 @@ from ai2_nfl_projection_review import projection_review_flags
 from ai2_nfl_role_plausibility import compare_simulated_role_to_history
 from ai2_nfl_projection_accountability import uncertain_role_exposures
 from ai2_nfl_role_intelligence import returning_rb_competition
+from ai2_nfl_prop_intelligence import player_prop_decisions
 import pandas as pd
 
 def _slate_week(saved_salaries):
@@ -111,6 +112,12 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     # This tests simulation overfitting but is not independent historical truth.
     selection_draws=draws[:7000]
     evaluation_draws=draws[7000:]
+    # Stat-first decision layer runs BEFORE candidate generation. Bookmaker
+    # lines are NOT invented: absent verified lines, only our own predicted
+    # statistics, uncertainty and expected DraftKings outcomes are reported.
+    player_prop_forecasts = player_prop_decisions(
+        players, stat_draws, selection_draws,
+        pregame_role=research["pregame_role_evidence"])
     high_mean_flags = projection_review_flags(simulation_component_audit, pool)
     observed_role_flags = compare_simulated_role_to_history(
         simulation_component_audit, raw_rates,
@@ -283,6 +290,13 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "input_lineage": input_lineage_rows(research),
         "role_trends": role_trends,
         "pregame_role_evidence": list(research["pregame_role_evidence"].values()),
+        "player_prop_forecasts": player_prop_forecasts,
+        "prop_model_method": (
+            "Player-by-player simulated football-stat predictions from 7,000 "
+            "selection worlds BEFORE lineup construction; same-world simulated "
+            "DraftKings points include catches, yards, touchdowns and bonuses. "
+            "No current sportsbook lines, odds or historical calibration are "
+            "automatically connected."),
         "pregame_role_blocked_count": sum(
             x.get("Role gate") == "BLOCK"
             for x in research["pregame_role_evidence"].values()),
