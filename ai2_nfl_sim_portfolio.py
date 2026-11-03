@@ -9,6 +9,7 @@ import pandas as pd
 from ai2_nfl_lineup import check_classic_lineup
 from ai2_nfl_role_evidence import player_opportunity_evidence
 from ai2_nfl_qb_audit import qb_and_partners
+from ai2_nfl_qb_counterfactual import quarterback_counterfactuals
 
 
 from collections import defaultdict
@@ -145,7 +146,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                                min_wr_salary=4000, min_rb_salary=4500,
                                require_opportunity=True, p90_efficiency_retention=0.95,
                                premium_excluded_ids=frozenset(),
-                               diagnostics=None):
+                               diagnostics=None, validation_draws=None):
     premium_excluded_ids = frozenset(str(x) for x in premium_excluded_ids)
     if not 1 <= count <= 150 or not 0 < max_exposure <= 1 or not 0 <= upside_share <= 1:
         raise ValueError("Invalid portfolio parameters")
@@ -158,6 +159,15 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
     matrix = np.asarray(draws, dtype=float)
     if matrix.ndim != 2 or matrix.shape[0] < 100 or matrix.shape[1] != len(players) or not np.isfinite(matrix).all():
         raise ValueError("Invalid simulation draws")
+    holdout=None
+    if validation_draws is not None:
+        holdout=np.asarray(validation_draws,dtype=float)
+        if (holdout.ndim!=2 or holdout.shape[0]<100
+                or holdout.shape[1]!=len(players)
+                or not np.isfinite(holdout).all()):
+            raise ValueError("Invalid disjoint NFL evaluation worlds")
+        if np.shares_memory(matrix,holdout):
+            raise ValueError("NFL evaluation worlds overlap selection worlds")
     ids = players["ID"].astype(str).tolist()
     if len(ids) != len(set(ids)):
         raise ValueError("Duplicate simulation IDs")
@@ -191,6 +201,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                            simulated_p99=float(np.percentile(scores, 99))))
     if not scored:
         raise ValueError("No simulated candidates available")
+    all_scored=list(scored)  # Preserve pre-efficiency counterfactual opportunities.
     by_qb_before=Counter()
     best_qb_p99={}
     for item in scored:
@@ -370,6 +381,11 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             "final_qb_max_allowed":limit,
             "selection_method":"MILP joint" if used_joint_solver else "simulated greedy",
         })
+    if holdout is not None and diagnostics is not None:
+        counterfactual,validation=quarterback_counterfactuals(
+            all_scored,chosen,ids,holdout)
+        diagnostics["qb_counterfactuals"]=counterfactual
+        diagnostics["independent_scenario_audit"]=validation
     if any(str(p["ID"]) in premium_excluded_ids
            for i in premium_ids for p in chosen[i]["candidate"]["players"]):
         raise ValueError("Premium player exclusion violated; refusing to export portfolio")
