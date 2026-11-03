@@ -78,6 +78,7 @@ def qb_selection_report(pool,candidates,ranked,*,diagnostics=None,
         final_premium[ident]+=entry.get("contest_tier")=="$3"
     before=diagnostics.get("scored_qbs_before_efficiency",{})
     after=diagnostics.get("scored_qbs_after_efficiency",{})
+    stacked_after=diagnostics.get("stacked_qbs_after_efficiency",{})
     best_p99=diagnostics.get("qb_best_simulated_p99",{})
     rows=[]
     for qb in sorted(qbs,key=lambda r:(-float(r.get("proj",0)),str(r.get("Name","")))):
@@ -91,8 +92,8 @@ def qb_selection_report(pool,candidates,ranked,*,diagnostics=None,
             reason="No legal QB roster survived salary/roster/role candidate search"
         elif not candidate_stacks[ident]:
             reason="No legal direct receiver stack reached candidate shortlist"
-        elif not after.get(ident,0):
-            reason="Candidates did not survive simulated P90 salary-efficiency filter"
+        elif not stacked_after.get(ident,0):
+            reason="Stacked candidates failed simulated P90 salary-efficiency filter and credible ceiling gate"
         elif not final_counts[ident]:
             reason="Simulated portfolio, salary efficiency, value and exposure favored alternatives"
         else:
@@ -109,6 +110,7 @@ def qb_selection_report(pool,candidates,ranked,*,diagnostics=None,
             "Stacked QB candidates":candidate_stacks[ident],
             "Simulated candidates before filter":int(before.get(ident,0)),
             "After efficiency filter":int(after.get(ident,0)),
+            "Stacked candidates after efficiency":int(stacked_after.get(ident,0)),
             "Best candidate simulated P99":(
                 round(float(best_p99[ident]),2) if ident in best_p99 else None),
             "Final QB lineups":final_counts[ident],

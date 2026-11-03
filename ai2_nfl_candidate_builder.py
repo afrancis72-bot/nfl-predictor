@@ -167,16 +167,30 @@ def build_classic_candidates(rows, *, count=5, attempts=30000, seed=7,
     # receiving teammate where possible but retain nonstacked alternatives.
     # Fewer viable QBs does not create invented or illegal candidates.
     qb_ids = sorted(by_qb, key=lambda k: by_qb[k][0][0][0], reverse=True)
-    target_diverse = min(count // 2, len(ordered))
-    if qb_ids and target_diverse:
-        quota = max(1, target_diverse // len(qb_ids))
-        for qb_id in qb_ids:
-            taken = 0
-            for item, stacked in sorted(by_qb[qb_id], key=lambda x: (x[1], x[0][0]), reverse=True):
-                if taken >= quota or len(selected) >= target_diverse:
+    # Round-robin rather than a one-pass quota: a high-scoring QB should
+    # never exhaust the reserved slots before we try the lower-ranked QBs.
+    # For 20+ slots reserve at least one shot per QB, subject to hard player
+    # exposures; each QB's best legal stacked path gets first consideration.
+    target_diverse = min(count, max(count // 2, min(len(qb_ids), count)))
+    ranked_qb = {qb_id: sorted(
+        by_qb[qb_id], key=lambda x: (x[1], x[0][0]), reverse=True)
+        for qb_id in qb_ids}
+    attempted = {qb_id: 0 for qb_id in qb_ids}
+    if target_diverse:
+        while len(selected) < target_diverse:
+            progress = False
+            for qb_id in qb_ids:
+                rows = ranked_qb[qb_id]
+                while attempted[qb_id] < len(rows):
+                    item, _ = rows[attempted[qb_id]]
+                    attempted[qb_id] += 1
+                    if add(item):
+                        progress = True
+                        break
+                if len(selected) >= target_diverse:
                     break
-                if add(item):
-                    taken += 1
+            if not progress:
+                break
     # Remaining candidates compete on projected points, including previously
     # crowded-out stacked and unstacked combinations. Simulated portfolio
     # selection determines winners and contest assignment downstream.
