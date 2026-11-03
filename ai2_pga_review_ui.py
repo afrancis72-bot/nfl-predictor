@@ -144,6 +144,20 @@ def render_review_page(model, *, signature, lineup_count, max_exposure,
     if rebuilt.get("signature")!=review_settings:
         st.warning("Review settings changed. Rebuild before downloading new lineups.")
         return
+    audit=rebuilt.get("portfolio_audit")
+    if audit:
+        st.caption(
+            "Reviewed joint simulated portfolio: "
+            f"{audit['sim_portfolio_at_least_one_6of6_pct']:.2f}% modeled chance "
+            "of at least one six-of-six lineup; highest-entry score "
+            f"P90 {audit['sim_portfolio_best_score_p90']:.2f}, "
+            f"P99 {audit['sim_portfolio_best_score_p99']:.2f}."
+        )
+        st.download_button(
+            "Download REVIEWED portfolio-level simulation audit",
+            pd.DataFrame([audit]).to_csv(index=False).encode("utf-8-sig"),
+            "team_ai2_pga_reviewed_portfolio_level_audit.csv",
+            mime="text/csv",key="ai2_pga_reviewed_portfolio_joint_audit")
     st.dataframe(rebuilt["summary"],use_container_width=True,hide_index=True)
     st.download_button(
         "Download REVIEWED six-of-six and lineup audit",

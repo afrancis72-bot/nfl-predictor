@@ -16,6 +16,7 @@ from ai2_pga_oneclick import (
 from round_parlay import fetch_groupings,fetch_official_prior_rounds
 from international_ingestion import geocode_course, location_detail, fetch_weather
 from ai2_pga_review_ui import render_review_page
+from ai2_pga_salary_review import rebuild_reviewed
 
 st.subheader("PGA · Tournament DFS, Round Showdown & Group-Matchup Parlays")
 st.caption(
@@ -23,7 +24,7 @@ st.caption(
     "hole-by-hole scoring simulator. Live round props use published groupings "
     "and actual completed-round evidence."
 )
-st.caption("PGA DFS release 2026-10-31 • Salary-Tier Review & Vetoes added • 20% default exposure")
+st.caption("PGA DFS release 2026-11-03 • JOINT-SCENARIO PORTFOLIO OPTIMIZER • same-world six-of-six and ceiling audit")
 
 tab_tournament,tab_review,tab_parlay,tab_showdown,tab_audit=st.tabs([
     "🏆 Tournament DFS · One Click",
@@ -201,6 +202,7 @@ with tab_tournament:
                 st.session_state["ai2_pga_result"]=result
                 st.session_state["ai2_pga_signature"]=setup_signature
                 st.session_state.pop("ai2_pga_review_portfolio",None)
+                st.session_state.pop("ai2_pga_objectives_result",None)
                 st.session_state.pop("ai2_pga_3ball",None)
                 st.session_state.pop("ai2_pga_showdown",None)
                 st.success(f"Built {len(result['summary'])} lineups using seed {seed}.")
@@ -215,6 +217,11 @@ with tab_tournament:
         st.info("The tournament, field, or settings have changed. Re-run to refresh the results.")
     if result:
         meta=result["metadata"]
+        if meta.get("portfolio_selection")!="joint-scenario":
+            st.warning(
+                "This saved lineup run predates the joint-scenario portfolio "
+                "optimizer. Re-run the PGA simulation to see newly selected "
+                "cut/GPP/balanced lineups. Approved entries were not changed.")
         st.divider()
         st.subheader("Built portfolio — human review before entering")
         st.info("For salary-tier recommendations and veto decisions, open **🔎 Salary-Tier Review & Vetoes** above before entering lineups.")
@@ -266,10 +273,73 @@ with tab_tournament:
         else:
             st.caption("No verified location-specific current weather was loaded.")
         st.caption(
-            "Cut Equity now weighs modeled golfer cut probability; Balanced weighs "
-            "cut likelihood and mean; GPP Ceiling emphasizes simulated P90. "
-            "Different objectives can still select overlapping lineups."
+            "Joint-scenario portfolio selection: Cut Equity seeks additional 6/6 "
+            "tournament worlds; Balanced combines cut coverage, simulated mean "
+            "and best-score upside; GPP emphasizes the portfolio's highest-score "
+            "tail. These are experimental objectives, not calibrated cash rates."
         )
+        pa=result.get("portfolio_audit")
+        if pa:
+            m1,m2,m3=st.columns(3)
+            m1.metric("At least one 6/6 lineup (modeled)",
+                      f"{pa['sim_portfolio_at_least_one_6of6_pct']:.2f}%")
+            m2.metric("Portfolio best-score P90",
+                      f"{pa['sim_portfolio_best_score_p90']:.2f}")
+            m3.metric("Portfolio best-score P99",
+                      f"{pa['sim_portfolio_best_score_p99']:.2f}")
+            st.download_button(
+                "Download PGA portfolio-level simulation audit",
+                pd.DataFrame([pa]).to_csv(index=False).encode("utf-8-sig"),
+                "team_ai2_pga_portfolio_level_audit.csv",mime="text/csv",
+                key="ai2_pga_joint_portfolio_audit")
+        with st.expander("Compare all three objectives using this exact simulation"):
+            st.caption(
+                "Reuses the current golfer worlds and rules; no additional input "
+                "upload or new 72-hole simulation. The approved lineups are never "
+                "replaced. Differences can legitimately be small."
+            )
+            if st.button("Compare Balanced / GPP / Cut Equity",
+                         key="ai2_pga_compare_objectives"):
+                try:
+                    compared=[]
+                    for objective in ("Balanced / Single Entry","GPP Ceiling","Cut Equity"):
+                        if objective==strategy:
+                            audit=pa
+                        else:
+                            other=rebuild_reviewed(
+                                result,vetoes=exclusions,locks=locks,
+                                lineup_count=lineup_count,max_exposure=exposure_pct/100,
+                                salary_floor=salary_floor,min_unique=min_unique,
+                                strategy=objective)
+                            audit=other.get("portfolio_audit")
+                        if audit is None:
+                            raise ValueError("Required joint simulation audit missing.")
+                        compared.append(dict(audit))
+                    st.session_state["ai2_pga_objectives_result"]={
+                        "signature":setup_signature,
+                        "rows":compared,
+                    }
+                except Exception as exc:
+                    st.session_state.pop("ai2_pga_objectives_result",None)
+                    st.error("PGA objective comparison blocked: "+str(exc))
+            compared=st.session_state.get("ai2_pga_objectives_result")
+            if compared is not None and compared.get("signature")==setup_signature:
+                comparison=pd.DataFrame(compared["rows"])
+                selected=[
+                    "strategy","sim_portfolio_at_least_one_6of6_pct",
+                    "sim_portfolio_expected_6of6_count",
+                    "sim_portfolio_best_score_mean",
+                    "sim_portfolio_best_score_p90",
+                    "sim_portfolio_best_score_p95",
+                    "sim_portfolio_best_score_p99",
+                ]
+                st.dataframe(comparison[selected],hide_index=True,use_container_width=True)
+                st.download_button(
+                    "Download three-strategy joint simulation comparison",
+                    comparison.to_csv(index=False).encode("utf-8-sig"),
+                    "team_ai2_pga_three_strategy_comparison.csv",
+                    mime="text/csv",key="ai2_pga_three_way_audit")
+
         st.dataframe(result["summary"],hide_index=True,use_container_width=True)
         st.download_button(
             "Download six-of-six and lineup simulation audit",

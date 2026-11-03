@@ -19,6 +19,7 @@ from pga_predictor_pro import Config as PGAConfig, predict_from_dataframes
 from golf_first_v11 import simulate_golf_first
 from ai2_pga_historical_evidence import name_key, extract_finish_history
 from portfolio_optimizer import PortfolioSettings, optimize_portfolio
+from ai2_pga_portfolio_scenarios import audit_portfolio_worlds
 from round_parlay import (build_round_ratings,simulate_groups,build_six_leg_tickets,
                           normalize_live_results,normalize_groupings_upload)
 from round_showdown import build_showdown_pool,optimize_showdown
@@ -398,7 +399,8 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
         strategy=strategy,candidate_samples=15000,target_candidates=1100,
         candidate_pool_size=min(len(predicted),80),seed=int(seed))
     portfolio,summary,exposure=optimize_portfolio(
-        predicted,settings,locks=locks,excludes=excludes
+        predicted,settings,locks=locks,excludes=excludes,
+        scenario_scores=draws,scenario_cuts=cuts,
     )
     if len(summary)!=int(lineup_count):
         raise ValueError("Incomplete PGA portfolio; no partial export.")
@@ -408,27 +410,20 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
         raise ValueError("PGA portfolio violates exposure cap.")
     if not np.allclose(draws.mean(axis=0),predicted["v11_mean_dk"].to_numpy(float),atol=.01):
         raise ValueError("PGA simulated points not aligned to golfers.")
-    # Actual same-scenario lineup distribution, NOT sum of individual P90s.
-    ix={n:i for i,n in enumerate(predicted["player"])}
-    same_world=[]
-    for no,g in portfolio.groupby("lineup"):
-        picks=[ix[n] for n in g["player"]]
-        v=draws[:,picks].sum(axis=1)
-        same_world.append({"lineup":int(no),
-            "sim_lineup_mean":round(float(v.mean()),2),
-            "sim_lineup_p10":round(float(np.quantile(v,.10)),2),
-            "sim_lineup_p90":round(float(np.quantile(v,.90)),2),
-            "sim_lineup_p95":round(float(np.quantile(v,.95)),2),
-            "sim_lineup_p99":round(float(np.quantile(v,.99)),2),
-            "sim_lineup_6of6_pct":round(100.*float(np.all(cuts[:,picks],axis=1).mean()),2)})
-    summary=summary.merge(pd.DataFrame(same_world),on="lineup",how="left",validate="one_to_one")
+    # Evaluate the same worlds used to SELECT the portfolio, not a post-hoc
+    # sum of independent P90s or individual cut probabilities.
+    joint_lines,portfolio_audit=audit_portfolio_worlds(
+        portfolio,predicted,draws,cuts,strategy=strategy)
+    summary=summary.merge(joint_lines,on="lineup",how="left",validate="one_to_one")
     return {"projections":predicted,"lineups":portfolio,"summary":summary,
         "exposure":exposure,"otis":otis,"independent":independent,"course_fit":course_fit,"raw_draws":draws,
+        "portfolio_audit":portfolio_audit,
         "raw_cuts":cuts,
         "diagnostics":diagnostics,
         "metadata":{"tournament":str(tournament),"course_par":int(course_par),
             "hole_pars_verified":holes is not None,"field_size":len(dk),
             "simulations":int(sims),"seed":int(seed),
+            "portfolio_strategy":strategy,"portfolio_selection":"joint-scenario",
             "otis_match":matched,"independent_sg_match":observed_match,
             "rrg_fit_match":course_fit_meta["matched"],
             "rrg_fit_components":course_fit_meta["components"],

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence, Callable
 import numpy as np
 import pandas as pd
+from ai2_pga_portfolio_scenarios import choose_joint_scenario_portfolio
 
 
 @dataclass
@@ -83,6 +84,8 @@ def optimize_portfolio(
     locks: Sequence[str] | None = None,
     excludes: Sequence[str] | None = None,
     progress_callback: Callable[[float, str], None] | None = None,
+    scenario_scores: np.ndarray | None = None,
+    scenario_cuts: np.ndarray | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     settings = settings or PortfolioSettings()
     locks, excludes = set(locks or []), set(excludes or [])
@@ -183,29 +186,45 @@ def optimize_portfolio(
     exposure = {p: 0 for p in d.player.astype(str)}
     max_overlap = settings.roster_size - settings.min_unique
 
-    for slot in range(settings.lineup_count):
-        best = None
-        best_adjusted = -1e18
-        for score, salary, names in ranked:
-            if names in selected:
-                continue
-            if any(len(names & old) > max_overlap for old in selected):
-                continue
-            if any(exposure.get(p, 0) + 1 > max_appearances for p in names):
-                continue
-            penalty = sum((exposure.get(p, 0) / max_appearances) ** 2 for p in names)
-            adjusted = score - (0.30 + .025*(slot+1))*penalty
-            if adjusted > best_adjusted:
-                best_adjusted = adjusted
-                best = names
-        if best is None:
-            raise RuntimeError(
-                f"Could only construct {len(selected)} of {settings.lineup_count} lineups. "
-                "Relax max exposure, minimum unique golfers, salary floor, or locks."
-            )
-        selected.append(best)
-        for p in best:
-            exposure[p] = exposure.get(p, 0) + 1
+    if (scenario_scores is None) != (scenario_cuts is None):
+        raise ValueError("PGA joint-scenario selection requires both scores and cut events.")
+    if scenario_scores is not None:
+        selected = choose_joint_scenario_portfolio(
+            ranked, predictions["player"], scenario_scores, scenario_cuts,
+            lineup_count=settings.lineup_count, max_appearances=max_appearances,
+            min_unique=settings.min_unique, roster_size=settings.roster_size,
+            strategy=settings.strategy, seed=settings.seed,
+        )
+        for names in selected:
+            for p in names:
+                exposure[p] = exposure.get(p, 0) + 1
+    else:
+        # Retain backwards-compatible candidate ranking only for external
+        # research consumers that have no tournament scenario worlds.
+        for slot in range(settings.lineup_count):
+            best = None
+            best_adjusted = -1e18
+            for score, salary, names in ranked:
+                if names in selected:
+                    continue
+                if any(len(names & old) > max_overlap for old in selected):
+                    continue
+                if any(exposure.get(p, 0) + 1 > max_appearances for p in names):
+                    continue
+                penalty = sum((exposure.get(p, 0) / max_appearances) ** 2 for p in names)
+                adjusted = score - (0.30 + .025*(slot+1))*penalty
+                if adjusted > best_adjusted:
+                    best_adjusted = adjusted
+                    best = names
+            if best is None:
+                raise RuntimeError(
+                    f"Could only construct {len(selected)} of {settings.lineup_count} lineups. "
+                    "Relax max exposure, minimum unique golfers, salary floor, or locks."
+                )
+            selected.append(best)
+            for p in best:
+                exposure[p] = exposure.get(p, 0) + 1
+
 
     dk_col = "dk_points_proxy" if "dk_points_proxy" in d.columns else "dk_proxy"
     rows, summaries = [], []
