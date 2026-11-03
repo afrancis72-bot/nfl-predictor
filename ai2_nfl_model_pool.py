@@ -128,7 +128,13 @@ def create_observed_model_pool(research):
             "projection_source": source, "projected_targets": targets,
             "projected_touches": touches, "recent_targets_per_game": targets,
             "recent_touches_per_game": touches,
-            "observed_games": games, "projection_type": "AUTO_STAT_MODEL",
+            "observed_games": games,
+            # Raw, pre-redistribution role evidence, separate from the
+            # simulated touches inflated by a teammate's temporary absence.
+            "observed_carries_pg": (_num(r.get("carries_pg")) if r is not None else None),
+            "observed_targets_pg": (_num(r.get("targets_pg")) if r is not None else None),
+            "observed_rushing_yards_pg": (_num(r.get("rushing_yards_pg")) if r is not None else None),
+            "projection_type": "AUTO_STAT_MODEL",
         })
     # In the simulator, exactly one quarterback may represent each team.
     best_qbs = {}
