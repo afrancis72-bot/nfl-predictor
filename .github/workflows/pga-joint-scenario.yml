@@ -1,0 +1,45 @@
+name: PGA joint-scenario strategy and portfolio audits
+on:
+  pull_request:
+    paths:
+      - 'ai2_pga_portfolio_scenarios.py'
+      - 'portfolio_optimizer.py'
+      - 'ai2_pga_oneclick.py'
+      - 'ai2_pga_salary_review.py'
+      - 'ai2_pga_workspace.py'
+      - 'ai2_pga_review_ui.py'
+      - 'tests/test_ai2_pga_portfolio_scenarios.py'
+      - 'tests/test_ai2_pga_unified.py'
+      - 'tests/test_ai2_pga_salary_review.py'
+      - '.github/workflows/pga-joint-scenario.yml'
+  push:
+    branches: [feature/unified-ai2-platform]
+    paths:
+      - 'ai2_pga_portfolio_scenarios.py'
+      - 'portfolio_optimizer.py'
+      - 'ai2_pga_oneclick.py'
+      - 'ai2_pga_salary_review.py'
+      - 'ai2_pga_workspace.py'
+      - 'ai2_pga_review_ui.py'
+      - 'tests/test_ai2_pga_portfolio_scenarios.py'
+      - '.github/workflows/pga-joint-scenario.yml'
+  workflow_dispatch:
+jobs:
+  joint-pga:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install app dependencies
+        run: pip install -r requirements.txt
+      - name: Validate syntax and every PGA source
+        run: python -m compileall -q ai2_pga_portfolio_scenarios.py portfolio_optimizer.py ai2_pga_oneclick.py ai2_pga_salary_review.py ai2_pga_workspace.py ai2_pga_review_ui.py
+      - name: Verify 6/6 portfolio strategies and exposure
+        run: python -m unittest discover -s tests -p test_ai2_pga_portfolio_scenarios.py -v
+      - name: Verify PGA uploaded-data and end-to-end simulations
+        run: python -m unittest discover -s tests -p test_ai2_pga_unified.py -v
+      - name: Verify original portfolios remain immutable in reviewed rebuilds
+        run: python -m unittest discover -s tests -p test_ai2_pga_salary_review.py -v
