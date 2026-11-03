@@ -32,6 +32,7 @@ def create_observed_model_pool(research):
     baseline = research["players"]
     raw_rates = research["raw_rates"]
     adjusted = research["adjusted_rates"]
+    pregame_role = research.get("pregame_role_evidence") or {}
     if not isinstance(baseline, pd.DataFrame) or not isinstance(raw_rates, pd.DataFrame):
         raise ValueError("Automatic research returned malformed data")
     if research.get("injury_meta", {}).get("source") in (None, "", "unavailable"):
@@ -76,6 +77,15 @@ def create_observed_model_pool(research):
         if salary <= 0:
             continue
         if pos == "WR" and salary < 4000 or pos == "RB" and salary < 4500:
+            continue
+        # Cheap players need repeated REAL opportunity before they can even
+        # enter the football simulator; inflated simulated targets cannot
+        # retroactively make a one-game breakout sustainable.
+        evidence = pregame_role.get(ident)
+        if (pos in {"RB", "WR", "TE"} and
+                evidence is not None and evidence.get("Role gate") == "BLOCK"):
+            excluded.append((name, "prebuild recurring-opportunity gate: " +
+                            str(evidence.get("Role rationale", "no evidence"))))
             continue
         key = (_norm_name(name), team, pos)
         r = lookup.get(key)
@@ -122,6 +132,8 @@ def create_observed_model_pool(research):
                       f"{last_season} W{last_week}; injury-conditioned opportunities")
         prepared.append({
             "ID": ident, "Name": name, "Position": pos, "TeamAbbrev": team,
+            "pregame_role_gate": (evidence or {}).get("Role gate", "UNAVAILABLE"),
+            "pregame_role_rationale": (evidence or {}).get("Role rationale", ""),
             "Salary": int(salary), "game": game, "opponent": opponent,
             "proj": proj, "dk_status": status, "weekly_projection_valid": True,
             "opportunity_verified": True, "optimizer_eligible": True,
@@ -161,6 +173,8 @@ def create_observed_model_pool(research):
         raise ValueError("Not enough observed, currently eligible players to simulate this slate")
     return frame, raw_rates, outs, {
         "eligible_player_count": len(frame),
+        "pregame_consistency_blocked": sum(
+            "prebuild recurring-opportunity gate" in str(r) for _, r in excluded),
         "excluded_player_count": len(excluded),
         "excluded_examples": excluded[:12],
         "complete_games": len(complete),
