@@ -108,6 +108,11 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         simulation_component_audit, raw_rates,
         research.get("injury_context_report") or [])
     means = dict(zip(players["ID"].astype(str), selection_draws.mean(axis=0).tolist()))
+    role_trends = research.get("role_trends") or []
+    recent_role_lookup = {
+        (str(r.get("Player","")).casefold(), str(r.get("Team","")).upper()): r
+        for r in role_trends if r.get("Position") == "RB"
+    }
     prepared = []
     from collections import Counter
     repeated_names = Counter(str(n) for n in pool["Name"])
@@ -128,11 +133,24 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
                     and np.isfinite(targets).all() and np.isfinite(carries).all()):
                 player["projected_targets"] = float(targets[:7000].mean())
                 player["projected_touches"] = float((targets[:7000] + carries[:7000]).mean())
+        # A source-driven RB cap is only possible with pregame observed
+        # games, not a fabricated current-week depth-chart assumption.
+        if player.get("Position") == "RB":
+            recent = recent_role_lookup.get((
+                str(player.get("Name","")).casefold(),
+                str(player.get("TeamAbbrev","")).upper()), {})
+            for source_key,target_key in (
+                ("Last 4 observed games","observed_recent_four_games"),
+                ("Last 4 rushing yards per game","observed_recent_four_rush_yd_pg"),
+                ("Last 4 carries per game","observed_recent_four_carries_pg"),
+                ("Last 4 targets per game","observed_recent_four_targets_pg")):
+                if recent.get(source_key) is not None:
+                    player[target_key] = recent[source_key]
         player["projection_source"] += "; 10,000 football-stat scenarios"
         prepared.append(player)
     candidates = build_classic_candidates(
         prepared, count=(1200 if count <= 20 else 2000), attempts=200000, seed=seed,
-        salary_floor=49600, salary_cap=50000, max_exposure=0.35,
+        salary_floor=49600, salary_cap=50000, max_exposure=0.28,
         min_wr_salary=4000, min_rb_salary=4500, require_opportunity=True)
     if len(candidates) < count:
         raise ValueError(
@@ -145,7 +163,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         try:
             ranked = select_simulated_portfolio(
                 candidates, players, selection_draws, count=count,
-                max_exposure=0.35, upside_share=0.25,
+                max_exposure=0.28, upside_share=0.25,
                 premium_count=(5 if count == 20 else 0), min_wr_salary=4000, min_rb_salary=4500,
                 value_salary_ceiling=5000, value_max_appearances=(2 if count <= 20 else max(2, int(count*0.35))),
                 premium_value_max_appearances=1, require_opportunity=True,
@@ -228,7 +246,6 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
             "P90/$1000": entry["p90_per_1000"],
             "Players": ", ".join(str(p["Name"]) for p in roster),
         })
-    role_trends = research.get("role_trends") or []
     role_risk_exposure=uncertain_role_exposures(observed_role_flags,ranked)
     return {
         "team_environment": research.get("team_environment") or {},
