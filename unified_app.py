@@ -177,6 +177,14 @@ else:
         saved_one = get_upload("NFL", "DraftKings salaries")
         if saved_one:
             st.caption(f"Saved salary file: {saved_one[0]}")
+        saved_audit = get_upload("NFL", "Simulation audit")
+        if saved_audit:
+            st.download_button(
+                "Download most recently saved NFL simulation audit (no rebuild)",
+                data=saved_audit[1], file_name=saved_audit[0], mime="text/csv",
+                key="ai2_nfl_saved_audit_download", on_click="ignore")
+            st.caption("This is the last saved build audit, not necessarily the current "
+                       "slate or any subsequent manual lineup changes.")
         seed_one = st.number_input("Simulation seed (optional)", min_value=0,
                                    max_value=2147483647, value=42, step=1,
                                    key="nfl_one_seed")
