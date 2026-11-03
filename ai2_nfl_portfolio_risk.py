@@ -10,6 +10,7 @@ from math import floor, isfinite
 
 DEFAULT_MAX_EXPOSURE = 0.28
 UNCERTAIN_RB_EXPOSURE = 0.12
+RETURN_COMPETITION_EXPOSURE = 0.08
 MAX_SHARED_PLAYERS = 6
 
 
@@ -29,6 +30,9 @@ def uncertain_running_back_reason(player):
     """
     if str(player.get("Position", "")).upper() != "RB":
         return None
+    returning = str(player.get("return_competition_reason") or "").strip()
+    if returning:
+        return "Returning starter/teammate workload uncertainty: " + returning
     games = _finite(player.get("observed_games"))
     carries = _finite(player.get("observed_carries_pg"))
     targets = _finite(player.get("observed_targets_pg"))
@@ -69,6 +73,8 @@ def maximum_player_appearances(player, lineup_count, overall_fraction=DEFAULT_MA
     if lineup_count < 1 or not 0 < overall_fraction <= 1:
         raise ValueError("Invalid NFL portfolio exposure parameters")
     overall = max(1, floor(lineup_count * overall_fraction))
+    if player.get("return_competition_reason"):
+        return min(overall, max(1, floor(lineup_count * RETURN_COMPETITION_EXPOSURE)))
     if uncertain_running_back_reason(player):
         return min(overall, max(1, floor(lineup_count * UNCERTAIN_RB_EXPOSURE)))
     return overall
