@@ -21,7 +21,10 @@ STAT_FIELDS = {
            "receiving_yards", "rushing_tds", "receiving_tds"),
     "WR": ("targets", "receptions", "receiving_yards", "receiving_tds",
            "carries", "rushing_yards"),
-    "TE": ("targets", "receptions", "receiving_yards", "receiving_tds"),
+    "TE": ("targets", "receptions", "receiving_yards", "receiving_tds",
+           "carries", "rushing_yards", "rushing_tds"),
+    "DST": ("sacks", "interceptions", "fumble_recoveries",
+            "defensive_tds", "safeties", "points_allowed"),
 }
 DISPLAY = {
     "passing_yards": "Passing yards",
@@ -34,6 +37,11 @@ DISPLAY = {
     "receptions": "Receptions",
     "receiving_yards": "Receiving yards",
     "receiving_tds": "Receiving TDs",
+    "sacks": "Sacks",
+    "fumble_recoveries": "Fumble recoveries",
+    "defensive_tds": "Defensive TDs",
+    "safeties": "Safeties",
+    "points_allowed": "Points allowed",
 }
 MARKET_NAMES = {
     "pass_yds": "passing_yards",
@@ -65,6 +73,87 @@ def _summarize(series):
         "p10": round(float(np.percentile(series, 10)), 2),
         "p90": round(float(np.percentile(series, 90)), 2),
     }
+
+
+def _scoring_breakdown(position, detail, points):
+    """Derive points from the SAME scenario stats; fail on mismatches.
+
+    Separate receptions/yardage, TDs and bonuses rather than applying TD
+    odds to an already TD-included fantasy projection (double counting).
+    """
+    n = len(points)
+    if not isinstance(detail, dict):
+        return {}
+    required = {
+        "QB": ("passing_yards", "passing_tds", "interceptions",
+               "rushing_yards", "rushing_tds"),
+        "RB": ("receptions", "receiving_yards", "receiving_tds",
+               "rushing_yards", "rushing_tds"),
+        "WR": ("receptions", "receiving_yards", "receiving_tds",
+               "rushing_yards", "rushing_tds"),
+        "TE": ("receptions", "receiving_yards", "receiving_tds",
+               "rushing_yards", "rushing_tds"),
+    }.get(position)
+    if position == "DST":
+        defense_tds = _series(detail, "defensive_tds", n)
+        if defense_tds is None:
+            return {}
+        td_points = 6.0 * defense_tds
+        non_td = points - td_points
+        if np.any(~np.isfinite(non_td)):
+            raise ValueError("Invalid DST scenario score breakdown")
+        return {
+            "Model non-TD DK": round(float(non_td.mean()), 2),
+            "Model expected TD DK": round(float(td_points.mean()), 2),
+            "Model chance 1+ scoring TD %": round(
+                100 * float((defense_tds >= 1).mean()), 1),
+            "Model chance 10+ DK without TD %": round(
+                100 * float((non_td >= 10).mean()), 1),
+            "Scoring breakdown": "Same-world DST TD points isolated",
+        }
+    if required is None:
+        return {}
+    series = {key: _series(detail, key, n) for key in required}
+    if any(v is None for v in series.values()):
+        return {}
+    if position == "QB":
+        pass_y = series["passing_yards"]
+        rush_y = series["rushing_yards"]
+        base = (.04 * pass_y + .1 * rush_y - series["interceptions"])
+        td_points = 4 * series["passing_tds"] + 6 * series["rushing_tds"]
+        bonuses = 3 * (pass_y >= 300) + 3 * (rush_y >= 100)
+        total = None
+        touchdown_count = series["passing_tds"] + series["rushing_tds"]
+    else:
+        rush_y = series["rushing_yards"]
+        rec_y = series["receiving_yards"]
+        receptions = series["receptions"]
+        total = rush_y + rec_y
+        base = .1 * total + receptions
+        td_points = 6 * (series["rushing_tds"] + series["receiving_tds"])
+        bonuses = 3 * (rush_y >= 100) + 3 * (rec_y >= 100)
+        touchdown_count = series["rushing_tds"] + series["receiving_tds"]
+    reconstructed = base + td_points + bonuses
+    if not np.allclose(reconstructed, points, atol=.02, rtol=0):
+        raise ValueError("Model stat projection does not reconcile to DK points")
+    non_td = base + bonuses
+    result = {
+        "Model yards/receptions DK": round(float(base.mean()), 2),
+        "Model bonus DK": round(float(bonuses.mean()), 2),
+        "Model non-TD DK": round(float(non_td.mean()), 2),
+        "Model expected TD DK": round(float(td_points.mean()), 2),
+        "Model chance 1+ scoring TD %": round(
+            100 * float((touchdown_count >= 1).mean()), 1),
+        "Model chance 10+ DK without TD %": round(
+            100 * float((non_td >= 10).mean()), 1),
+        "Scoring breakdown": "Reconciled: yardage/receptions + TDs + bonuses",
+    }
+    if total is not None:
+        result["Total scrimmage yards projection"] = round(
+            float(total.mean()), 2)
+        result["Total scrimmage yards median"] = round(
+            float(np.median(total)), 2)
+    return result
 
 
 def player_prop_decisions(players, stat_draws, point_draws, pregame_role=None,
@@ -110,12 +199,15 @@ def player_prop_decisions(players, stat_draws, point_draws, pregame_role=None,
             "Model chance 15+ DK %": round(100 * float((points >= 15).mean()), 1),
             "Model chance 20+ DK %": round(100 * float((points >= 20).mean()), 1),
             "Model chance <=5 DK %": round(100 * float((points <= 5).mean()), 1),
+            "Model mean DK / $1K": round(
+                float(points.mean()) / (float(player["Salary"]) / 1000), 2),
             "Stat evidence": "Verified in same-world football outcomes" if
                isinstance(individual, dict) and position in STAT_FIELDS else
                "Unavailable / ambiguous - no stat-specific confidence",
             "Market comparison": "NO VERIFIED SPORTSBOOK LINE",
             "Predictive calibration": "UNVALIDATED: modeled probabilities, not observed hit rates",
         }
+        row.update(_scoring_breakdown(position, individual, points))
         for stat in STAT_FIELDS.get(position, ()):
             vals = _series(individual, stat, n)
             if vals is None:
