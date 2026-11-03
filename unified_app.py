@@ -267,6 +267,35 @@ else:
             st.caption("No current-week coach/interview/news integration is certified by "
                        "this consistency report. Missing injury/role evidence must "
                        "remain a separate uncertainty, not an assumed playing-time boost.")
+            prop_rows = output_one.get("player_prop_forecasts") or []
+            st.subheader("Stat-by-stat player predictions — before lineup selection")
+            if prop_rows:
+                st.caption(output_one.get("prop_model_method", ""))
+                st.info("These are OUR simulated prop-like predictions, not sportsbook "
+                        "lines, betting recommendations, or independently calibrated "
+                        "over probabilities. Only a real, time-stamped market line "
+                        "and odds would allow an over/under value comparison.")
+                forecast_df = _ai2_pd.DataFrame(prop_rows)
+                preferred_columns = [
+                    "Player", "Team", "Position", "Salary", "Historical role validation",
+                    "Model mean DK", "Model median DK", "Model P10 DK", "Model P90 DK",
+                    "Model chance 10+ DK %", "Model chance 15+ DK %",
+                    "Model chance <=5 DK %", "Passing yards projection",
+                    "Rushing yards projection", "Carries projection",
+                    "Targets projection", "Receptions projection",
+                    "Receiving yards projection", "Market comparison",
+                ]
+                st.dataframe(forecast_df[[c for c in preferred_columns
+                                          if c in forecast_df.columns]],
+                             use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Download player-by-player stat forecasts and model ranges",
+                    data=forecast_df.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="team_ai2_nfl_player_prop_forecasts.csv",
+                    mime="text/csv", key="nfl_stat_first_forecasts",
+                    on_click="ignore")
+            else:
+                st.error("No verified model stat forecasts available for the current slate.")
             st.subheader(f"Your {len(ranked)} lineups — player names")
             st.warning(output_one.get("research_warning",
                        "Experimental projections. Review current injuries before entry."))
