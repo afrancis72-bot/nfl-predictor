@@ -172,7 +172,7 @@ else:
         import pandas as _ai2_pd
 
         st.caption("NFL Classic · Upload DraftKings salaries, then select 15, 20, 50, or 150 lineups. No projections upload required.")
-        st.caption("NFL release 2026-11-03 • 28% exposure • 12% limited-role RBs • 8% flagged returning-starter RB competition • maximum six shared players • human approval required")
+        st.caption("NFL prebuild intelligence • repeated carry/target consistency gate before simulation • risk and stack evaluation • human approval required")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
         saved_one = get_upload("NFL", "DraftKings salaries")
         if saved_one:
@@ -239,6 +239,34 @@ else:
         if output_one:
             ranked = st.session_state.get("ai2_oneclick_review_ranked") or output_one["ranked"]
             overview, details, exposures = review_tables(ranked)
+            st.subheader("Pregame opportunity intelligence — evaluated BEFORE lineup construction")
+            prebuild_rows = output_one.get("pregame_role_evidence") or []
+            if prebuild_rows:
+                prebuild_df = _ai2_pd.DataFrame(prebuild_rows)
+                blocked = int((prebuild_df["Role gate"] == "BLOCK").sum())
+                qualified = int((prebuild_df["Role gate"] == "PASS").sum())
+                st.info(f"{qualified} qualifying low-priced players with repeated "
+                        f"opportunity evidence; {blocked} blocked before the simulator. "
+                        "Full-price players are not certified by the low-price gate.")
+                st.caption(output_one.get("pregame_role_review_method",""))
+                with st.expander("See player-by-player pregame eligibility and last five games"):
+                    display = prebuild_df.copy()
+                    display["Recent individual opportunities"] = display[
+                        "Recent individual opportunities"].map(str)
+                    display["Recent individual weeks"] = display[
+                        "Recent individual weeks"].map(str)
+                    st.dataframe(display, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "Download PREBUILD player intelligence (CSV)",
+                        data=display.to_csv(index=False).encode("utf-8-sig"),
+                        file_name="team_ai2_nfl_prebuild_opportunity_audit.csv",
+                        mime="text/csv", key="nfl_prebuild_consistency_export",
+                        on_click="ignore")
+            else:
+                st.error("Pregame player-role evidence missing; do not trust this build.")
+            st.caption("No current-week coach/interview/news integration is certified by "
+                       "this consistency report. Missing injury/role evidence must "
+                       "remain a separate uncertainty, not an assumed playing-time boost.")
             st.subheader(f"Your {len(ranked)} lineups — player names")
             st.warning(output_one.get("research_warning",
                        "Experimental projections. Review current injuries before entry."))
