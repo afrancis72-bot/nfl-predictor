@@ -21,6 +21,7 @@ from ai2_nfl_opponent_intelligence import make_opponent_report, report_summary
 from ai2_nfl_input_integrity import input_lineage_rows, lineup_role_warnings
 from ai2_nfl_projection_review import projection_review_flags
 from ai2_nfl_role_plausibility import compare_simulated_role_to_history
+from ai2_nfl_projection_accountability import uncertain_role_exposures
 import pandas as pd
 
 def _slate_week(saved_salaries):
@@ -228,6 +229,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
             "Players": ", ".join(str(p["Name"]) for p in roster),
         })
     role_trends = research.get("role_trends") or []
+    role_risk_exposure=uncertain_role_exposures(observed_role_flags,ranked)
     return {
         "team_environment": research.get("team_environment") or {},
         "snap_role_report": [
@@ -258,6 +260,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "player_simulation_audit": simulation_component_audit,
         "projection_review_flags": high_mean_flags,
         "role_projection_anomalies": observed_role_flags,
+        "role_risk_exposure": role_risk_exposure,
         "player_simulation_audit_error": simulation_component_audit_error,
         "opponent_matchup_report": opposing_report,
         "opponent_matchup_summary": opposing_summary,
