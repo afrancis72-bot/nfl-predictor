@@ -50,9 +50,12 @@ def _series(detail, name, size):
     if not isinstance(detail, dict) or name not in detail:
         return None
     result = np.asarray(detail[name], dtype=float)
-    if result.shape != (size,) or not np.isfinite(result).all():
+    # Stats are produced in 10,000 shared worlds; the optimizer uses only
+    # the first 7,000, reserving the last 3,000 for an untouched holdout.
+    # Never use held-out worlds to inform prebuild player decisions.
+    if result.ndim != 1 or result.size < size or not np.isfinite(result).all():
         raise ValueError(f"Invalid model prop simulation series: {name}")
-    return result
+    return result[:size]
 
 
 def _summarize(series):
