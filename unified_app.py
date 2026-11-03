@@ -172,7 +172,7 @@ else:
         import pandas as _ai2_pd
 
         st.caption("NFL Classic · Upload DraftKings salaries, then select 15, 20, 50, or 150 lineups. No projections upload required.")
-        st.caption("NFL release 2026-11-03 • SALARY-CONSTRAINED QB STACK SEARCH + 3,000 HELD-OUT SCENARIOS • human approval required")
+        st.caption("NFL release 2026-11-03 • QB stack search + DST/opposing receiver exposure guard + restorable simulation audit • human approval required")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
         saved_one = get_upload("NFL", "DraftKings salaries")
         if saved_one:
