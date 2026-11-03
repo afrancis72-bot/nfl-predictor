@@ -105,7 +105,7 @@ def _scoring_breakdown(position, detail, points):
         return {
             "Model non-TD DK": round(float(non_td.mean()), 2),
             "Model expected TD DK": round(float(td_points.mean()), 2),
-            "Model chance 1+ scoring TD %": round(
+            "Model chance 1+ TD involvement %": round(
                 100 * float((defense_tds >= 1).mean()), 1),
             "Model chance 10+ DK without TD %": round(
                 100 * float((non_td >= 10).mean()), 1),
@@ -142,7 +142,7 @@ def _scoring_breakdown(position, detail, points):
         "Model bonus DK": round(float(bonuses.mean()), 2),
         "Model non-TD DK": round(float(non_td.mean()), 2),
         "Model expected TD DK": round(float(td_points.mean()), 2),
-        "Model chance 1+ scoring TD %": round(
+        "Model chance 1+ TD involvement %": round(
             100 * float((touchdown_count >= 1).mean()), 1),
         "Model chance 10+ DK without TD %": round(
             100 * float((non_td >= 10).mean()), 1),
