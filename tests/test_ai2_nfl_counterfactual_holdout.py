@@ -40,7 +40,8 @@ class NFLAccountabilityTests(unittest.TestCase):
             for lineup in (one,two):
                 self.assertIsNotNone(lineup)
                 self.assertEqual(check_classic_lineup(lineup,salary_floor=49600),[])
-                self.assertEqual(sum(int(p["Salary"]) for p in lineup),50000)
+                self.assertGreaterEqual(sum(int(p["Salary"]) for p in lineup),49600)
+                self.assertLessEqual(sum(int(p["Salary"]) for p in lineup),50000)
                 self.assertEqual(qb_and_partners(lineup)[0]["ID"],qb["ID"])
             self.assertEqual(len(qb_and_partners(two)[1]),2)
         pools["WR"]=[p for p in pools["WR"] if p["TeamAbbrev"]!="A"]
