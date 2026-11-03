@@ -37,6 +37,20 @@ def uncertain_running_back_reason(player):
     if games is None or games < 3 or any(x is None for x in (carries, targets, yards)):
         return None
     observed_touches = carries + targets
+    recent_n = _finite(player.get("observed_recent_four_games"))
+    recent_yards = _finite(player.get("observed_recent_four_rush_yd_pg"))
+    recent_carries = _finite(player.get("observed_recent_four_carries_pg"))
+    recent_targets = _finite(player.get("observed_recent_four_targets_pg"))
+    # Unweighted recent game volume provides a cross-check when one spike
+    # distorts recency-weighted historical projections.
+    if (recent_n is not None and recent_n >= 4
+            and all(x is not None for x in (recent_yards,recent_carries,recent_targets))
+            and recent_yards < 35 and recent_carries < 12
+            and recent_targets < 4):
+        return (f"Limited last-four-game rushing role: {recent_yards:.1f} "
+                f"rushing yards, {recent_carries:.1f} carries and "
+                f"{recent_targets:.1f} targets per game; "
+                "backup/rotation workload needs current-week verification")
     # A player who historically carries infrequently is not automatically a
     # featured back after one injury-dependent spike.
     if carries < 8 and yards < 40 and targets < 4:
