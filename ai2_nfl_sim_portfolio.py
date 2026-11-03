@@ -12,6 +12,10 @@ from ai2_nfl_qb_audit import qb_and_partners
 from ai2_nfl_qb_counterfactual import quarterback_counterfactuals
 from ai2_nfl_correlation_guard import (opposing_pass_catcher_dst_pairs,
                                        opposing_dst_lineup_budget)
+from ai2_nfl_portfolio_risk import (
+    maximum_player_appearances, uncertain_running_back_reason,
+    overlap_groups, overlap_conflicts, MAX_SHARED_PLAYERS,
+)
 
 
 from collections import defaultdict
@@ -35,11 +39,13 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
     if not n:
         raise ValueError("No legal candidates; no partial portfolio exported")
     appearances = defaultdict(set)
+    player_records = {}
     cheap = set()
     for i, item in enumerate(scored):
         for p in item["candidate"]["players"]:
             ident = str(p["ID"])
             appearances[ident].add(i)
+            player_records.setdefault(ident, p)
             if (str(p.get("Position", "")).upper() in {"RB", "WR"}
                     and float(p["Salary"]) < value_salary_ceiling):
                 cheap.add(ident)
@@ -63,12 +69,19 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
         for i in appearances.get(str(ident), ()):
             add_constraint([(n + i, 1)], 0, 0)
     for ident, indices in appearances.items():
-        cap = min(max_player, value_max_appearances) if ident in cheap else max_player
+        role_cap = maximum_player_appearances(
+            player_records[ident], count, max_exposure)
+        cap = min(role_cap, value_max_appearances) if ident in cheap else role_cap
         add_constraint([(i, 1) for i in indices] +
                        [(n + i, 1) for i in indices], 0, cap)
         if ident in cheap:
             add_constraint([(n + i, 1) for i in indices],
                            0, premium_value_max_appearances)
+    # No two final Classic lineups may share seven or more of nine players.
+    # Repeated 7-player sets enforce overlap without enumerating all N^2 pairs.
+    for group in overlap_groups(scored):
+        add_constraint([(i, 1) for i in group] +
+                       [(n + i, 1) for i in group], 0, 1)
     # Cross-lineup restriction: opposing WR/TE against a rostered DST can
     # occasionally be viable, but may not dominate the portfolio. This is a
     # whole-portfolio constraint, enforced even if greedy selection fails.
@@ -281,6 +294,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
     limit = max(1, int(np.floor(count * max_exposure)))
     opposing_dst_budget = opposing_dst_lineup_budget(count)
     chosen, exposures, used = [], Counter(), set()
+    chosen_rosters = []
     selected_opposing_dst = 0
     for role, quota in (("upside", round(count * upside_share)),
                         ("balanced", count-round(count * upside_share))):
@@ -306,12 +320,16 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             if scored[i]["opposing_dst_conflicts"] and selected_opposing_dst >= opposing_dst_budget:
                 continue
             keys = [str(p["ID"]) for p in scored[i]["candidate"]["players"]]
+            if overlap_conflicts(scored[i]["candidate"]["players"], chosen_rosters):
+                continue
             is_premium = False
             def limit_reached(p):
                 key = str(p["ID"])
                 is_value = (str(p.get("Position", "")).upper() in {"RB", "WR"}
                             and float(p["Salary"]) < value_salary_ceiling)
-                if exposures[key] >= (min(limit, value_max_appearances) if is_value else limit):
+                role_limit = maximum_player_appearances(p, count, max_exposure)
+                if exposures[key] >= (min(role_limit, value_max_appearances)
+                                     if is_value else role_limit):
                     return True
                 return False
             if any(limit_reached(p) for p in scored[i]["candidate"]["players"]):
@@ -321,6 +339,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                                p90_per_1000=round(scored[i]["simulated_p90"] /
                                    (float(scored[i]["candidate"]["salary"]) / 1000), 4)))
             exposures.update(keys)
+            chosen_rosters.append(keys)
             used.add(i)
             selected_opposing_dst += bool(scored[i]["opposing_dst_conflicts"])
             selected_role += 1
@@ -389,8 +408,19 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
     # approximation. A single QB is also a player subject to this rule.
     final_exposure=Counter(str(p["ID"]) for item in chosen
                            for p in item["candidate"]["players"])
-    if len(chosen)!=count or any(value>limit for value in final_exposure.values()):
-        raise ValueError("Incomplete NFL portfolio or overall exposure cap violated; no export")
+    final_records = {str(p["ID"]): p for item in chosen
+                     for p in item["candidate"]["players"]}
+    if len(chosen)!=count or any(
+        value > maximum_player_appearances(final_records[ident],count,max_exposure)
+        for ident,value in final_exposure.items()
+    ):
+        raise ValueError("Incomplete NFL portfolio or exposure/role-risk cap violated; no export")
+    final_rosters = [[str(p["ID"]) for p in item["candidate"]["players"]]
+                     for item in chosen]
+    if any(len(set(final_rosters[i]) & set(final_rosters[j])) > MAX_SHARED_PLAYERS
+           for i in range(len(final_rosters))
+           for j in range(i+1,len(final_rosters))):
+        raise ValueError("NFL portfolio has near-duplicate lineups; no export")
     final_opposing_dst = sum(bool(opposing_pass_catcher_dst_pairs(
         item["candidate"]["players"])) for item in chosen)
     if final_opposing_dst > opposing_dst_budget:
@@ -414,6 +444,17 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             "opposing_dst_max_lineups":opposing_dst_budget,
             "opposing_dst_candidates_before_filter":sum(
                 bool(x["opposing_dst_conflicts"]) for x in all_scored),
+            "max_shared_players":MAX_SHARED_PLAYERS,
+            "overall_max_exposure":max_exposure,
+            "uncertain_running_back_exposures":{
+                str(p.get("Name", p["ID"])): {
+                    "lineups": final_exposure[str(p["ID"])],
+                    "cap": maximum_player_appearances(p,count,max_exposure),
+                    "reason": uncertain_running_back_reason(p),
+                } for p in final_records.values()
+                if uncertain_running_back_reason(p)
+                and final_exposure[str(p["ID"])] > 0
+            },
         })
     if holdout is not None and diagnostics is not None:
         counterfactual,validation=quarterback_counterfactuals(
