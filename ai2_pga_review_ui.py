@@ -145,6 +145,12 @@ def render_review_page(model, *, signature, lineup_count, max_exposure,
         st.warning("Review settings changed. Rebuild before downloading new lineups.")
         return
     st.dataframe(rebuilt["summary"],use_container_width=True,hide_index=True)
+    st.download_button(
+        "Download REVIEWED six-of-six and lineup audit",
+        rebuilt["summary"].to_csv(index=False).encode("utf-8-sig"),
+        "team_ai2_pga_reviewed_simulation_audit.csv",
+        mime="text/csv",key="ai2_pga_reviewed_joint_audit",
+    )
     st.dataframe(rebuilt["exposure"],use_container_width=True,hide_index=True)
     st.download_button("Download REVIEWED lineups",
                        rebuilt["lineups"].to_csv(index=False).encode("utf-8-sig"),
