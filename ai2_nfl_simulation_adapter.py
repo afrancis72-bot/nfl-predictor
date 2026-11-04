@@ -152,4 +152,8 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
     return simulate_stat_driven_dfs(active, rates, n_sims=int(n_sims),
                                     seed=int(seed), out_players=out_players,
                                     allow_role_proxies=False, team_environment=team_environment,
-                                    snap_profiles=snap_profiles, injury_presence=injury_presence)
+                                    snap_profiles=snap_profiles, injury_presence=injury_presence,
+                                    # Reconcile team passing yards through actually
+                                    # observed omitted receivers before uniformly
+                                    # inflating every roster-eligible WR projection.
+                                    other_yard_strength=0.70)
