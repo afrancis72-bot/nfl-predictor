@@ -99,6 +99,28 @@ def diversify_40_from_stat_simulation(candidate_portfolios, *, role_anomalies=()
     # Four high-stakes, sixteen balanced, twenty lower-stakes entries.
     for tier,(_,quota) in enumerate(TIERS):
         constraint([(tier*n+i,1) for i in range(n)],quota,quota)
+    # Premium-first anchor: keep the single highest modeled MEAN among
+    # independently simulated, legally stacked candidates without a
+    # currently limited-role running back. Find the best legitimate entry
+    # FIRST, then diversify the OTHER 39 slots around it. This prevents
+    # the joint solver trading a 143+ mean premium candidate into a
+    # small contest merely to make the aggregate 40 look more diverse.
+    # An expected mean is not confidence in a fragile game-day role;
+    # those players fail the risk gate here, not by a global projection veto.
+    premium_anchor_candidates=[
+        i for i,roster in enumerate(rosters)
+        if i not in premium_role_risk
+        and qb_and_partners(roster)[1]
+    ]
+    if not premium_anchor_candidates:
+        raise ValueError("No role-verified and stacked premium candidate")
+    premium_anchor=max(
+        premium_anchor_candidates,
+        key=lambda i: (
+            float(scored[i]["simulated_mean"]),
+            float(scored[i]["simulated_p90"]),
+            float(scored[i]["simulated_p99"])))
+    constraint([(premium_anchor,1)],1,1)
     for i in range(n):
         constraint([(tier*n+i,1) for tier in range(tsize)],0,1)
     max_any = floor(COUNT * .28)
@@ -217,6 +239,14 @@ def diversify_40_from_stat_simulation(candidate_portfolios, *, role_anomalies=()
         "source_lineup_count":len(all_items),
         "unique_candidate_count":n,
         "num_selected":len(selected),
+        "premium_highest_mean_eligible_anchor":{
+            "mean":round(float(scored[premium_anchor]["simulated_mean"]),2),
+            "p90":round(float(scored[premium_anchor]["simulated_p90"]),2),
+            "p99":round(float(scored[premium_anchor]["simulated_p99"]),2),
+            "qb":qb_and_partners(rosters[premium_anchor])[0]["Name"],
+            "selected_premium":bool(x[premium_anchor]==1),
+            "review_warning":"Highest projected mean does not validate questionable usage; current-week injuries still require review",
+        },
         "premium_max_shared":max_premium_shared,
         "milp_solver_status":solution.status,
         "milp_message":str(solution.message),
