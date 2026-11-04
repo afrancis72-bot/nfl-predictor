@@ -21,6 +21,10 @@ jobs:
           python-version: '3.11'
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Compile unified Streamlit app and check emerging-role regression
+        run: |
+          python -m py_compile unified_app.py ai2_nfl_core_diversifier.py ai2_nfl_review.py
+          python -m unittest discover -s tests -p 'test_nfl_emerging_opportunity.py' -v
       - name: Download three actual current-model November 8 candidate portfolios
         env:
           GH_TOKEN: ${{ github.token }}
