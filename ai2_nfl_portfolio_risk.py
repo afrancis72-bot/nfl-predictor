@@ -30,6 +30,9 @@ def uncertain_running_back_reason(player):
     """
     if str(player.get("Position", "")).upper() != "RB":
         return None
+    if player.get("emerging_role_limited") is True:
+        return ("Emerging two-game role: needs official current-week confirmation; "
+                + str(player.get("emerging_role_evidence") or ""))
     returning = str(player.get("return_competition_reason") or "").strip()
     if returning:
         return "Returning starter/teammate workload uncertainty: " + returning
@@ -74,6 +77,10 @@ def maximum_player_appearances(player, lineup_count, overall_fraction=DEFAULT_MA
         raise ValueError("Invalid NFL portfolio exposure parameters")
     overall = max(1, floor(lineup_count * overall_fraction))
     if player.get("return_competition_reason"):
+        return min(overall, max(1, floor(lineup_count * RETURN_COMPETITION_EXPOSURE)))
+    # Emerging two-game role is an opportunity candidate, not a validated
+    # full-game workhorse. Retain only limited exploratory GPP exposure.
+    if player.get("emerging_role_limited") is True:
         return min(overall, max(1, floor(lineup_count * RETURN_COMPETITION_EXPOSURE)))
     if uncertain_running_back_reason(player):
         return min(overall, max(1, floor(lineup_count * UNCERTAIN_RB_EXPOSURE)))
