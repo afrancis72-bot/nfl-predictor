@@ -175,6 +175,22 @@ def build_pregame_role_evidence(history, salary_rows, season, week):
                     meaningful == 3 and latest_two == 2 and
                     len(set(seen_weeks) & set(team_games.get(team, [])[-3:])) == 3)
         stable = bool(sustained or sustained_scores or emerging)
+        # A player returning to a new role can have fewer appearances in
+        # the last five TEAM games without being a one-week punt. Require
+        # TWO consecutive actual team games with meaningful touches AND an
+        # independently observed decline/absence for a same-position peer.
+        # This does not certify Sunday's starter or any unverified injury.
+        trend_note=teammate_context(team,position,_norm_name(name))
+        latest_team_weeks=team_games.get(team,[])[-2:]
+        reentry_recent=(
+            position=="RB" and not ambiguous and len(rows)>=2
+            and len(latest_team_weeks)==2
+            and [int(r["week"]) for r in rows[-2:]]==latest_team_weeks
+            and len(available)>=2 and all(v>=threshold for v in observed[-2:])
+            and ("DECLINING OBSERVED ROLE" in trend_note
+                 or "NO RECENT RECORDED APPEARANCE" in trend_note)
+            and not stable
+        )
         below = _salary(player) < LOW_PRICE[position]
         if ambiguous:
             status, reason = "BLOCK", "Ambiguous duplicate player-week statistics"
@@ -185,6 +201,11 @@ def build_pregame_role_evidence(history, salary_rows, season, week):
             reason = ("Multiple prior games of verified opportunities" if sustained else
                       "Repeated double-digit scoring with recurring touches/targets"
                       if sustained_scores else "Three consecutive recent team games with verified opportunity")
+        elif reentry_recent:
+            status = "EMERGING_LIMITED"
+            reason = ("Two most recent team games show meaningful rushing involvement, "
+                      "with a same-position teammate's observed workload declining; "
+                      "current-week starter, injury and snap role NOT verified")
         elif spike:
             status, reason = "BLOCK", "Single-week volume spike without sustained role"
         elif len(available) < 3:
@@ -201,6 +222,7 @@ def build_pregame_role_evidence(history, salary_rows, season, week):
             "Meaningful opportunities": meaningful,
             "Meaningful opportunity threshold": threshold,
             "Meaningful opportunities in last two appearances": latest_two,
+            "Emerging two-game role on latest team weeks": bool(reentry_recent),
             "Prior games with 10+ partial DK points": double_digit,
             "Recent individual opportunities": [round(v, 2) if v is not None else None
                                                  for v in observed],
