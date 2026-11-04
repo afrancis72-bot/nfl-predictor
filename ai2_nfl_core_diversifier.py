@@ -116,7 +116,7 @@ def diversify_40_from_stat_simulation(candidate_portfolios, *, role_anomalies=()
         # Four premium entries need separate paths to winning, including
         # a maximum of one exposed role-anomaly player.
         constraint([(i,1) for i in appearances[pid]],
-                   0,1 if pid in flagged else 2)
+                   0,1 if (pid in flagged or pid in expensive) else 2)
     # Premium entries must have a genuine quarterback receiving stack.
     for i,roster in enumerate(rosters):
         qb,partners=qb_and_partners(roster)
