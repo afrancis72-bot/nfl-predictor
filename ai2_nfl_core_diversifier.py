@@ -122,10 +122,13 @@ def diversify_40_from_stat_simulation(candidate_portfolios, *, role_anomalies=()
         qb,partners=qb_and_partners(roster)
         if not qb or not partners:
             constraint([(i,1)],0,0)
-        # A premium lineup should not rely on an inflated RB workload
-        # *together with* one expensive WR, increasing joint dependency.
-        if roster_ids[i]&flagged and roster_ids[i]&expensive:
-            constraint([(i,1)],0,0)
+        # A flagship lineup may contain one projection-review RB and
+        # one premium WR when its independent simulated ceiling supports
+        # the risk. The entire PREMIUM portfolio still limits the flagged
+        # RB to one entry, limits premium expensive-player exposure to one,
+        # and enforces QB/DST and offensive-core separation.
+        # Automatic exclusion here previously demoted even our 143.93
+        # point lineup to a $0.50 game despite an otherwise legal role.
     # A 2-game RB role or returning-starter dependency is not verified
     # enough for the four highest-stakes entries: allow such upside in the
     # $0.50 / $0.10 portfolios under strict 8%-12% exposure caps instead.
@@ -161,15 +164,22 @@ def diversify_40_from_stat_simulation(candidate_portfolios, *, role_anomalies=()
         for field in ("simulated_mean","simulated_p90","simulated_p99")])
     spread=np.maximum(metrics.max(axis=1)-metrics.min(axis=1),1.)
     normalized=(metrics-metrics.min(axis=1)[:,None])/spread[:,None]
-    mixes=((.20,.35,.45),(.50,.35,.15),(.25,.30,.45))
-    tier_value=(2.2,1.,.65)
+    # Premium FIRST: reward the strongest credible combination of
+    # modeled mean and upper-tail probability before optimising smaller
+    # entries. Risk/diversity is enforced via explicit eligibility and
+    # exposure constraints, NOT by silently reclassifying good lineups
+    # as lower-stakes because they share a premium WR with a flagged RB.
+    mixes=((.40,.40,.20),(.50,.35,.15),(.25,.30,.45))
+    tier_value=(5.0,1.,.65)
     costs=[]
     for tier in range(tsize):
         scores=(np.asarray(mixes[tier])@normalized)*tier_value[tier]
         for i,ids in enumerate(roster_ids):
-            scores[i]-=(.28,.12,.03)[tier]*len(ids&flagged)
+            scores[i]-=(.18,.12,.03)[tier]*len(ids&flagged)
             if tier==0 and ids&flagged and ids&expensive:
-                scores[i]-=.25
+                # Mild, explicit risk preference; an elevated opportunity
+                # forecast is a REVIEW flag, not proof of player failure.
+                scores[i]-=.08
         costs.extend(-scores)
     matrix=coo_matrix((coeff,(row_index,columns)),
                       shape=(len(lower),num_vars)).tocsr()
