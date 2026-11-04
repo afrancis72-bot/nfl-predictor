@@ -1,0 +1,35 @@
+name: Week9 alternative diversified NFL candidates
+on:
+  push:
+    branches: [feature/unified-ai2-platform]
+    paths:
+      - 'scripts/run_week9_2026_alternate.py'
+      - '.github/workflows/week9-alternative-candidates.yml'
+  workflow_dispatch:
+jobs:
+  alternate-seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [47, 89]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Generate 50 additional stat-first candidate lineups from unchanged current engine
+        env:
+          NFL_BUILD_SEED: ${{ matrix.seed }}
+        run: python -u scripts/run_week9_2026_alternate.py
+      - name: Preserve independent candidate portfolios even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: week9-candidates-seed-${{ matrix.seed }}
+          path: week9_2026_alternate_seed_${{ matrix.seed }}/
+          if-no-files-found: warn
+          retention-days: 14
