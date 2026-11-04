@@ -117,11 +117,38 @@ for p in resolved:
                                    "Difference actual - new projection",
                                    "Pregame role validation"]})
 rating.sort(key=lambda r:abs(float(r[key])),reverse=True)
+build_report = {}
+if (OUT/"backtest_result.json").exists():
+    build_report=json.loads((OUT/"backtest_result.json").read_text(encoding="utf-8"))
+lineup_summary = {}
+if (OUT/"new_model_lineups_offensive_actual.csv").exists():
+    with (OUT/"new_model_lineups_offensive_actual.csv").open(
+            encoding="utf-8-sig",newline="") as f:
+        lineups=list(csv.DictReader(f))
+    complete=[r for r in lineups if str(r.get("Actual offense matched of 8"))=="8"]
+    lineup_summary={
+        "completed_20_lineups":len(lineups),
+        "lineups_with_all_8_offensive_actuals":len(complete),
+        "average_new_model_8_player_offense_projection":round(
+            float(np.mean([float(r["NEW model 8-offense mean"]) for r in complete])),2)
+            if complete else None,
+        "average_actual_8_player_offense_points":round(
+            float(np.mean([float(r["Actual 8-offense partial DK"]) for r in complete])),2)
+            if complete else None,
+        "full_nine_player_DK_score_available":False,
+    }
 report={
     "status":"NEW CURRENT MODEL PLAYER STAT FORECAST COMPARED TO NOV1 RESULTS",
+    "portfolio_build_result":(
+        "COMPLETE" if build_report.get("status")=="MODEL_BUILD_COMPLETED"
+        else "FAILED; no complete portfolio"),
+    "portfolio_result_details":lineup_summary,
     "selected_current_model":"feature/unified-ai2-platform",
     "date":"2026-11-01",
-    "complete_20_lineup_optimizer_status":"FAILED: hard exposure and overlap constraints, no full lineups exported",
+    "complete_20_lineup_optimizer_status":(
+        f"COMPLETE: {int(build_report.get('fresh_lineups',0))} newly generated lineups"
+        if build_report.get("status")=="MODEL_BUILD_COMPLETED"
+        else "FAILED: no full lineups exported; inspect build failure report"),
     "new_model_stat_forecast_players":len(projected),
     "matched_nov1_realized_offensive_players":len(resolved),
     "average_absolute_DK_error":round(float(np.mean([abs(r[key]) for r in resolved])),2)
