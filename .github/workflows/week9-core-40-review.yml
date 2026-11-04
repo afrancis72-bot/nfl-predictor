@@ -1,0 +1,41 @@
+name: Week9 40 core-diversified review
+on:
+  push:
+    branches: [feature/unified-ai2-platform]
+    paths:
+      - 'scripts/verify_week9_core_40.py'
+      - 'ai2_nfl_core_diversifier.py'
+      - '.github/workflows/week9-core-40-review.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  select-40-across-verified-seeds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Download three actual current-model November 8 candidate portfolios
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p week9_2026_current_unified_results week9_2026_alternate_seed_47 week9_2026_alternate_seed_89
+          gh run download 41890451038 -R "$GITHUB_REPOSITORY" -n week9-2026-unified-nfl-50lineups -D week9_2026_current_unified_results
+          gh run download 41890458794 -R "$GITHUB_REPOSITORY" -n week9-candidates-seed-47 -D week9_2026_alternate_seed_47
+          gh run download 41890458794 -R "$GITHUB_REPOSITORY" -n week9-candidates-seed-89 -D week9_2026_alternate_seed_89
+      - name: Optimize distinct offensive cores with 4 premium, 16 medium, 20 small entries
+        run: python -u scripts/verify_week9_core_40.py
+      - name: Save audited 40-lineup alternate review without altering existing 40
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: week9-40-offensive-core-diversified-REVIEW
+          path: week9_2026_40_core_diversified_REVIEW/
+          if-no-files-found: warn
+          retention-days: 14
