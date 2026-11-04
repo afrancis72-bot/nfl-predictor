@@ -43,6 +43,48 @@ def _safe(v, default):
         z=float(v); return z if np.isfinite(z) else float(default)
     except Exception: return float(default)
 
+def _unmodeled_skill_opportunities(rates, team, modeled_skill, out_keys):
+    """Observed recent teammates missing from the eligible DFS player pool.
+
+    Low-priced role exclusions must not transfer their entire carry/target
+    share to the remaining optimizer-eligible players. Represent their
+    previously observed work in the non-rosterable OTHER bucket instead.
+    A confirmed OUT teammate is handled by the separate absence
+    redistribution path and must not also count as OTHER. This is a
+    historical availability prior, not proof an unlisted player is active.
+    """
+    selected = {_clean_name(v) for v in modeled_skill}
+    histories = rates[
+        (rates["team"].map(_team) == _team(team))
+        & rates["position"].astype(str).str.upper().isin(("RB","WR","TE"))
+    ]
+    season = pd.to_numeric(rates.get("latest_observed_season"), errors="coerce")
+    week = pd.to_numeric(rates.get("latest_observed_week"), errors="coerce")
+    latest_year = int(season.max()) if season.notna().any() else 0
+    latest_week = int(week[season.eq(latest_year)].max()) if (
+        season.eq(latest_year).any()) else 0
+    seen=set()
+    carry=target=0.
+    names=[]
+    for _,v in histories.iterrows():
+        name=_clean_name(v["player"])
+        key=(name,_team(team))
+        observed_season=_safe(v.get("latest_observed_season"),0)
+        observed_week=_safe(v.get("latest_observed_week"),0)
+        if (key in out_keys or name in selected or name in seen
+                or observed_season!=latest_year or observed_week<latest_week-3):
+            continue
+        seen.add(name)
+        c=max(0.,_safe(v.get("carries_pg"),0))
+        t=max(0.,_safe(v.get("targets_pg"),0))
+        carry+=c
+        target+=t
+        names.append({"player":str(v["player"]),
+                      "carries_pg":round(c,2),"targets_pg":round(t,2),
+                      "latest_observed_week":int(observed_week)})
+    return float(carry),float(target),names
+
+
 def _multinomial_rows(rng, totals, probs, *, concentration=None):
     """Allocate exactly one team's real plays/attempts without inventing volume.
 
@@ -433,6 +475,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 ]
             else:
                 out_team['_missing_fraction'] = pd.Series(dtype=float)
+            historical_other_carries,historical_other_targets,unmodeled_players=(
+                _unmodeled_skill_opportunities(
+                    r,team,skill["Name"].astype(str),out_keys))
+            stat_draws[f'__UNMODELED_TEAMMATES__|{team}']={
+                "source":"nflverse pregame same-team weekly player usage",
+                "unmodeled_recent_historical_carries_pg":historical_other_carries,
+                "unmodeled_recent_historical_targets_pg":historical_other_targets,
+                "historical_teammates":unmodeled_players,
+                "note":"Other bucket models historically used players not eligible in DK optimizer; not confirmed game-day active",
+            }
             missing_rush = float((
                 pd.to_numeric(out_team.get('carries_pg',pd.Series(dtype=float)),
                               errors='coerce').fillna(0).clip(lower=0)
@@ -511,8 +563,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 pd.to_numeric(out_hist.get('carries_pg',pd.Series(dtype=float)),
                               errors='coerce').fillna(0).clip(lower=0)
                 * out_hist['_missing_fraction']).sum())
-            leftover=max(pass_pg*.10, pass_pg-target_rates.sum()-missing_t, .5)
-            carry_other=max(team_rush*.06,.5)
+            # A narrow value gate may leave one modeled RB and only one
+            # or two WRs per team. Preserve the workload of recent non-eligible
+            # teammates instead of gifting their touches to expensive starters.
+            # OTHER carries are a percentage of the *same* team rush budget,
+            # never additional team rushes. Confirmed OUT work is excluded
+            # here so it can be redistributed exactly once below.
+            leftover=max(pass_pg*.10, pass_pg-target_rates.sum()-missing_t,
+                         min(historical_other_targets,pass_pg*.45),.5)
+            carry_other=max(team_rush*.06,
+                            min(historical_other_carries,team_rush*.45),.5)
             pre_target_budget=float(target_rates.sum()+leftover+missing_t)
             pre_carry_budget=float(carry_rates.sum()+carry_other+missing_c)
             if missing_t>0 or missing_c>0:
@@ -549,7 +609,11 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                      'raw_carries_pg':max(0.,_safe(row.get('carries_pg'),0.))}
                     for _,row in out_hist.iterrows()],
                 'active_target_rates_pg':dict(zip(skill['Name'].astype(str),target_rates.tolist())),
-                'active_carry_rates_pg':dict(zip(skill['Name'].astype(str),carry_rates.tolist()))}
+                'active_carry_rates_pg':dict(zip(skill['Name'].astype(str),carry_rates.tolist())),
+                'unmodeled_teammate_target_budget_pg':float(historical_other_targets),
+                'unmodeled_teammate_carry_budget_pg':float(historical_other_carries),
+                'other_target_allocation_budget_pg':float(leftover),
+                'other_carry_allocation_budget_pg':float(carry_other)}
 
             tprob=np.append(np.maximum(target_rates,0),leftover); tprob=tprob/tprob.sum()
             targ=_multinomial_rows(rng,attempts,tprob,concentration=role_share_concentration)
