@@ -86,7 +86,7 @@ def create_observed_model_pool(research):
         # backup must not bypass the gate because one CSV ID failed to join.
         from ai2_nfl_pregame_consistency import LOW_PRICE
         cheap = pos in LOW_PRICE and salary < LOW_PRICE[pos]
-        if cheap and (not evidence or evidence.get("Role gate") != "PASS"):
+        if cheap and (not evidence or evidence.get("Role gate") not in ("PASS","EMERGING_LIMITED")):
             excluded.append((name, "prebuild recurring-opportunity gate: " +
                             str((evidence or {}).get("Role rationale",
                                                    "No matching individual pregame usage evidence"))))
@@ -137,6 +137,10 @@ def create_observed_model_pool(research):
         prepared.append({
             "ID": ident, "Name": name, "Position": pos, "TeamAbbrev": team,
             "pregame_role_gate": (evidence or {}).get("Role gate", "UNAVAILABLE"),
+            "emerging_role_limited": (evidence or {}).get("Role gate") == "EMERGING_LIMITED",
+            "emerging_role_evidence": ((evidence or {}).get("Role rationale", "")
+                                      if (evidence or {}).get("Role gate") == "EMERGING_LIMITED"
+                                      else ""),
             "pregame_role_rationale": (evidence or {}).get("Role rationale", ""),
             "Salary": int(salary), "game": game, "opponent": opponent,
             "proj": proj, "dk_status": status, "weekly_projection_valid": True,
