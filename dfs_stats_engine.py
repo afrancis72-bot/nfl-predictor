@@ -53,6 +53,12 @@ def _unmodeled_skill_opportunities(rates, team, modeled_skill, out_keys):
     redistribution path and must not also count as OTHER. This is a
     historical availability prior, not proof an unlisted player is active.
     """
+    # Legacy direct simulator calls and minimal synthetic test fixtures do
+    # not contain a dated nflverse game history. The NEW one-click pipeline
+    # does. No date => no evidence of a recent omitted teammate, so leave
+    # the historical behavior intact rather than attributing fake volume.
+    if not {"latest_observed_season", "latest_observed_week"}.issubset(rates.columns):
+        return 0.0,0.0,[]
     selected = {_clean_name(v) for v in modeled_skill}
     histories = rates[
         (rates["team"].map(_team) == _team(team))
