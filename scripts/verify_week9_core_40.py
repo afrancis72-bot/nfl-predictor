@@ -125,7 +125,7 @@ overview.to_csv(OUT/"40_named_lineups_REVIEW.csv",index=False,encoding="utf-8-si
 details.to_csv(OUT/"40_player_details.csv",index=False,encoding="utf-8-sig")
 exposure.to_csv(OUT/"40_exposure.csv",index=False,encoding="utf-8-sig")
 (OUT/"40_named_lineups_REVIEW.xlsx").write_bytes(named_excel(selected))
-(OUT/"40_roster_IDs_NOT_ENTRY_SHEET.csv").write_bytes(roster_id_csv(selected))
+(OUT/"40_roster_IDs_NOT_ENTRY_SHEET.csv").write_text(roster_id_csv(selected),encoding="utf-8-sig")
 prem=selected[:4]
 roster_slots=[set(str(p["ID"]) for p in x["candidate"]["players"])
               for x in prem]
