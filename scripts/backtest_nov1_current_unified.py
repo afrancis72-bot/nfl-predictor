@@ -111,7 +111,7 @@ model.player_prop_decisions = capture_prop_forecasts
 import ai2_nfl_sim_portfolio as portfolio_module
 original_portfolio_solver = portfolio_module._solve_joint_portfolio
 def capture_portfolio_candidates(scored, **kwargs):
-    path=OUT/"new_model_portfolio_candidate_input.json"
+    path=OUT/f"new_model_portfolio_candidates_{len(scored)}.json"
     if not path.exists():
         payload=[]
         for item in scored:
