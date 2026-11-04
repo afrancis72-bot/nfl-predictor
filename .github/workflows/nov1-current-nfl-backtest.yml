@@ -5,6 +5,10 @@ on:
     paths:
       - 'scripts/backtest_nov1_current_unified.py'
       - 'scripts/evaluate_nov1_forecasts.py'
+      - 'dfs_stats_engine.py'
+      - 'ai2_nfl_simulation_adapter.py'
+      - 'ai2_nfl_sim_portfolio.py'
+      - 'tests/test_nfl_unmodeled_teammates.py'
       - 'tests/fixtures/nov1_2026_user_sunday_main_dk.csv'
       - '.github/workflows/nov1-current-nfl-backtest.yml'
   workflow_dispatch:
@@ -20,6 +24,8 @@ jobs:
           cache: pip
       - name: Install unified NFL engine dependencies
         run: pip install -r requirements.txt
+      - name: Confirm omitted teammate workloads are not gifted to selected starters
+        run: python -m unittest discover -s tests -p test_nfl_unmodeled_teammates.py -v
       - name: Run CURRENT production one-click model on frozen November 1 slate
         id: replay
         run: python -u scripts/backtest_nov1_current_unified.py
