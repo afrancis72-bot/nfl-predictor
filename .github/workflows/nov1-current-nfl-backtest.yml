@@ -1,0 +1,32 @@
+name: Nov 1 current unified NFL model historical replay
+on:
+  push:
+    branches: [feature/unified-ai2-platform]
+    paths:
+      - 'scripts/backtest_nov1_current_unified.py'
+      - 'tests/fixtures/nov1_2026_user_sunday_main_dk.csv'
+      - '.github/workflows/nov1-current-nfl-backtest.yml'
+  workflow_dispatch:
+jobs:
+  backtest-current-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install unified NFL engine dependencies
+        run: pip install -r requirements.txt
+      - name: Run CURRENT production one-click model on frozen November 1 slate
+        id: replay
+        run: python -u scripts/backtest_nov1_current_unified.py
+      - name: Preserve reproducible model results, failures and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nov1-2026-current-nfl-replay
+          path: nov1_current_model_results/
+          if-no-files-found: warn
+          retention-days: 14
