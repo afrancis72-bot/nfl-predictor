@@ -5,6 +5,10 @@ on:
       - feature/unified-ai2-platform
     paths:
       - 'scripts/run_week9_2026_unified.py'
+      - 'ai2_nfl_pregame_consistency.py'
+      - 'ai2_nfl_model_pool.py'
+      - 'ai2_nfl_portfolio_risk.py'
+      - 'tests/test_nfl_emerging_opportunity.py'
       - 'tests/fixtures/nov8_2026_user_sunday_main_dk.csv'
       - '.github/workflows/week9-2026-unified-live.yml'
   workflow_dispatch:
@@ -20,6 +24,8 @@ jobs:
           cache: pip
       - name: Install unified sports requirements
         run: pip install -r requirements.txt
+      - name: Verify two-game RB emergence and limits
+        run: python -m unittest discover -s tests -p 'test_nfl_emerging_opportunity.py' -v
       - name: Run Week 9 NFL 50-lineup stat-first simulation, projections, portfolio and audit
         run: python -u scripts/run_week9_2026_unified.py
       - name: Preserve full player predictions and audits even on build failure
