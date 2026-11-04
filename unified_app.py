@@ -188,7 +188,12 @@ else:
         seed_one = st.number_input("Simulation seed (optional)", min_value=0,
                                    max_value=2147483647, value=42, step=1,
                                    key="nfl_one_seed")
-        requested_count = st.selectbox("Number of lineups", [15, 20, 50, 150], index=1, key="nfl_one_count")
+        requested_count = st.selectbox("Number of lineups", [15, 20, 40, 50, 150], index=1, key="nfl_one_count")
+        if requested_count == 40:
+            st.caption("40-entry contest plan: four $3, sixteen $0.50, twenty $0.10. "
+                       "Automatically simulates three different seeds and selects "
+                       "independent offensive cores with a stricter premium risk filter. "
+                       "A real current-week news and ownership feed is still unavailable.")
         if st.button(f"BUILD MY {requested_count} LINEUPS", type="primary",
                      key="nfl_one_build", use_container_width=True):
             try:
@@ -199,8 +204,52 @@ else:
                 salaries_one = get_upload("NFL", "DraftKings salaries")
                 if not salaries_one:
                     raise ValueError("Upload your DraftKings salary CSV first.")
-                with st.spinner(f"Checking current NFL injuries and simulating {requested_count} legal lineups..."):
-                    output_one = build_oneclick_portfolio(salaries_one, seed=int(seed_one), count=int(requested_count))
+                with st.spinner(f"Checking NFL injuries and generating {requested_count} review-ready entries..."):
+                    if int(requested_count) == 40:
+                        from ai2_nfl_core_diversifier import diversify_40_from_stat_simulation
+                        source_seeds = list(dict.fromkeys((int(seed_one),47,89)))
+                        while len(source_seeds)<3:
+                            source_seeds.append((source_seeds[-1]+101)%2147483647)
+                        sources=[build_oneclick_portfolio(
+                            salaries_one,seed=seed,count=50)
+                            for seed in source_seeds]
+                        roles={
+                            str(row.get("Player",""))
+                            for source in sources
+                            for row in source.get("role_projection_anomalies",[])
+                            if row.get("Player")
+                        }
+                        diversified,coverage=diversify_40_from_stat_simulation(
+                            [source["ranked"] for source in sources],
+                            role_anomalies=roles)
+                        output_one=dict(sources[0])
+                        output_one["ranked"]=diversified
+                        output_one["core_diversification_diagnostics"]=coverage
+                        output_one["core_diversification_seeds"]=source_seeds
+                        output_one["research_warning"]=(
+                            str(output_one.get("research_warning","")) +
+                            " Four $3 / sixteen $0.50 / twenty $0.10 lineups were selected "
+                            "from three independent simulation seeds. Role-limited RBs "
+                            "are blocked from $3 entries, high-salary offensive cores "
+                            "are diversified, and real ownership/current-week news "
+                            "remain UNVERIFIED.")
+                        # QB final-selection counts from any individual 50-entry
+                        # source are not counts for the NEW 40-entry portfolio.
+                        output_one["qb_selection_audit"]=[]
+                        output_one["qb_selection_diagnostics"]={
+                            "source":"Three independently simulated 50-entry candidate pools",
+                            "final_stacked_lineups":sum(
+                                bool(__import__("ai2_nfl_qb_audit",fromlist=["qb_and_partners"])
+                                     .qb_and_partners(item["candidate"]["players"])[1])
+                                for item in diversified),
+                            "independent_scenario_audit":{
+                                "note":"Per-seed holdout statistics apply to their respective 50-entry sources, not this 40-entry recombination."
+                            },
+                            "core_diversified":coverage
+                        }
+                    else:
+                        output_one = build_oneclick_portfolio(
+                            salaries_one,seed=int(seed_one),count=int(requested_count))
                 # Persist audit bytes independently of Streamlit's temporary
                 # browser download URL. SQLite history can restore the last
                 # generated audit if a UI session or download expires.
@@ -220,6 +269,7 @@ else:
                 st.session_state["ai2_oneclick_digest"] = _ai2_sha256(salaries_one[1]).hexdigest()
                 # A new build starts a new review, never overwrites approvals.
                 st.session_state["ai2_oneclick_review_ranked"] = output_one["ranked"]
+                st.session_state["ai2_oneclick_core_40_meta"] = output_one.get("core_diversification_diagnostics")
             except (ValueError, KeyError, TypeError, ImportError, OSError) as exc:
                 st.session_state.pop("ai2_oneclick_result", None)
                 st.session_state.pop("ai2_oneclick_review_ranked", None)
@@ -238,6 +288,14 @@ else:
 
         if output_one:
             ranked = st.session_state.get("ai2_oneclick_review_ranked") or output_one["ranked"]
+            if len(ranked)==40:
+                cover=output_one.get("core_diversification_diagnostics") or {}
+                st.info("40-core portfolio REVIEW: 4 premium, 16 balanced, 20 small. "
+                        f"Candidate diversity: {cover.get('unique_candidate_count','n/a')} "
+                        "unique legal rosters across three seeds. "
+                        f"Maximum premium pair overlap: {cover.get('premium_max_shared','n/a')}. "
+                        "No ownership prediction or verified Sunday injury clearance; "
+                        "the user must approve all entries.")
             overview, details, exposures = review_tables(ranked)
             st.subheader("Pregame opportunity intelligence — evaluated BEFORE lineup construction")
             prebuild_rows = output_one.get("pregame_role_evidence") or []
@@ -245,8 +303,10 @@ else:
                 prebuild_df = _ai2_pd.DataFrame(prebuild_rows)
                 blocked = int((prebuild_df["Role gate"] == "BLOCK").sum())
                 qualified = int((prebuild_df["Role gate"] == "PASS").sum())
-                st.info(f"{qualified} qualifying low-priced players with repeated "
-                        f"opportunity evidence; {blocked} blocked before the simulator. "
+                emerging = int((prebuild_df["Role gate"] == "EMERGING_LIMITED").sum())
+                st.info(f"{qualified} stable low-priced players with repeated opportunity "
+                        f"evidence; {emerging} emerging two-game roles admitted with "
+                        f"strict risk caps; {blocked} blocked before the simulator. "
                         "Full-price players are not certified by the low-price gate.")
                 st.caption(output_one.get("pregame_role_review_method",""))
                 with st.expander("See player-by-player pregame eligibility and last five games"):
@@ -326,12 +386,13 @@ else:
             st.caption("Roster-ID CSV contains player IDs, not an official contest-entry template. Verify the DraftKings import format.")
 
             st.subheader("Reports & diagnostics")
-            st.caption("NFL Classic portfolio risk: maximum 28% overall player exposure "
-                       "(14 of 50), 12% for RBs with sourced limited-role evidence "
-                       "(6 of 50), and 8% for RBs facing a potential returning "
-                       "high-volume teammate (4 of 50). No two lineups share "
-                       "more than six players. These are risk controls, not "
-                       "calibrated playing probabilities or winning guarantees.")
+            st.caption("NFL Classic portfolio risk: maximum 28% individual exposure "
+                       f"({int(len(ranked)*.28)} of {len(ranked)}); stricter "
+                       "8–12% caps for emerging, uncertain and returning-starter RBs. "
+                       "No two final rosters may share more than six players. "
+                       "The optional 40-entry plan additionally diversifies high-salary "
+                       "offensive cores and avoids role-risk RBs in $3 entries. "
+                       "Neither ownership nor contest ROI is independently calibrated.")
             returning_watch = output_one.get("returning_rb_watch") or []
             with st.expander("Possible returning RBs — source and availability review",
                              expanded=bool(returning_watch)):
