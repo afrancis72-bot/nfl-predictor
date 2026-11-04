@@ -41,7 +41,8 @@ def _top_salary_core(roster):
 
 
 def diversify_40_from_stat_simulation(candidate_portfolios, *, role_anomalies=(),
-                                      milp_time_limit=45.):
+                                      milp_time_limit=45.,
+                                      force_highest_mean_premium=False):
     """Return exactly 4/16/20 distinct entries from verified simulated lineups.
 
     Enforces total-player 28% ceilings and stricter observed RB role limits.
@@ -120,7 +121,11 @@ def diversify_40_from_stat_simulation(candidate_portfolios, *, role_anomalies=()
             float(scored[i]["simulated_mean"]),
             float(scored[i]["simulated_p90"]),
             float(scored[i]["simulated_p99"])))
-    constraint([(premium_anchor,1)],1,1)
+    if force_highest_mean_premium:
+        # Optional counterfactual: useful for a user-visible comparison;
+        # not the default because maximizing one lineup may lower the
+        # combined mean/ceiling of all four $3 entries.
+        constraint([(premium_anchor,1)],1,1)
     for i in range(n):
         constraint([(tier*n+i,1) for tier in range(tsize)],0,1)
     max_any = floor(COUNT * .28)
@@ -138,7 +143,7 @@ def diversify_40_from_stat_simulation(candidate_portfolios, *, role_anomalies=()
         # Four premium entries need separate paths to winning, including
         # a maximum of one exposed role-anomaly player.
         constraint([(i,1) for i in appearances[pid]],
-                   0,1 if (pid in flagged or pid in expensive) else 2)
+                   0,1 if pid in flagged else 2)
     # Premium entries must have a genuine quarterback receiving stack.
     for i,roster in enumerate(rosters):
         qb,partners=qb_and_partners(roster)
@@ -245,6 +250,7 @@ def diversify_40_from_stat_simulation(candidate_portfolios, *, role_anomalies=()
             "p99":round(float(scored[premium_anchor]["simulated_p99"]),2),
             "qb":qb_and_partners(rosters[premium_anchor])[0]["Name"],
             "selected_premium":bool(x[premium_anchor]==1),
+            "forced_in_premium":bool(force_highest_mean_premium),
             "review_warning":"Highest projected mean does not validate questionable usage; current-week injuries still require review",
         },
         "premium_max_shared":max_premium_shared,
