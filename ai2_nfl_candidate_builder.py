@@ -209,6 +209,27 @@ def build_classic_candidates(rows, *, count=5, attempts=30000, seed=7,
                     break
             if not progress:
                 break
+    # Preserve plausible RB alternatives BEFORE global mean ranking fills the
+    # candidate pool. A high projected-mean roster often shares the same
+    # two backs; if we save only those, later 28% maximum exposure makes a
+    # 20-lineup portfolio mathematically impossible. The reserved candidates
+    # still pass all DK, salary, matchup and observed-opportunity checks;
+    # this adds CHOICE, not forced RB exposure in the final portfolio.
+    rb_candidates = {}
+    for item in ordered:
+        for p in item[1]:
+            if str(p.get("Position","")).upper()=="RB":
+                rb_candidates.setdefault(str(p["ID"]),[]).append(item)
+    rb_names=sorted(
+        (p for p in pools["RB"] if str(p["ID"]) in rb_candidates),
+        key=lambda p:(float(p.get("proj",0)),str(p["ID"])))
+    min_rb_candidate_appearances = min(10, max(5, count // 120))
+    for rb in rb_names:
+        key=str(rb["ID"])
+        for item in rb_candidates[key]:
+            if len(selected)>=count or exposures[key]>=min_rb_candidate_appearances:
+                break
+            add(item)
     # Remaining candidates compete on projected points, including previously
     # crowded-out stacked and unstacked combinations. Simulated portfolio
     # selection determines winners and contest assignment downstream.
