@@ -1,0 +1,32 @@
+name: Week 9 2026 live unified NFL 50 lineup build
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'scripts/run_week9_2026_unified.py'
+      - 'tests/fixtures/nov8_2026_user_sunday_main_dk.csv'
+      - '.github/workflows/week9-2026-unified-live.yml'
+  workflow_dispatch:
+jobs:
+  run-current-nfl-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install unified sports requirements
+        run: pip install -r requirements.txt
+      - name: Run Week 9 NFL 50-lineup stat-first simulation, projections, portfolio and audit
+        run: python -u scripts/run_week9_2026_unified.py
+      - name: Preserve full player predictions and audits even on build failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: week9-2026-unified-nfl-50lineups
+          path: week9_2026_current_unified_results/
+          if-no-files-found: warn
+          retention-days: 14
