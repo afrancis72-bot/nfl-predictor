@@ -4,6 +4,11 @@ on:
     branches: [feature/unified-ai2-platform]
     paths:
       - 'scripts/run_week9_2026_alternate.py'
+      - 'ai2_nfl_pregame_consistency.py'
+      - 'ai2_nfl_model_pool.py'
+      - 'ai2_nfl_portfolio_risk.py'
+      - 'ai2_nfl_core_diversifier.py'
+      - 'tests/test_nfl_emerging_opportunity.py'
       - '.github/workflows/week9-alternative-candidates.yml'
   workflow_dispatch:
 jobs:
@@ -21,6 +26,8 @@ jobs:
           python-version: '3.11'
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Verify two-game RB emergence and limits
+        run: python -m unittest discover -s tests -p 'test_nfl_emerging_opportunity.py' -v
       - name: Generate 50 additional stat-first candidate lineups from unchanged current engine
         env:
           NFL_BUILD_SEED: ${{ matrix.seed }}
