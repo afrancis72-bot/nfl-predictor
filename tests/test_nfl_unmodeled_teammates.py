@@ -34,6 +34,13 @@ class OtherTeammateRoleTests(unittest.TestCase):
         self.assertAlmostEqual(target,6.1)
         self.assertEqual({v["player"] for v in names},{"Backup Back","Third Receiver"})
 
+    def test_missing_historical_date_metadata_uses_safe_legacy_fallback(self):
+        rates=self.sample().drop(columns=[
+            "latest_observed_season","latest_observed_week"])
+        result=_unmodeled_skill_opportunities(
+            rates,"NYG",["Starter Back"],set())
+        self.assertEqual(result,(0.0,0.0,[]))
+
     def test_active_backup_is_not_other(self):
         carry,target,names=_unmodeled_skill_opportunities(
             self.sample(),"NYG",
