@@ -782,9 +782,23 @@ else:
                     except (ValueError, OSError, sqlite3.Error) as exc:
                         st.error(f"Could not save approval: {exc}")
 
+            if len(ranked)==40:
+                if st.button("APPROVE AND SAVE THESE 40 LINEUPS",
+                             key="nfl_approve_core_40"):
+                    try:
+                        payload = snapshot_approved(ranked, current_digest, int(seed_one))
+                        _ai2_save_file(DATA_DIR, "NFL", "Approved 40-lineup portfolio",
+                                       "ai2_nfl_approved_40.json", payload)
+                        st.success("Your 4/16/20 selections have been approved and saved "
+                                   "separately from the experimental 50-lineup candidates. "
+                                   "Future builds will not overwrite these approvals.")
+                    except (ValueError,OSError,sqlite3.Error) as exc:
+                        st.error(f"Could not save 40-entry approval: {exc}")
+
         with st.expander("Protected approved lineups and previous entries"):
             st.caption("The app never silently replaces human-approved lineups. Save a portable backup because Streamlit-hosted local storage may be temporary.")
-            approved_file = get_upload("NFL", "Approved 20-lineup portfolio")
+            approved_file = (get_upload("NFL", "Approved 40-lineup portfolio")
+                             or get_upload("NFL", "Approved 20-lineup portfolio"))
             if approved_file:
                 try:
                     snapshot = load_approved(approved_file[1])
@@ -798,7 +812,7 @@ else:
                 except (ValueError, KeyError, TypeError) as exc:
                     st.error(f"Existing approval needs review: {exc}")
             else:
-                st.caption("No 20-lineup portfolio has been approved and saved in this app.")
+                st.caption("No 20- or 40-entry portfolio has been approved and saved in this app.")
             restore_approval = st.file_uploader(
                 "Restore a previously downloaded approved portfolio JSON (optional)",
                 type=["json"], key="nfl_restore_approved_json")
@@ -807,9 +821,11 @@ else:
                 try:
                     original = restore_approval.getvalue()
                     restored = load_approved(original)
-                    if len(restored["lineups"]) != 20:
-                        raise ValueError("Only 20-lineup approved portfolio snapshots can be restored")
-                    _ai2_save_file(DATA_DIR, "NFL", "Approved 20-lineup portfolio",
+                    restored_count=len(restored["lineups"])
+                    if restored_count not in (20,40):
+                        raise ValueError("Approved portfolio backup must contain 20 or 40 lineups")
+                    _ai2_save_file(DATA_DIR, "NFL",
+                                   f"Approved {restored_count}-lineup portfolio",
                                    restore_approval.name, original)
                     st.success("Saved approved lineups restored separately from automatic builds.")
                     st.rerun()
