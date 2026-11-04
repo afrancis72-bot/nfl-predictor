@@ -35,7 +35,7 @@ class StatFirstPropRegression(unittest.TestCase):
         self.assertEqual(row["Rushing yards market line"],55.5)
         self.assertGreater(row["Rushing yards model over %"],50)
         self.assertEqual(row["Model mean DK"],round(float(points.mean()),2))
-        self.assertIn("estimated unit EV",row)
+        self.assertIn("Rushing yards estimated unit EV",row)
 
     def test_rb_total_yards_and_touchdown_expected_points_not_double_counted(self):
         n=7000
