@@ -50,8 +50,10 @@ def review_tables(ranked):
             if contest == "$3":
                 premium[(pid, name, team, str(p["Position"]))] += 1
         overview.append(row)
+    n_premium=sum(str(item.get("contest_tier"))=="$3" for item in ranked)
     exposure = [{"Player": name, "Team": team, "Position": pos,
-                 "Total / 20": times, "$3 / 5": premium.get((pid, name, team, pos), 0),
+                 f"Total / {len(ranked)}": times,
+                 f"$3 / {n_premium}": premium.get((pid, name, team, pos), 0),
                  "DraftKings ID": pid}
                 for (pid, name, team, pos), times in exposures.most_common()]
     return (pd.DataFrame(overview), pd.DataFrame(detail), pd.DataFrame(exposure))
@@ -66,7 +68,7 @@ def named_excel(ranked):
     overview, detail, exposure = review_tables(ranked)
     out = BytesIO()
     with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        for name, frame in [("20 lineup review", overview),
+        for name, frame in [(f"{len(ranked)} lineup review", overview),
                             ("Player details", detail),
                             ("Player exposure", exposure)]:
             frame.to_excel(writer, sheet_name=name, index=False)
