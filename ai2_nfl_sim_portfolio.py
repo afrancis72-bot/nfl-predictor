@@ -139,9 +139,17 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
                   integrality=np.ones(2 * n, dtype=int),
                   bounds=Bounds(np.zeros(2 * n), np.ones(2 * n)),
                   constraints=LinearConstraint(matrix, lows, highs),
-                  options={"time_limit": 20.0, "mip_rel_gap": .02})
+                  options={"time_limit": 35.0, "mip_rel_gap": .03})
     if result.x is None:
-        raise ValueError("No feasible complete lineup portfolio under hard exposure rules; no partial portfolio exported")
+        # SciPy status 1 is often a solver time limit, NOT proof that
+        # the lineup rules are mathematically impossible.
+        status = getattr(result,"status",None)
+        message = getattr(result,"message","unknown solver termination")
+        raise ValueError(
+            f"Complete lineup portfolio not found: solver_status={status}; "
+            f"solver_message={message}; retained_candidates={n}; "
+            f"seven-player overlap groups={len(overlap_groups(scored))}; "
+            "no partial portfolio exported")
     x = np.rint(result.x).astype(int)
     sums = matrix @ x
     if (not np.all(np.abs(result.x - x) < 1e-5) or
