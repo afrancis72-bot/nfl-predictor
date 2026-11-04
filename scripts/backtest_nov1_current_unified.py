@@ -94,6 +94,17 @@ def save_csv(name,rows):
     with open(OUT/name,"w",newline="",encoding="utf-8-sig") as h:
         writer=csv.DictWriter(h,fieldnames=columns)
         writer.writeheader();writer.writerows(rows)
+# Capture the completed stat-first projections even when the portfolio
+# allocator correctly refuses an infeasible 20-lineup export.
+original_prop_decisions = model.player_prop_decisions
+def capture_prop_forecasts(*args, **kwargs):
+    data = original_prop_decisions(*args, **kwargs)
+    save_csv("fresh_model_player_stat_forecasts.csv", data)
+    print("CAPTURED new production stat-first forecasts: " + str(len(data)) +
+          " player projections before portfolio optimization", flush=True)
+    return data
+model.player_prop_decisions = capture_prop_forecasts
+
 try:
     print("START current production build from 562-row Nov1 DK slate",flush=True)
     o=model.build_oneclick_portfolio(
