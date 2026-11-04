@@ -279,7 +279,52 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
     for qb_id,items in pool_by_qb.items():
         rescued.extend(sorted(items,key=lambda item:(
             item["simulated_p99"],item["simulated_p90"]),reverse=True)[:3])
-    scored=primary+rescued
+    # Global P90 ranking must not destroy an exposure-feasible portfolio.
+    # Every retained option is already a legal and pregame-verified lineup;
+    # preserve alternatives at RB before the 28% exposure cap is applied.
+    current=primary+rescued
+    current_keys={tuple(sorted(str(p["ID"]) for p in item["candidate"]["players"]))
+                  for item in current}
+    rb_id_to_items=defaultdict(list)
+    for item in all_scored:
+        for p in item["candidate"]["players"]:
+            if str(p["Position"]).upper()=="RB":
+                rb_id_to_items[str(p["ID"])].append(item)
+    initial_rb_counts=Counter(
+        str(p["ID"]) for item in current for p in item["candidate"]["players"]
+        if str(p.get("Position","")).upper()=="RB")
+    rb_rescued=[]
+    for rb_id,items in sorted(rb_id_to_items.items(),key=lambda kv:(
+        initial_rb_counts[kv[0]],kv[0])):
+        need=max(0,10-initial_rb_counts[rb_id])
+        if need<=0:
+            continue
+        already_for_rb=[
+            {str(p["ID"]) for p in item["candidate"]["players"]}
+            for item in current if any(str(p["ID"])==rb_id
+                                      for p in item["candidate"]["players"])]
+        pool=sorted(items,key=lambda item:(
+            item["simulated_p90"],item["simulated_p99"],
+            item["simulated_mean"]),reverse=True)
+        for item in pool:
+            if need<=0:
+                break
+            if (efficient(item)<efficiency_floor*.75
+                    or item["simulated_p99"]<best_p99*.70):
+                continue
+            keys={str(p["ID"]) for p in item["candidate"]["players"]}
+            signature=tuple(sorted(keys))
+            if signature in current_keys:
+                continue
+            if any(len(keys & previous)>MAX_SHARED_PLAYERS
+                   for previous in already_for_rb):
+                continue
+            current.append(item)
+            rb_rescued.append(item)
+            current_keys.add(signature)
+            already_for_rb.append(keys)
+            need-=1
+    scored=current
     after=Counter()
     for item in scored:
         qb,_=qb_and_partners(item["candidate"]["players"])
@@ -298,6 +343,11 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             "qb_best_simulated_p99":best_qb_p99,
             "global_p90_efficiency_floor":round(float(efficiency_floor),4),
             "rescued_stacked_candidates":len(rescued),
+            "rescued_verified_alternate_rb_candidates":len(rb_rescued),
+            "distinct_running_backs_before_diversity_rescue":len(initial_rb_counts),
+            "distinct_running_backs_after_diversity_rescue":len({
+                str(p["ID"]) for item in scored for p in item["candidate"]["players"]
+                if str(p.get("Position","")).upper()=="RB"}),
             "simulated_candidate_count":sum(by_qb_before.values()),
             "retained_candidate_count":len(scored),
         })
