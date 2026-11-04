@@ -19,7 +19,7 @@ from ai2_nfl_review import named_csv, named_excel, review_tables, roster_id_csv
 from ai2_nfl_qb_audit import qb_and_partners
 from ai2_nfl_lineup import check_classic_lineup
 from ai2_nfl_portfolio_risk import maximum_player_appearances
-from ai2_nfl_matchups import canonical_team
+from ai2_nfl_matchups import canonical_team, opponent_from_game_info
 
 SLATE=ROOT/"tests"/"fixtures"/"nov8_2026_user_sunday_main_dk.csv"
 BUILDS=[
@@ -90,7 +90,7 @@ for seed,folder in BUILDS:
             players.append({
                 "ID":str(v["ID"]),"Name":nm,"Position":pos,
                 "TeamAbbrev":tm,"Salary":int(v["Salary"]),
-                "opponent":("NOT_A_CANDIDATE_REASON" if pos=="QB" else ""),
+                "opponent":(opponent_from_game_info(tm,v["Game Info"]) if pos=="QB" else ""),
                 "emerging_role_limited":k in emerging,
                 "emerging_role_evidence":"Two real current-year weekly games and peer decline"
                          if k in emerging else "",
