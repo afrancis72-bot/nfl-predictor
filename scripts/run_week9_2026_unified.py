@@ -128,7 +128,7 @@ try:
     csv_file("player_details.csv",detail.to_dict("records"))
     csv_file("player_exposures.csv",expo.to_dict("records"))
     (OUT/"named_lineups.xlsx").write_bytes(named_excel(ranked))
-    (OUT/"draftkings_ids_NOT_APPROVED.csv").write_bytes(results["csv"])
+    (OUT/"draftkings_ids_NOT_APPROVED.csv").write_text(results["csv"],encoding="utf-8-sig")
     (OUT/"simulation_portfolio_audit.csv").write_bytes(portfolio_audit_csv(ranked,seed=SEED))
     for filename,tag in [
         ("pregame_role_evidence.csv","pregame_role_evidence"),
