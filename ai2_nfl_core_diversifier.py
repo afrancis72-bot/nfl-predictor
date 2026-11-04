@@ -126,9 +126,11 @@ def diversify_40_from_stat_simulation(candidate_portfolios, *, role_anomalies=()
         # *together with* one expensive WR, increasing joint dependency.
         if roster_ids[i]&flagged and roster_ids[i]&expensive:
             constraint([(i,1)],0,0)
-    # One speculative backup-risk lineup maximum across all $3 entries.
+    # A 2-game RB role or returning-starter dependency is not verified
+    # enough for the four highest-stakes entries: allow such upside in the
+    # $0.50 / $0.10 portfolios under strict 8%-12% exposure caps instead.
     if premium_role_risk:
-        constraint([(i,1) for i in premium_role_risk],0,1)
+        constraint([(i,1) for i in premium_role_risk],0,0)
     # Avoid four premium entries using one favorite QB or cheap defense.
     for pid in p_ids:
         if str(players[pid]["Position"]).upper() in {"QB","DST"}:
