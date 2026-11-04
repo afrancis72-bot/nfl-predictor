@@ -105,6 +105,44 @@ def capture_prop_forecasts(*args, **kwargs):
     return data
 model.player_prop_decisions = capture_prop_forecasts
 
+# Save the exact production simulator's filtered candidate set once. This
+# permits offline MILP feasibility probes without postgame score leakage or
+# changing any role/overlap/salary constraints.
+import ai2_nfl_sim_portfolio as portfolio_module
+original_portfolio_solver = portfolio_module._solve_joint_portfolio
+def capture_portfolio_candidates(scored, **kwargs):
+    path=OUT/"new_model_portfolio_candidate_input.json"
+    if not path.exists():
+        payload=[]
+        for item in scored:
+            payload.append({
+                "players":[{
+                    k:p.get(k) for k in
+                    ("ID","Name","TeamAbbrev","Position","Salary",
+                     "observed_games","observed_carries_pg",
+                     "observed_targets_pg","observed_rushing_yards_pg",
+                     "observed_recent_four_games",
+                     "observed_recent_four_rush_yd_pg",
+                     "observed_recent_four_carries_pg",
+                     "observed_recent_four_targets_pg",
+                     "return_competition_reason")
+                } for p in item["candidate"]["players"]],
+                "salary":item["candidate"]["salary"],
+                "mean":item["simulated_mean"],
+                "p90":item["simulated_p90"],
+                "p99":item["simulated_p99"],
+            })
+        path.write_text(json.dumps({
+            "candidates":payload,
+            "parameters":{k:v for k,v in kwargs.items()
+                          if k not in ("premium_excluded_ids",)},
+            "premium_excluded_ids":list(kwargs.get("premium_excluded_ids",())),
+        },default=str),encoding="utf-8")
+        print("CAPTURED exact model portfolio MILP input: "+
+              str(len(payload))+" retained candidate lineups",flush=True)
+    return original_portfolio_solver(scored, **kwargs)
+portfolio_module._solve_joint_portfolio = capture_portfolio_candidates
+
 try:
     print("START current production build from 562-row Nov1 DK slate",flush=True)
     o=model.build_oneclick_portfolio(
