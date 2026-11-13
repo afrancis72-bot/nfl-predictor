@@ -17,6 +17,13 @@ from round_parlay import fetch_groupings,fetch_official_prior_rounds
 from international_ingestion import geocode_course, location_detail, fetch_weather
 from ai2_pga_review_ui import render_review_page
 from ai2_pga_salary_review import rebuild_reviewed
+from four_source_blend import SOURCE_DEFAULTS, CATEGORY_DEFAULTS, ADVANCED_DEFAULTS
+from pga_official_season_stats import retrieve_official_season_stats
+
+@st.cache_data(ttl=21600,show_spinner=False)
+def _cached_official_pga_season(player_names,as_of,metric_names):
+    return retrieve_official_season_stats(
+        pd.DataFrame({"player":list(player_names)}),as_of,selected_stats=metric_names)
 
 st.subheader("PGA · Tournament DFS, Round Showdown & Group-Matchup Parlays")
 st.caption(
@@ -73,6 +80,65 @@ with tab_tournament:
         )
         otis_file=st.file_uploader("OTIS Advanced Course-Fit CSV (optional comparison and fallback)",
                                 type=["csv"],key="ai2_pga_otis")
+        st.markdown("#### AI² Course-Weighted PGA Model")
+        weighted_mode=st.checkbox("Enable adjustable PGA source and category weights",
+            value=False,key="pga_four_source_active_v1",
+            help="The existing PGA model remains unchanged when this is off. The new weights affect V11 scoring and the joint lineup optimizer.")
+        weighted_file=st.file_uploader("RunGood weighted strokes gained CSV (SG OTT/APP/ARG/PUTT (w))",
+            type=["csv"],key="pga_weighted_csv_v1",disabled=not weighted_mode)
+        if weighted_mode:
+            st.caption("Source weights (relative percentages; normalized automatically). With no RunGood Course Fit, set its share to zero.")
+            src_col=st.columns(5)
+            source_weights={
+                "weighted_sg":float(src_col[0].number_input("Weighted SG",0.,100.,20.,1.,key="pga_src_weighted_v1")),
+                "standard_sg":float(src_col[1].number_input("Standard SG",0.,100.,20.,1.,key="pga_src_standard_v1")),
+                "otis_course_fit":float(src_col[2].number_input("OTIS fit",0.,100.,30.,1.,key="pga_src_otis_v1")),
+                "rrg_course_fit":float(src_col[3].number_input("RunGood fit",0.,100.,
+                    30. if rrg_fit_file is not None else 0.,1.,key="pga_src_rrg_v1")),
+                "advanced_stats":float(src_col[4].number_input("Advanced stats",0.,100.,0.,1.,key="pga_src_advanced_v1")),
+            }
+            st.caption("Both SG groups use these category weights; native vendor Course Fit scores retain each provider's own internal weights.")
+            cat_col=st.columns(4)
+            category_weights={
+                "sg_ott":float(cat_col[0].number_input("Off tee",0.,100.,25.,1.,key="pga_stat_ott_v1")),
+                "sg_approach":float(cat_col[1].number_input("Approach",0.,100.,25.,1.,key="pga_stat_app_v1")),
+                "sg_arg":float(cat_col[2].number_input("Around green",0.,100.,25.,1.,key="pga_stat_arg_v1")),
+                "sg_putting":float(cat_col[3].number_input("Putting",0.,100.,25.,1.,key="pga_stat_putt_v1")),
+            }
+            advanced_labels={
+                "birdie_rate":"Birdie or better %","driving_distance":"Driving distance",
+                "driving_accuracy":"Driving accuracy %","gir_rate":"Greens in regulation %",
+                "scrambling":"Scrambling %","bogey_avoidance":"Bogey avoidance %",
+                "scoring_before_cut":"Average scoring before cut (Rounds 1-2 proxy)",
+                "par3_scoring":"Par-3 scoring","par4_scoring":"Par-4 scoring",
+                "par5_scoring":"Par-5 scoring",
+                "approach_175_200":"Approach proximity 175-200y",
+                "approach_200_225":"Approach proximity 200-225y",
+            }
+            with st.expander("Advanced PGA Tour stats (optional fifth data source)"):
+                stats_grid=pd.DataFrame([{"Statistic":advanced_labels[k],"Key":k,"Weight":v}
+                    for k,v in ADVANCED_DEFAULTS.items()])
+                edited=st.data_editor(stats_grid,hide_index=True,num_rows="fixed",
+                    disabled=["Statistic","Key"],key="pga_stats_grid_v1",
+                    column_config={"Weight":st.column_config.NumberColumn(
+                        "Relative weight",min_value=0.,max_value=100.,step=1.)})
+                advanced_weights={str(z.Key):float(z.Weight) for z in edited.itertuples(index=False)}
+                st.caption("Choose only statistics justified by the course. Early-round/Par scoring and proximity are lower-is-better. All missing data remains missing.")
+            official_stats_enabled=st.checkbox("Automatically fill missing stats from PGA TOUR",
+                value=True,key="pga_auto_tour_stats_v1",
+                help="Unofficial PGA TOUR StatDetails client. Refuses historical-slate lookahead. RunGood supplied values take precedence.")
+            sw_total=sum(source_weights.values())
+            if sw_total:
+                st.caption("Effective source shares: "+", ".join(
+                    f"{key.replace('_',' ').title()} {100*value/sw_total:.1f}%"
+                    for key,value in source_weights.items() if value))
+            else:st.error("Source weights must sum above zero.")
+        else:
+            source_weights=SOURCE_DEFAULTS.copy()
+            category_weights=CATEGORY_DEFAULTS.copy()
+            advanced_weights=ADVANCED_DEFAULTS.copy()
+            official_stats_enabled=False
+
         st.caption(
             "Measured RRG strokes gained takes priority over OTIS in the independent golfer model. "
             "OTIS is optional; without measured golfer skill/form/course fit, "
