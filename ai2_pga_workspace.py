@@ -230,6 +230,10 @@ with tab_tournament:
         hashlib.sha256(independent_file.getvalue()).hexdigest() if independent_file else None,
         hashlib.sha256(rrg_fit_file.getvalue()).hexdigest() if rrg_fit_file else None,
         hashlib.sha256(holes_file.getvalue()).hexdigest() if holes_file else None,
+        weighted_mode,
+        hashlib.sha256(weighted_file.getvalue()).hexdigest() if weighted_file else None,
+        tuple(source_weights.items()),tuple(category_weights.items()),
+        tuple(advanced_weights.items()),bool(official_stats_enabled),
         tuple(sorted(selected_location.items())) if selected_location else None,
     )
     do_run=st.button("⛳ Run PGA simulation + build DFS lineups",
@@ -244,6 +248,30 @@ with tab_tournament:
                 independent_raw=pd.read_csv(BytesIO(independent_file.getvalue())) if independent_file else None
                 rrg_fit_raw=pd.read_csv(BytesIO(rrg_fit_file.getvalue())) if rrg_fit_file else None
                 holes=pd.read_csv(BytesIO(holes_file.getvalue())) if holes_file else None
+                weighted_sg_raw=(pd.read_csv(BytesIO(weighted_file.getvalue()))
+                                 if weighted_file is not None and weighted_mode else None)
+                official_season=pd.DataFrame()
+                official_stat_audit=pd.DataFrame()
+                if weighted_mode:
+                    if sum(source_weights.values())<=0 or sum(category_weights.values())<=0:
+                        raise ValueError("Source and SG-category totals must be positive.")
+                    if source_weights["weighted_sg"]>0 and weighted_file is None:
+                        raise ValueError("Upload weighted SG or set Weighted SG share to zero.")
+                    if source_weights["rrg_course_fit"]>0 and rrg_fit_file is None:
+                        raise ValueError("Upload RunGood Course Fit or set its share to zero.")
+                    if source_weights["advanced_stats"]>0 and sum(advanced_weights.values())<=0:
+                        raise ValueError("Assign at least one advanced statistic a nonzero weight.")
+                    if official_stats_enabled:
+                        requested=[]
+                        if source_weights["standard_sg"]>0:
+                            requested.extend(["sg_ott","sg_approach","sg_arg","sg_putting"])
+                        if source_weights["advanced_stats"]>0:
+                            requested.extend(k for k,v in advanced_weights.items() if v>0)
+                        if requested:
+                            with st.spinner("Retrieving PGA TOUR season statistics…"):
+                                official_season,official_stat_audit=_cached_official_pga_season(
+                                    tuple(dk.player.astype(str)),str(start_date),
+                                    tuple(dict.fromkeys(requested)))
                 seed=int(chosen_seed) if chosen_seed is not None else secrets.randbelow(2147483647)
                 forecast=pd.DataFrame()
                 if selected_location is not None:
@@ -262,7 +290,11 @@ with tab_tournament:
                         sims=sims,seed=seed,lineup_count=lineup_count,
                         max_exposure=exposure_pct/100,
                         salary_floor=salary_floor,min_unique=min_unique,
-                        strategy=strategy,locks=locks,excludes=exclusions)
+                        strategy=strategy,locks=locks,excludes=exclusions,
+                        four_source_mode=weighted_mode,weighted_sg_raw=weighted_sg_raw,
+                        source_weights=source_weights,category_weights=category_weights,
+                        advanced_weights=advanced_weights,official_stats=official_season,
+                        official_stats_audit=official_stat_audit)
                 result["metadata"]["course"]=course
                 result["metadata"]["start_date"]=str(start_date)
                 st.session_state["ai2_pga_result"]=result
@@ -292,6 +324,32 @@ with tab_tournament:
         st.subheader("Built portfolio — human review before entering")
         st.info("For salary-tier recommendations and veto decisions, open **🔎 Salary-Tier Review & Vetoes** above before entering lineups.")
         st.caption(f"{meta['tournament']} · {meta['course']} · {meta['simulations']:,} simulations · seed {meta['seed']}")
+        if meta.get("four_source_enabled"):
+            st.caption("PGA weights ACTIVE: they affect V11 simulated scoring and the joint lineup optimizer.")
+            evidence=result.get("four_source",{})
+            coverage=evidence.get("blend",{})
+            if coverage:
+                st.caption(f"Eligible golfers: {coverage.get('eligible_golfers',0)}/{coverage.get('total_golfers',0)}. "
+                           f"Partial coverage: {coverage.get('partial_golfers',0)}. "
+                           f"Max scoring adjustment: {coverage.get('max_abs_delta_strokes',0):.2f} strokes/round (uncalibrated).")
+            with st.expander("Source, golfer and advanced PGA TOUR statistics audit"):
+                st.json({k:v for k,v in evidence.items() if k!="official_stats_audit"})
+                if evidence.get("official_stats_audit"):
+                    st.dataframe(pd.DataFrame(evidence["official_stats_audit"]),
+                        hide_index=True,use_container_width=True)
+                selected=[v for v in ["player","salary","four_source_rank",
+                    "four_source_source_coverage","four_source_status",
+                    "four_source_weighted_sg_z","four_source_standard_sg_z",
+                    "four_source_otis_course_fit_z","four_source_rrg_course_fit_z",
+                    "four_source_advanced_stats_z","expected_round_pre_four_source",
+                    "four_source_delta_strokes","expected_round","v11_mean_dk",
+                    "v11_p90_dk","v11_make_cut_pct","optimization_eligible"]
+                    if v in result["projections"]]
+                st.dataframe(result["projections"][selected],hide_index=True,use_container_width=True)
+                st.download_button("Download PGA source contribution audit",
+                    result["projections"].to_csv(index=False).encode("utf-8-sig"),
+                    "team_ai2_pga_four_source_evidence.csv",mime="text/csv",
+                    key="pga_four_source_evidence_dl")
         if meta["otis_match"]==0 and meta["independent_sg_match"]==0:
             st.warning(
                 "LOW-CONFIDENCE RESEARCH: golfer quality is inferred only from DraftKings salary. "
