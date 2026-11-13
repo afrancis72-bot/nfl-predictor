@@ -63,10 +63,15 @@ def simulate_golf_first(projections:pd.DataFrame, sims:int=5000, seed:int=42,
         if val>round_field_mean_to_par: lo=mid
         else: hi=mid
     common=(lo+hi)/2
-    birdie_proxy=pd.to_numeric(d.get('otis_fit_app',pd.Series(50.,index=d.index)),errors='coerce').fillna(50.)
-    birdie_proxy=(birdie_proxy-birdie_proxy.mean())/max(birdie_proxy.std(ddof=0),1)
-    # A bounded extra birdie-vs-par volatility component; uncalibrated.
-    birdie_bias=np.clip(.10*birdie_proxy.to_numpy(),-.2,.2)
+    if "four_source_blend_z" in d:
+        # OTIS already receives the user-selected source share: prevent a
+        # second, hidden OTIS approach weighting in the V11 simulator.
+        birdie_bias=np.zeros(n,dtype=float)
+    else:
+        birdie_proxy=pd.to_numeric(d.get('otis_fit_app',pd.Series(50.,index=d.index)),errors='coerce').fillna(50.)
+        birdie_proxy=(birdie_proxy-birdie_proxy.mean())/max(birdie_proxy.std(ddof=0),1)
+        # Legacy V11 remains unchanged when four-source mode is disabled.
+        birdie_bias=np.clip(.10*birdie_proxy.to_numpy(),-.2,.2)
     golfer_mu=pd.to_numeric(d.expected_round,errors='coerce').fillna(0).to_numpy()+round_field_mean_to_par
     golfer_sd=pd.to_numeric(d.round_sd,errors='coerce').fillna(2.7).clip(1.7,4.5).to_numpy()
     # Solve each golfer's probability tilt against desired strokes to par.

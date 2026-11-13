@@ -17,6 +17,9 @@ import pandas as pd
 
 from pga_predictor_pro import Config as PGAConfig, predict_from_dataframes
 from golf_first_v11 import simulate_golf_first
+from four_source_blend import blend_four_sources, SOURCE_DEFAULTS, CATEGORY_DEFAULTS, ADVANCED_DEFAULTS
+from pga_official_season_stats import fill_missing_measured_stats
+from pga_input_integrity import player_key as _golfer_identity_key
 from ai2_pga_historical_evidence import name_key, extract_finish_history
 from portfolio_optimizer import PortfolioSettings, optimize_portfolio
 from ai2_pga_portfolio_scenarios import audit_portfolio_worlds
@@ -87,9 +90,9 @@ def normalize_otis(raw,dk):
     out["player"]=out["player"].astype(str).str.strip()
     if out["player"].map(key).duplicated().any():
         raise ValueError("Duplicate golfer in OTIS Course-Fit CSV.")
-    out["merge_key"]=out["player"].map(name_key)
+    out["merge_key"]=out["player"].map(_golfer_identity_key)
     names=dk[["player"]].copy()
-    names["merge_key"]=names["player"].map(name_key)
+    names["merge_key"]=names["player"].map(_golfer_identity_key)
     out=names.merge(out.drop(columns=["player"]),on="merge_key",how="left",validate="one_to_one").drop(columns="merge_key")
     numeric=[c for c in out.columns if c!="player"]
     for c in numeric:
@@ -133,14 +136,14 @@ def normalize_independent_stats(raw,dk):
     if not any(found[k] for k in sg_keys):
         raise ValueError("Independent stats CSV has no measured SG Total, APP, OTT, ARG, or PUTT column.")
     vals=pd.DataFrame({"player":frame[name].astype(str).str.strip()})
-    vals["match_key"]=vals["player"].map(name_key)
+    vals["match_key"]=vals["player"].map(_golfer_identity_key)
     if vals["match_key"].duplicated().any():
         raise ValueError("Duplicate golfer in independent stats CSV.")
     for k,source in found.items():
         if source:
             vals[k]=pd.to_numeric(frame[source],errors="coerce")
     names=dk[["player"]].copy()
-    names["match_key"]=names["player"].map(name_key)
+    names["match_key"]=names["player"].map(_golfer_identity_key)
     aligned=names.merge(vals.drop(columns=["player"]),on="match_key",how="left",validate="one_to_one").drop(columns=["match_key"])
     covered=int(aligned[list(k for k in sg_keys if k in aligned)].notna().any(axis=1).sum())
     if covered/max(1,len(dk))<.70:
@@ -182,7 +185,7 @@ def normalize_rrg_course_fit(raw,dk):
     if not any(sources[x] for x in evidence):
         raise ValueError("RRG Course Fit needs FIT or category columns: OTT, APP, ARG, PUTT, SCORING. Rank or salary is not enough.")
     values=pd.DataFrame({"player":frame[name].astype(str).str.strip()})
-    values["_key"]=values["player"].map(name_key)
+    values["_key"]=values["player"].map(_golfer_identity_key)
     if values["_key"].duplicated().any() or values["_key"].isin(["","nan","none"]).any():
         raise ValueError("RRG Course Fit golfer names must be nonblank and unique.")
     for target,original in sources.items():
@@ -193,7 +196,7 @@ def normalize_rrg_course_fit(raw,dk):
                     .str.replace("−","-",regex=False))
             values[target]=pd.to_numeric(cleaned,errors="coerce")
     names=dk[["player"]].copy()
-    names["_key"]=names.player.map(name_key)
+    names["_key"]=names.player.map(_golfer_identity_key)
     aligned=names.merge(values.drop(columns=["player"]),on="_key",
                         how="left",validate="one_to_one").drop(columns="_key")
     cols=[c for c in evidence if c in aligned]
@@ -330,7 +333,10 @@ def group_ratings_source(model):
 def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
                    otis_raw=None,independent_raw=None,course_fit_raw=None,weather_raw=None,event_year=None,sims=3000,seed=42,lineup_count=10,
                    max_exposure=.20,salary_floor=46500,min_unique=3,
-                   strategy="Balanced / Single Entry",locks=(),excludes=()):
+                   strategy="Balanced / Single Entry",locks=(),excludes=(),
+                   four_source_mode=False,weighted_sg_raw=None,
+                   source_weights=None,category_weights=None,advanced_weights=None,
+                   official_stats=None,official_stats_audit=None):
     if not str(tournament).strip():
         raise ValueError("Enter the actual current tournament.")
     if int(course_par) not in (70,71,72,73):
@@ -346,6 +352,23 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
     otis,matched=normalize_otis(otis_raw,dk)
     independent,observed_match=normalize_independent_stats(independent_raw,dk)
     course_fit,course_fit_meta=normalize_rrg_course_fit(course_fit_raw,dk)
+    four_source_meta={}
+    if four_source_mode:
+        # Blend OTIS and genuine SG measurements before V10 builds the base.
+        # This is the same unified one-click engine, never a separate PGA app.
+        if otis.empty or not matched:
+            raise ValueError("Four-source PGA mode requires the actual OTIS Course Fit export.")
+        if independent.empty:
+            independent=otis[["player","otis_true_skill","otis_course_fit","otis_form"]].copy()
+        else:
+            extra=[x for x in otis.columns if x!="player" and x not in independent]
+            independent=independent.merge(otis[["player"]+extra],on="player",
+                                          how="left",validate="one_to_one")
+        independent,official_fills=fill_missing_measured_stats(independent,official_stats)
+        four_source_meta["official_fills"]=official_fills
+        if "otis_course_fit" not in independent or not independent["otis_course_fit"].notna().any():
+            raise ValueError("OTIS native Course Fit is missing from four-source scoring.")
+
     recent_form,form_meta=extract_finish_history(independent_raw,dk,event_year=event_year)
     weather=(weather_raw.copy() if isinstance(weather_raw,pd.DataFrame) else pd.DataFrame())
     if not independent.empty:
@@ -375,7 +398,32 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
     )
     if base[["expected_round","round_sd"]].isna().any().any():
         raise ValueError("PGA forecast contains missing golfer baseline. No portfolio exported.")
-    base=apply_rrg_course_fit(base,course_fit)
+    # Legacy mode retains the preexisting small independent RRG tilt.
+    # New four-source mode weights the RRG vendor composite explicitly;
+    # never double-count it with the old tilt.
+    if four_source_mode:
+        if "strength_z" not in base.columns:
+            raise ValueError("Four-source mode requires a measured-skill/OTIS baseline, not a salary-only projection.")
+        for stat in ("sg_ott","sg_approach","sg_arg","sg_putting",
+                     "otis_course_fit","birdie_rate","driving_distance","driving_accuracy",
+                     "gir_rate","scrambling","bogey_avoidance","scoring_before_cut",
+                     "par3_scoring","par4_scoring","par5_scoring",
+                     "approach_175_200","approach_200_225"):
+            if stat not in base and stat in independent:
+                base[stat]=base.player.map(independent.set_index("player")[stat])
+        base,blend_audit=blend_four_sources(
+            base,weighted_sg=weighted_sg_raw,rrg_course_fit=course_fit_raw,
+            source_weights=source_weights or SOURCE_DEFAULTS,
+            category_weights=category_weights or CATEGORY_DEFAULTS,
+            advanced_weights=advanced_weights or ADVANCED_DEFAULTS)
+        four_source_meta["blend"]=blend_audit
+        four_source_meta["weights"]=(source_weights or SOURCE_DEFAULTS).copy()
+        four_source_meta["category_weights"]=(category_weights or CATEGORY_DEFAULTS).copy()
+        four_source_meta["advanced_weights"]=(advanced_weights or ADVANCED_DEFAULTS).copy()
+        four_source_meta["official_stats_audit"]=(official_stats_audit.to_dict("records")
+            if isinstance(official_stats_audit,pd.DataFrame) else [])
+    else:
+        base=apply_rrg_course_fit(base,course_fit)
     if not recent_form.empty:
         # RRG last-50 export already contains recent finished-event and Hist YEAR
         # columns. Do not throw them away or interpret them as observed SG.
@@ -393,6 +441,13 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
     if cuts is None or cuts.shape!=draws.shape:
         raise ValueError("Golf cut-event simulation was not aligned with scores. No portfolio exported.")
     predicted=_ensure_coverage_for_optimizer(predicted)
+    if four_source_mode:
+        predicted["optimization_eligible"]=predicted["four_source_eligible"].fillna(False).astype(bool)
+        # The incumbent portfolio optimizer does not filter a separate
+        # eligibility flag, so explicitly exclude these *only* from selection,
+        # while preserving them in joint tournament cut calculations.
+        no_evidence=set(predicted.loc[~predicted.optimization_eligible,"player"].astype(str))
+        excludes=tuple(set(excludes)|no_evidence)
     settings=PortfolioSettings(lineup_count=int(lineup_count),salary_cap=50000,
         salary_floor=int(salary_floor),min_player_salary=3000,roster_size=6,
         max_exposure=float(max_exposure),min_unique=int(min_unique),
@@ -420,6 +475,7 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
         "portfolio_audit":portfolio_audit,
         "raw_cuts":cuts,
         "diagnostics":diagnostics,
+        "four_source":four_source_meta,
         "metadata":{"tournament":str(tournament),"course_par":int(course_par),
             "hole_pars_verified":holes is not None,"field_size":len(dk),
             "simulations":int(sims),"seed":int(seed),
@@ -438,7 +494,8 @@ def run_tournament(dk,tournament,course_par,no_cut,cut_size=65,hole_frame=None,
             "weather_hours":len(weather),"weather_wind_mph":(
                 round(float(pd.to_numeric(weather["wind_mph"],errors="coerce").mean()),1)
                 if "wind_mph" in weather and weather["wind_mph"].notna().any() else None),
-            "source_mode":mode,
+            "source_mode":("FOUR-SOURCE WEIGHTED BLEND + PGA TOUR ADVANCED STATS" if four_source_mode else mode),
+            "four_source_enabled":bool(four_source_mode),
             "created_utc":datetime.now(timezone.utc).isoformat()}}
 
 def dk_roster_ids(portfolio,projections):
