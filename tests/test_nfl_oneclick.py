@@ -78,7 +78,9 @@ class OneClickTests(unittest.TestCase):
              "Sim mean DK":11.0,"Rebuilt mean DK":11.0}
             for p in players.to_dict("records")
         ]
-        with patch("ai2_nfl_oneclick.summarize_simulated_players",
+        with patch("ai2_nfl_oneclick.returning_rb_competition",
+                   return_value=({}, [])), patch(
+                   "ai2_nfl_oneclick.summarize_simulated_players",
                    return_value=verified):
             output = build_oneclick_portfolio(self.saved, seed=117)
         self.assertEqual(len(output["summary"]), 20)
@@ -129,8 +131,9 @@ class OneClickTests(unittest.TestCase):
         # Old failure: fantasy points present, no football stats.
         simulation.return_value=(players,np.full((10000,1),11.),
                                  {"__MODEL_VERSION__":"broken"})
-        with self.assertRaisesRegex(ValueError,
-                                    "scoring components could not be verified"):
+        with patch("ai2_nfl_oneclick.returning_rb_competition",
+                   return_value=({}, [])), self.assertRaisesRegex(
+                   ValueError, "scoring components could not be verified"):
             build_oneclick_portfolio(self.saved,seed=10)
 
     def test_seed_bounds(self):
