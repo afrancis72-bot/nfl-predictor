@@ -25,5 +25,5 @@ jobs:
         run: |
           python -m py_compile ai2_nfl_opponent_relative.py scripts/backtest_nfl_opponent_relative.py
           PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_opponent_relative.py' -v
-      - name: Blind held-out test: 2025 train, 2026 evaluation
+      - name: "Blind held-out test: 2025 train, 2026 evaluation"
         run: PYTHONPATH=. python -u scripts/backtest_nfl_opponent_relative.py
