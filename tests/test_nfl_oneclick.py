@@ -47,7 +47,12 @@ class OneClickTests(unittest.TestCase):
             "opponent_allowances": pd.DataFrame([dict(
                 defense="ARI", position="WR", multiplier=1.23,
                 player_game_observations=60,
-                source="nflverse observed pregame opponent_team, player-week partial DK")])
+                source="nflverse observed pregame opponent_team, player-week partial DK")]),
+            "opponent_relative_profiles": pd.DataFrame([dict(
+                defense="ARI", position="WR", observations=26,
+                shrunk_excess_dk=1.47,
+                mean_player_baseline_dk=11.05,
+                mean_actual_dk=13.12)])
         }
         players = pd.DataFrame([
             {"ID": str(i), "Name": f"P{i}", "Position": "WR", "Salary": 5000,
@@ -99,6 +104,13 @@ class OneClickTests(unittest.TestCase):
             next(r["Applied yard efficiency multiplier"]
                  for r in output["opponent_matchup_report"]
                  if r["Offense"] == "DAL" and r["Position"] == "WR"), 1.0, places=4)
+        relative = next(
+            r for r in output["opponent_matchup_report"]
+            if r["Offense"] == "DAL" and r["Position"] == "WR")
+        self.assertEqual(relative["Opponent-relative DK excess (shrunk)"], 1.47)
+        self.assertEqual(relative["Opponent-relative samples"], 26)
+        self.assertIs(relative["Opponent-relative adjustment applied"], False)
+        self.assertEqual(simulation.call_args.kwargs["defense_weight"], 0.)
         self.assertEqual(candidates.call_args.kwargs["seed"],117)
         modeled = {row["Name"]:row for row in candidates.call_args.args[0]}
         self.assertEqual(modeled["P1"]["projected_targets"],6.0)
