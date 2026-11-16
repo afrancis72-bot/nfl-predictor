@@ -660,6 +660,8 @@ else:
                 st.caption("Opposing defensive injuries, recent position-by-position allowance and potential game-script implications. Historical opponent observations exclude the current game.")
                 st.info(matchup_summary.get("game_script_status",
                         "Hypotheses only — not a calibrated fantasy-point adjustment."))
+                st.caption(matchup_summary.get("yards_only_warning",
+                        "No verified opponent-position yardage adjustment was applied."))
                 if matchup_rows:
                     st.dataframe(_ai2_pd.DataFrame(matchup_rows),
                                  use_container_width=True, hide_index=True, height=400)
@@ -674,7 +676,7 @@ else:
                                str(matchup_summary["historical_data_issue"]))
                 st.caption(matchup_summary.get("coverage_matchup_status",
                     "Exact receiver-cornerback routes and shadow coverages not verified."))
-                st.caption("An OUT defender is a clue, not proof of a particular WR matchup. No automatic positive player projections are credited without measured alignment and calibrated evidence.")
+                st.caption("A listed OUT defender does not prove a receiver matchup. Defensive injuries and WR-CB shadow assignments are NOT credited as simulation boosts. Only the sourced, capped position-level yards adjustment shown above is used; its accuracy still requires independent holdout testing.")
 
             with st.expander("Portfolio overlap and distinct winning paths", expanded=False):
                 diversity = portfolio_overlap_audit(ranked)
