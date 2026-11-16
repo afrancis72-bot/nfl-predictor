@@ -679,6 +679,23 @@ else:
                 if matchup_summary.get("historical_data_issue"):
                     st.warning("Historical opponent data unavailable: " +
                                str(matchup_summary["historical_data_issue"]))
+                st.markdown("**Opponent quality-adjusted football efficiency (research only)**")
+                st.caption(matchup_summary.get("component_note",
+                    "Past opponents are compared against their own prior pass, rush and reception efficiency. No scoring adjustment."))
+                component_rows = output_one.get("opponent_component_report") or []
+                if component_rows:
+                    st.dataframe(_ai2_pd.DataFrame(component_rows),
+                                 use_container_width=True, hide_index=True, height=330)
+                    st.download_button(
+                        "Download opponent efficiency by QB/RB/WR/TE CSV",
+                        data=_ai2_pd.DataFrame(component_rows).to_csv(index=False).encode("utf-8-sig"),
+                        file_name="ai2_nfl_opponent_stat_efficiency_research.csv",
+                        mime="text/csv", key="nfl_opponent_stat_efficiency_csv")
+                elif matchup_summary.get("component_data_issue"):
+                    st.warning("Opponent efficiency source not available: " +
+                               str(matchup_summary["component_data_issue"]))
+                else:
+                    st.caption("No sufficiently sampled opponent rate evidence for this slate.")
                 st.caption(matchup_summary.get("coverage_matchup_status",
                     "Exact receiver-cornerback routes and shadow coverages not verified."))
                 st.caption("A listed OUT defender does not prove a receiver matchup. Defensive injuries and WR-CB shadow assignments are NOT credited as simulation boosts. Position-level opponent factors are currently neutral (1.0) after the experimental yardage adjustment failed its independent historical comparison.")
