@@ -284,7 +284,46 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         r["Previous opponent actual DK"] = (
             relative["mean_actual_dk"] if relative else None)
         r["Opponent-relative adjustment applied"] = False
+    # Distinguish matchup mechanism from raw DK scoring. These historical
+    # per-opportunity rates are measured against past opponents' own baselines,
+    # and are RESEARCH ONLY until an independently tested stat simulator earns
+    # an improvement. Never apply them to P90, carries, targets or TDs here.
+    component_data = research.get("opponent_component_profiles")
+    component_lookup = (component_data.to_dict("records")
+                        if isinstance(component_data, pd.DataFrame) else [])
+    offense_for_defense = {
+        (str(r["Offense"]), str(r["Opposing defense"]))
+        for r in opposing_report}
+    opponent_components = []
+    for z in component_lookup:
+        for offense, opponent in offense_for_defense:
+            if str(z["defense"]) != opponent:
+                continue
+            opponent_components.append({
+                "Offense": offense,
+                "Opposing defense": opponent,
+                "Position": z["position"],
+                "Mechanism": z["channel"],
+                "Opponents usual yards per opportunity":
+                    z["expected_yards_per_opp"],
+                "Actual yards per opportunity allowed":
+                    z["actual_yards_per_opp"],
+                "Quality-adjusted efficiency delta %":
+                    z["shrunk_efficiency_pct"],
+                "Previous player-games": z["observations"],
+                "Prior opportunities": z["opportunities"],
+                "Effect on current simulation": "None - research only",
+            })
+    opponent_components.sort(key=lambda x: (
+        x["Offense"], x["Position"], x["Mechanism"]))
     opposing_summary = report_summary(opposing_report)
+    opposing_summary["component_data_issue"] = research.get("opponent_component_issue")
+    opposing_summary["component_note"] = (
+        "Observed passing yards/attempt, rushing yards/carry and receiving "
+        "yards/target against previous opponents' own pregame efficiency. "
+        "The RB rushing and receiving channels are independent. These rates "
+        "DO NOT adjust the current simulation, QB/WR touchdown odds, injury "
+        "status or coverage assignments.")
     opposing_summary["historical_data_issue"] = research.get("opponent_history_issue")
     opposing_summary["relative_evidence_issue"] = research.get("opponent_relative_issue")
     opposing_summary["relative_evidence_note"] = (
@@ -375,6 +414,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "player_simulation_audit_error": simulation_component_audit_error,
         "opponent_matchup_report": opposing_report,
         "opponent_matchup_summary": opposing_summary,
+        "opponent_component_report": opponent_components,
         "research_warning": (
             "Experimental, uncalibrated own-model forecasts based on observed play "
             "rates and official injury designations. Depth-chart changes, late "
