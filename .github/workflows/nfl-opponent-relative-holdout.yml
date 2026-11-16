@@ -5,8 +5,11 @@ on:
       - feature/unified-ai2-platform
     paths:
       - 'ai2_nfl_opponent_relative.py'
+      - 'ai2_nfl_defense_components.py'
       - 'scripts/backtest_nfl_opponent_relative.py'
+      - 'scripts/backtest_nfl_defense_components.py'
       - 'tests/test_nfl_opponent_relative.py'
+      - 'tests/test_nfl_defense_components.py'
       - '.github/workflows/nfl-opponent-relative-holdout.yml'
   workflow_dispatch:
 permissions:
@@ -14,7 +17,7 @@ permissions:
 jobs:
   talent-adjusted-opponent-holdout:
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 23
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,7 +26,10 @@ jobs:
       - run: python -m pip install --disable-pip-version-check numpy pandas
       - name: Compile and test no-leakage player baseline and opponent residuals
         run: |
-          python -m py_compile ai2_nfl_opponent_relative.py scripts/backtest_nfl_opponent_relative.py
+          python -m py_compile ai2_nfl_opponent_relative.py ai2_nfl_defense_components.py scripts/backtest_nfl_opponent_relative.py scripts/backtest_nfl_defense_components.py
           PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_opponent_relative.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_defense_components.py' -v
       - name: "Blind held-out test: 2025 train, 2026 evaluation"
         run: PYTHONPATH=. python -u scripts/backtest_nfl_opponent_relative.py
+      - name: "Stat-level test: passing, rushing, receiving conditional efficiency"
+        run: PYTHONPATH=. python -u scripts/backtest_nfl_defense_components.py
