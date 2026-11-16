@@ -41,7 +41,11 @@ class OneClickTests(unittest.TestCase):
                 [{"Name": "Breece Hall", "Team": "NYJ",
                   "current_status": "Q", "DK Status": "Q"}]),
             "questionable_count": 1,
-            "excluded_count": 0
+            "excluded_count": 0,
+            "opponent_allowances": pd.DataFrame([dict(
+                defense="ARI", position="WR", multiplier=1.23,
+                player_game_observations=60,
+                source="nflverse observed pregame opponent_team, player-week partial DK")])
         }
         players = pd.DataFrame([
             {"ID": str(i), "Name": f"P{i}", "Position": "WR", "Salary": 5000,
@@ -81,6 +85,14 @@ class OneClickTests(unittest.TestCase):
         self.assertEqual(simulation.call_args.kwargs["out_players"], outs)
         self.assertIs(simulation.call_args.args[1], raw)
         self.assertEqual(simulation.call_args.kwargs["seed"],117)
+        self.assertEqual(simulation.call_args.kwargs["defense_weight"],.25)
+        self.assertEqual(
+            simulation.call_args.kwargs["defense_profiles"][("ARI","WR")]["factor"],
+            1.23)
+        self.assertAlmostEqual(
+            next(r["Applied yard efficiency multiplier"]
+                 for r in output["opponent_matchup_report"]
+                 if r["Offense"] == "DAL" and r["Position"] == "WR"), 1.0575, places=4)
         self.assertEqual(candidates.call_args.kwargs["seed"],117)
         modeled = {row["Name"]:row for row in candidates.call_args.args[0]}
         self.assertEqual(modeled["P1"]["projected_targets"],6.0)
