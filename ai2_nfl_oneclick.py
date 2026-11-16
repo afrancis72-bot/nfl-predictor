@@ -100,7 +100,10 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         raise ValueError("Opponent allowance source must be a DataFrame")
     defense_profiles = (build_defense_profiles(allowance_data, season, week)
                         if not allowance_data.empty else {})
-    defense_weight = 0.25 if defense_profiles else 0.0
+    # Independent 2026 W4-W8 holdout (117 player-games) showed neutral scoring
+    # MAE 6.904 vs 6.911 at strength .25. Keep matchup evidence visible, but
+    # reject production activation until a revised signal beats the baseline.
+    defense_weight = 0.0
 
     # The game-level simulator already redistributes OUT-player touches and
     # targets. Use unmodified rates with outs to avoid double counting.
@@ -265,11 +268,11 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     opposing_summary["active_yard_efficiency_weight"] = defense_weight
     opposing_summary["eligible_defense_position_profiles"] = len(defense_profiles)
     opposing_summary["yards_only_warning"] = (
-        "Experimental: position-level opponent partial DK allowed is a proxy "
-        "for yards per opportunity, not an independently calibrated yards model. "
-        "Only receiving/rushing YARDS are adjusted (maximum 6.25% at current "
-        "weight), not targets, carries, TDs or individual WR-CB coverage. "
-        "No claim of higher predicted accuracy pending historical holdout.")
+        "Opponent-position yard adjustment is DISABLED (neutral 1.0) after "
+        "independent 2026 W4-W8 player holdout: MAE 6.904 neutral versus "
+        "6.911 with weight 0.25 (n=117). The signal uses fantasy points "
+        "allowed as a yards-efficiency proxy and needs redesign. "
+        "Defender absences and WR-CB coverage remain research-only.")
     pregame_report = {
         "official_injury_url": str(meta.get("source") or ""),
         "checked_utc": meta.get("checked_utc"),
@@ -347,6 +350,6 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
             "Experimental, uncalibrated own-model forecasts based on observed play "
             "rates and official injury designations. Depth-chart changes, late "
             "inactives, individual coverage and defensive projections require review. "
-            "A conservative pregame opponent-position yard-efficiency adjustment "
-            "is active where sourced, but is not yet independently calibrated."),
+            "Historical opponent-position yard adjustments are OFF after "
+            "out-of-sample validation failed to improve the base forecast."),
     }
