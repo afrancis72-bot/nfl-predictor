@@ -121,7 +121,9 @@ class OneClickTests(unittest.TestCase):
         research.return_value = {
             "blockers":[],
             "injury_meta":{"source":"https://www.nfl.com/injuries/"},
-            "pregame_role_evidence": {"sample": {"Role gate": "PASS"}}}
+            "pregame_role_evidence": {"sample": {"Role gate": "PASS"}},
+            "players": pd.DataFrame([{"Name": "Sample Receiver", "Team": "DAL",
+                                      "current_status": "", "DK Status": ""}])}
         players=pd.DataFrame([{
             "ID":"100","Name":"Sample Receiver","Position":"WR",
             "Salary":6200,"TeamAbbrev":"DAL","proj":13.0,
