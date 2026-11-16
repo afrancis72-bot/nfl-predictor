@@ -13,7 +13,8 @@ REQUIRED_RATES = {"player", "team", "position", "games_played", "pass_attempts_p
 
 
 def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, out_players=None,
-                                 team_environment=None, snap_profiles=None, injury_presence=None):
+                                 team_environment=None, snap_profiles=None, injury_presence=None,
+                                 defense_profiles=None, defense_weight=0.):
     """Run the existing game-level engine only on explicitly verified inputs.
 
     Returns the engine's (players, points matrix, stat draws) without marking
@@ -149,10 +150,30 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
             share=float(v.get("share",float("nan")))
             if not (np.isfinite(share) and 0 <= share <= 1):
                 raise ValueError("Invalid unavailable-player historical playing share")
+    # Matchup multipliers are sourced from completed pregame player-week data.
+    # Never accept arbitrary multipliers or infer player-level coverage from
+    # a defender injury report. This first-stage feature adjusts yardage only.
+    if not np.isfinite(defense_weight) or not 0 <= defense_weight <= 1:
+        raise ValueError("Defensive matchup weight must be finite and between 0 and 1")
+    if defense_profiles is not None:
+        if not isinstance(defense_profiles, dict):
+            raise ValueError("Defensive matchup profiles must be sourced records")
+        for key, profile in defense_profiles.items():
+            if not (isinstance(key, tuple) and len(key) == 2
+                    and isinstance(profile, dict)
+                    and str(profile.get("source", "")).startswith(
+                        "nflverse observed pregame opponent_team")
+                    and int(profile.get("sample", 0)) >= 20):
+                raise ValueError("Unverified defensive matchup profile")
+            factor = float(profile.get("factor", float("nan")))
+            if not np.isfinite(factor) or not .75 <= factor <= 1.25:
+                raise ValueError("Invalid defensive matchup factor")
     return simulate_stat_driven_dfs(active, rates, n_sims=int(n_sims),
                                     seed=int(seed), out_players=out_players,
                                     allow_role_proxies=False, team_environment=team_environment,
                                     snap_profiles=snap_profiles, injury_presence=injury_presence,
+                                    defense_profiles=defense_profiles,
+                                    defense_weight=float(defense_weight),
                                     # Reconcile team passing yards through actually
                                     # observed omitted receivers before uniformly
                                     # inflating every roster-eligible WR projection.
