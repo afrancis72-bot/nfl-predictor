@@ -263,8 +263,37 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
     opposing_report = make_opponent_report(
         parse_csv_payload(salaries[1]), allowance_data, meta,
         defense_profiles=defense_profiles, defense_weight=defense_weight)
+    # Compare previous opponents with their own rolling pregame baselines,
+    # rather than assuming that facing a star automatically made a defense weak.
+    # Research-only: the 2026 holdout did not improve total historical MAE.
+    relative_data = research.get("opponent_relative_profiles")
+    relative_rows = (relative_data.to_dict("records")
+                     if isinstance(relative_data, pd.DataFrame) else [])
+    relative_lookup = {
+        (str(z["defense"]), str(z["position"])): z
+        for z in relative_rows}
+    for r in opposing_report:
+        relative = relative_lookup.get(
+            (r["Opposing defense"], r["Position"]))
+        r["Opponent-relative DK excess (shrunk)"] = (
+            relative["shrunk_excess_dk"] if relative else None)
+        r["Opponent-relative samples"] = (
+            relative["observations"] if relative else 0)
+        r["Previous opponent baseline DK"] = (
+            relative["mean_player_baseline_dk"] if relative else None)
+        r["Previous opponent actual DK"] = (
+            relative["mean_actual_dk"] if relative else None)
+        r["Opponent-relative adjustment applied"] = False
     opposing_summary = report_summary(opposing_report)
     opposing_summary["historical_data_issue"] = research.get("opponent_history_issue")
+    opposing_summary["relative_evidence_issue"] = research.get("opponent_relative_issue")
+    opposing_summary["relative_evidence_note"] = (
+        "Research only. Prior opponents' partial DraftKings points are "
+        "compared with THEIR OWN pregame rolling baseline, then shrunk "
+        "toward no effect. This helps remove player-talent confounding "
+        "but does not identify WR-CB assignments, injuries or pass/run mechanisms. "
+        "An independent 2026 holdout did NOT improve overall mean-error. "
+        "These differences are NOT applied to lineup scoring.")
     opposing_summary["active_yard_efficiency_weight"] = defense_weight
     opposing_summary["eligible_defense_position_profiles"] = len(defense_profiles)
     opposing_summary["yards_only_warning"] = (
