@@ -10,6 +10,7 @@ from props_data import fetch_weekly, make_rates
 from ai2_nfl_workload import redistribute_opportunities
 from ai2_nfl_matchup_diagnostics import defensive_allowance
 from ai2_nfl_opponent_relative import opponent_relative_profiles
+from ai2_nfl_defense_components import defense_component_profiles
 from ai2_nfl_input_integrity import player_role_trends
 from ai2_nfl_pregame_consistency import build_pregame_role_evidence
 from ai2_nfl_team_environment import predict_team_environment
@@ -158,6 +159,13 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
     except (KeyError, ValueError, TypeError) as exc:
         relative_opponent = pd.DataFrame()
         relative_issue = str(exc)
+    component_issue = None
+    try:
+        component_profiles = defense_component_profiles(
+            history, season, week)
+    except (KeyError, ValueError, TypeError) as exc:
+        component_profiles = pd.DataFrame()
+        component_issue = str(exc)
     missing = baseline[baseline["match_status"].ne("matched")]
     blockers = ["Workload redistribution is estimated from observed rates, not validated against current depth charts",
                 "Independent DST projections not yet connected",
@@ -169,6 +177,8 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         "opponent_allowances": opponent_allowances, "opponent_history_issue": opponent_issue,
         "opponent_relative_profiles": relative_opponent,
         "opponent_relative_issue": relative_issue,
+        "opponent_component_profiles": component_profiles,
+        "opponent_component_issue": component_issue,
         "opportunity_changes": opportunity_changes, "role_trends": role_trends,
         "pregame_role_evidence": pregame_role_evidence,
         "team_environment": team_environment,
