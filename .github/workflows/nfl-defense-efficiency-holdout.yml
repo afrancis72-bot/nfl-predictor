@@ -1,5 +1,14 @@
 name: NFL defense opponent efficiency scoring historical holdout
 on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'ai2_nfl_oneclick.py'
+      - 'ai2_nfl_simulation_adapter.py'
+      - 'ai2_nfl_defensive_efficiency.py'
+      - 'scripts/backtest_nfl_defensive_efficiency.py'
+      - '.github/workflows/nfl-defense-efficiency-holdout.yml'
   pull_request:
     paths:
       - 'ai2_nfl_defensive_efficiency.py'
