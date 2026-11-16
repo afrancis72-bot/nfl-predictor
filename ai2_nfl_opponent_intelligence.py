@@ -9,6 +9,7 @@ chronological, out-of-sample backtesting.
 import math
 import pandas as pd
 from ai2_nfl_matchups import canonical_team, opponent_from_game_info
+from ai2_nfl_defensive_efficiency import matchup_yard_multiplier
 
 PASS_COVERAGE = frozenset({"CB", "DB", "S", "FS", "SS"})
 PASS_PRESSURE = frozenset({"DE", "EDGE", "OLB", "LB", "DT", "NT"})
@@ -50,7 +51,8 @@ def _relevant_defenders(practice_rows, team):
     return out, watch
 
 
-def make_opponent_report(salary_rows, allowances, injury_meta):
+def make_opponent_report(salary_rows, allowances, injury_meta, *, defense_profiles=None,
+                         defense_weight=0.):
     """Build a pregame, team-scoped defensive research desk.
 
     Every listed player has an explicit offense + opponent from the DK slate.
@@ -98,6 +100,11 @@ def make_opponent_report(salary_rows, allowances, injury_meta):
                               if (position in {"QB", "WR", "TE"} and
                                   (p["coverage_relevant"] or p["pressure_relevant"]))
                               or (position == "RB" and p["run_front_relevant"])]
+            # QB pass-yard adjustments arise from matched skill receivers'
+            # receiving yards. No independent QB or defender-injury multiplier.
+            yard_factor = (matchup_yard_multiplier(
+                defense_profiles or {}, opponent, position,
+                strength=defense_weight) if position in {"RB", "WR", "TE"} else 1.)
             output.append({
                 "Offense": team, "Opposing defense": opponent, "Position": position,
                 "Historical allowance index": round(factor, 3) if reliable else None,
@@ -114,7 +121,9 @@ def make_opponent_report(salary_rows, allowances, injury_meta):
                     "Investigate rushing-front changes" if position == "RB"
                     and (relevant_out or relevant_watch) else
                     "Neutral — insufficient confirmed injury evidence"),
-                "Applied simulation boost": 1.0,
+                "Applied simulation boost": round(yard_factor, 4),
+                "Applied yard efficiency multiplier": round(yard_factor, 4),
+                "Adjustment scope": "Rush/receive yards only; no TD, volume or coverage boost",
                 "Evidence": ("Observed pregame position aggregate + official team/position report"
                              if (reliable or relevant_out or relevant_watch)
                              else "Insufficient; neutral prior"),
@@ -132,5 +141,10 @@ def report_summary(report):
             r["Defenders ruled out"] != "None verified" or
             r["Defenders to monitor"] != "None" for r in report),
         "coverage_matchup_status": "not verified: route/CB alignment and shadow coverage not supplied",
-        "game_script_status": "hypothesis only; no automatic projections adjustment until chronological validation",
+        "game_script_status": (
+            "Defense yard multipliers are scored conservatively; defender injuries, "
+            "individual coverage and game script remain unvalidated hypotheses."
+            if any(x.get("Applied yard efficiency multiplier", 1.) != 1.
+                   for x in report)
+            else "Neutral defensive adjustment: no verified position signal"),
     }
