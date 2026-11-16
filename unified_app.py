@@ -676,7 +676,7 @@ else:
                                str(matchup_summary["historical_data_issue"]))
                 st.caption(matchup_summary.get("coverage_matchup_status",
                     "Exact receiver-cornerback routes and shadow coverages not verified."))
-                st.caption("A listed OUT defender does not prove a receiver matchup. Defensive injuries and WR-CB shadow assignments are NOT credited as simulation boosts. Only the sourced, capped position-level yards adjustment shown above is used; its accuracy still requires independent holdout testing.")
+                st.caption("A listed OUT defender does not prove a receiver matchup. Defensive injuries and WR-CB shadow assignments are NOT credited as simulation boosts. Position-level opponent factors are currently neutral (1.0) after the experimental yardage adjustment failed its independent historical comparison.")
 
             with st.expander("Portfolio overlap and distinct winning paths", expanded=False):
                 diversity = portfolio_overlap_audit(ranked)
