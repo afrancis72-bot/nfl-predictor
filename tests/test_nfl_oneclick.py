@@ -52,7 +52,14 @@ class OneClickTests(unittest.TestCase):
                 defense="ARI", position="WR", observations=26,
                 shrunk_excess_dk=1.47,
                 mean_player_baseline_dk=11.05,
-                mean_actual_dk=13.12)])
+                mean_actual_dk=13.12)]),
+            "opponent_component_profiles": pd.DataFrame([dict(
+                defense="ARI", position="WR",
+                channel="receive_yards_per_target",
+                expected_yards_per_opp=8.5,
+                actual_yards_per_opp=9.7,
+                shrunk_efficiency_pct=3.1,
+                observations=33, opportunities=210)])
         }
         players = pd.DataFrame([
             {"ID": str(i), "Name": f"P{i}", "Position": "WR", "Salary": 5000,
@@ -110,6 +117,13 @@ class OneClickTests(unittest.TestCase):
         self.assertEqual(relative["Opponent-relative DK excess (shrunk)"], 1.47)
         self.assertEqual(relative["Opponent-relative samples"], 26)
         self.assertIs(relative["Opponent-relative adjustment applied"], False)
+        channel = next(
+            r for r in output["opponent_component_report"]
+            if r["Offense"] == "DAL" and r["Position"] == "WR")
+        self.assertEqual(channel["Mechanism"], "receive_yards_per_target")
+        self.assertEqual(channel["Quality-adjusted efficiency delta %"], 3.1)
+        self.assertEqual(channel["Effect on current simulation"],
+                         "None - research only")
         self.assertEqual(simulation.call_args.kwargs["defense_weight"], 0.)
         self.assertEqual(candidates.call_args.kwargs["seed"],117)
         modeled = {row["Name"]:row for row in candidates.call_args.args[0]}
