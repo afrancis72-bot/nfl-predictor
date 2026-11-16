@@ -9,6 +9,7 @@ from ai2_nfl_official_injuries import fetch_official_injury_statuses, match_inju
 from props_data import fetch_weekly, make_rates
 from ai2_nfl_workload import redistribute_opportunities
 from ai2_nfl_matchup_diagnostics import defensive_allowance
+from ai2_nfl_opponent_relative import opponent_relative_profiles
 from ai2_nfl_input_integrity import player_role_trends
 from ai2_nfl_pregame_consistency import build_pregame_role_evidence
 from ai2_nfl_team_environment import predict_team_environment
@@ -147,6 +148,16 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         opponent_allowances = pd.DataFrame(columns=[
             "defense", "position", "multiplier", "player_game_observations"])
         opponent_issue = str(exc)
+    # Talent-adjusted opponent residuals are a NEW research diagnostic.
+    # They use prior same-player games, not a raw points-allowed index.
+    # Keep them out of the scoring simulator until independent validation.
+    relative_issue = None
+    try:
+        relative_opponent = opponent_relative_profiles(
+            history, season, week)
+    except (KeyError, ValueError, TypeError) as exc:
+        relative_opponent = pd.DataFrame()
+        relative_issue = str(exc)
     missing = baseline[baseline["match_status"].ne("matched")]
     blockers = ["Workload redistribution is estimated from observed rates, not validated against current depth charts",
                 "Independent DST projections not yet connected",
@@ -156,6 +167,8 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
     return {
         "players": baseline, "raw_rates": rates, "adjusted_rates": adjusted_rates,
         "opponent_allowances": opponent_allowances, "opponent_history_issue": opponent_issue,
+        "opponent_relative_profiles": relative_opponent,
+        "opponent_relative_issue": relative_issue,
         "opportunity_changes": opportunity_changes, "role_trends": role_trends,
         "pregame_role_evidence": pregame_role_evidence,
         "team_environment": team_environment,
