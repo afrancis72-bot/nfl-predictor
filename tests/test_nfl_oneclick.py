@@ -15,7 +15,8 @@ class OneClickTests(unittest.TestCase):
     @patch("ai2_nfl_oneclick.create_observed_model_pool")
     @patch("ai2_nfl_oneclick.collect_automatic_baselines")
     def test_auto_research_without_projection_upload(self, research, pool):
-        research.return_value = {"blockers": [], "injury_meta": {"source": "test"}}
+        research.return_value = {"blockers": [], "injury_meta": {"source": "test"},
+                                 "pregame_role_evidence": {"sample": {"Role gate": "PASS"}}}
         pool.side_effect = ValueError("Not enough observed players")
         with self.assertRaisesRegex(ValueError, "Not enough observed players"):
             build_oneclick_portfolio(self.saved, None, seed=42)
@@ -42,6 +43,7 @@ class OneClickTests(unittest.TestCase):
                   "current_status": "Q", "DK Status": "Q"}]),
             "questionable_count": 1,
             "excluded_count": 0,
+            "pregame_role_evidence": {"sample": {"Role gate": "PASS"}},
             "opponent_allowances": pd.DataFrame([dict(
                 defense="ARI", position="WR", multiplier=1.23,
                 player_game_observations=60,
@@ -116,7 +118,8 @@ class OneClickTests(unittest.TestCase):
         import pandas as pd
         research.return_value = {
             "blockers":[],
-            "injury_meta":{"source":"https://www.nfl.com/injuries/"}}
+            "injury_meta":{"source":"https://www.nfl.com/injuries/"},
+            "pregame_role_evidence": {"sample": {"Role gate": "PASS"}}}
         players=pd.DataFrame([{
             "ID":"100","Name":"Sample Receiver","Position":"WR",
             "Salary":6200,"TeamAbbrev":"DAL","proj":13.0,
