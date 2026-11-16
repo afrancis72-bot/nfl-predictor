@@ -34,6 +34,32 @@ class AdapterTests(unittest.TestCase):
         engine.assert_called_once()
         self.assertIs(engine.call_args.kwargs["allow_role_proxies"], False)
 
+    def test_source_checked_defense_weight_reaches_stat_engine(self):
+        from ai2_nfl_defensive_efficiency import build_defense_profiles
+        allowances = pd.DataFrame([dict(
+            defense="AAA", position="RB", multiplier=1.20,
+            player_game_observations=60,
+            source="nflverse observed pregame opponent_team, player-week partial DK")])
+        profiles = build_defense_profiles(allowances, 2026, 11)
+        with patch("ai2_nfl_simulation_adapter.simulate_stat_driven_dfs",
+                   return_value=("players", "points", "stats")) as engine:
+            run_verified_stat_simulation(
+                pool(), rates(), defense_profiles=profiles, defense_weight=.25)
+        self.assertEqual(engine.call_args.kwargs["defense_profiles"], profiles)
+        self.assertEqual(engine.call_args.kwargs["defense_weight"], .25)
+
+    def test_unsourced_defensive_adjustment_rejected(self):
+        fake = {("AAA", "RB"): {
+            "source": "made up factor", "sample": 100, "factor": 1.25}}
+        with self.assertRaisesRegex(ValueError, "Unverified defensive"):
+            run_verified_stat_simulation(
+                pool(), rates(), defense_profiles=fake, defense_weight=.25)
+
+    def test_invalid_defense_weight_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Defensive matchup weight"):
+            run_verified_stat_simulation(
+                pool(), rates(), defense_weight=float("nan"))
+
     def test_ineligible_player_never_reaches_engine(self):
         p = pool()
         p.loc[len(p)] = dict(ID="999", Name="Ineligible WR", Position="WR",
