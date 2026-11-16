@@ -65,7 +65,11 @@ def _rolling_player_games(history, season, week, *, include_week=False,
     results = []
     for r in h.to_dict("records"):
         pos = str(r["position"]).upper()
-        defense = canonical_team(r.get("opponent_team"))
+        source_defense = r.get("opponent_team")
+        defense = (canonical_team(source_defense)
+                   if pd.notna(source_defense) else "")
+        if defense in {"", "NAN", "NONE", "<NA>", "NULL", "UNKNOWN"}:
+            defense = ""
         key = _identity(r)
         # One NFL player cannot play two games for the same team in a week.
         # Reject duplicates rather than letting a same-week outcome leak into
