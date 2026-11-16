@@ -10,7 +10,7 @@ from props_data import fetch_weekly
 from ai2_nfl_snap_roles import fetch_snap_counts
 from scripts.backtest_nfl_player_dk_means import GAMES_SOURCE,evaluate,summary
 
-WEIGHTS=(0.,.5,1.)
+WEIGHTS=(0.,.25,.5,1.)
 
 
 def compare(history,schedules,snaps,*,weights=WEIGHTS,games_per_week=2,n_sims=260):
