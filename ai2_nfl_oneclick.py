@@ -18,6 +18,7 @@ from ai2_nfl_sim_portfolio import select_simulated_portfolio
 from ai2_nfl_qb_audit import qb_selection_report
 from ai2_nfl_export import export_classic_candidates
 from ai2_nfl_opponent_intelligence import make_opponent_report, report_summary
+from ai2_nfl_defensive_efficiency import build_defense_profiles
 from ai2_nfl_input_integrity import input_lineage_rows, lineup_role_warnings
 from ai2_nfl_projection_review import projection_review_flags
 from ai2_nfl_role_plausibility import compare_simulated_role_to_history
@@ -87,13 +88,28 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         if str(p.get("Name", "")).strip().casefold() in premium_exclusion_names)
     audit["premium_only_exclusions"] = sorted(premium_exclusion_names)
 
+    # Opponent records are strictly PRE-kickoff, source checked and capped.
+    # This first-stage adjustment changes observed yard efficiency only;
+    # targets, carries, touchdown opportunities and coverage assignments remain
+    # independently modeled. Do not claim this heuristic is calibrated yet.
+    allowance_data = research.get("opponent_allowances")
+    if allowance_data is None:
+        allowance_data = pd.DataFrame(columns=[
+            "defense", "position", "multiplier", "player_game_observations", "source"])
+    if not isinstance(allowance_data, pd.DataFrame):
+        raise ValueError("Opponent allowance source must be a DataFrame")
+    defense_profiles = (build_defense_profiles(allowance_data, season, week)
+                        if not allowance_data.empty else {})
+    defense_weight = 0.25 if defense_profiles else 0.0
+
     # The game-level simulator already redistributes OUT-player touches and
     # targets. Use unmodified rates with outs to avoid double counting.
     players, draws, stat_draws = run_verified_stat_simulation(
         pool, raw_rates, n_sims=10000, seed=seed, out_players=outs,
         team_environment=research.get("team_environment"),
         snap_profiles=research.get("snap_profiles"),
-        injury_presence=research.get("injury_presence", {}))
+        injury_presence=research.get("injury_presence", {}),
+        defense_profiles=defense_profiles, defense_weight=defense_weight)
     if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
         raise ValueError("Incomplete NFL simulation; refusing to export lineups")
     # Required scoring safety check, not an optional diagnostic. A high-mean
@@ -241,14 +257,19 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
                 "Game status": status or str((matched or {}).get("game_status") or "Not yet designated"),
                 "DraftKings status": str(row.get("DK Status") or "").strip(),
                 "Source": "NFL report" if matched else "DK slate status only"})
-    allowance_data = research.get("opponent_allowances")
-    if allowance_data is None:
-        allowance_data = pd.DataFrame(columns=[
-            "defense", "position", "multiplier", "player_game_observations"])
     opposing_report = make_opponent_report(
-        parse_csv_payload(salaries[1]), allowance_data, meta)
+        parse_csv_payload(salaries[1]), allowance_data, meta,
+        defense_profiles=defense_profiles, defense_weight=defense_weight)
     opposing_summary = report_summary(opposing_report)
     opposing_summary["historical_data_issue"] = research.get("opponent_history_issue")
+    opposing_summary["active_yard_efficiency_weight"] = defense_weight
+    opposing_summary["eligible_defense_position_profiles"] = len(defense_profiles)
+    opposing_summary["yards_only_warning"] = (
+        "Experimental: position-level opponent partial DK allowed is a proxy "
+        "for yards per opportunity, not an independently calibrated yards model. "
+        "Only receiving/rushing YARDS are adjusted (maximum 6.25% at current "
+        "weight), not targets, carries, TDs or individual WR-CB coverage. "
+        "No claim of higher predicted accuracy pending historical holdout.")
     pregame_report = {
         "official_injury_url": str(meta.get("source") or ""),
         "checked_utc": meta.get("checked_utc"),
@@ -325,5 +346,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "research_warning": (
             "Experimental, uncalibrated own-model forecasts based on observed play "
             "rates and official injury designations. Depth-chart changes, late "
-            "inactives, matchups and defensive projections require review."),
+            "inactives, individual coverage and defensive projections require review. "
+            "A conservative pregame opponent-position yard-efficiency adjustment "
+            "is active where sourced, but is not yet independently calibrated."),
     }
