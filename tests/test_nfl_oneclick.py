@@ -89,14 +89,16 @@ class OneClickTests(unittest.TestCase):
         self.assertEqual(simulation.call_args.kwargs["out_players"], outs)
         self.assertIs(simulation.call_args.args[1], raw)
         self.assertEqual(simulation.call_args.kwargs["seed"],117)
-        self.assertEqual(simulation.call_args.kwargs["defense_weight"],.25)
+        # The previous 0.25 opponent proxy lost to neutral on independent
+        # 2026 holdout, so it must remain OFF in the real one-click path.
+        self.assertEqual(simulation.call_args.kwargs["defense_weight"],0.0)
         self.assertEqual(
             simulation.call_args.kwargs["defense_profiles"][("ARI","WR")]["factor"],
             1.23)
         self.assertAlmostEqual(
             next(r["Applied yard efficiency multiplier"]
                  for r in output["opponent_matchup_report"]
-                 if r["Offense"] == "DAL" and r["Position"] == "WR"), 1.0575, places=4)
+                 if r["Offense"] == "DAL" and r["Position"] == "WR"), 1.0, places=4)
         self.assertEqual(candidates.call_args.kwargs["seed"],117)
         modeled = {row["Name"]:row for row in candidates.call_args.args[0]}
         self.assertEqual(modeled["P1"]["projected_targets"],6.0)
