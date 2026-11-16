@@ -58,12 +58,42 @@ def metrics(rows, strength):
     }
 
 
+def trained_channel_policy(training_rows, *, minimum_training_games=35):
+    # All choices use ONLY the completed 2025 training slice. A channel
+    # with too little history defaults to neutral rather than guessing.
+    names = sorted({r["channel"]+":"+r["position"] for r in training_rows})
+    policy = {}
+    for channel in names:
+        sample = [x for x in training_rows
+                  if x["channel"]+":"+x["position"] == channel]
+        policy[channel] = (
+            min(WEIGHTS, key=lambda w:(metrics(sample,w)["mae_yards_per_opp"],w))
+            if len(sample) >= minimum_training_games else 0.)
+    return policy
+
+
+def measure_channel_policy(rows, policy):
+    a = np.array([z["actual_efficiency"] for z in rows],float)
+    p = np.array([
+        z["baseline_efficiency"]*(1 + policy.get(
+            z["channel"]+":"+z["position"], 0.)*z["defensive_pct"])
+        for z in rows],float)
+    return {
+        "n":len(rows),
+        "mae_yards_per_opp":round(float(np.abs(p-a).mean()),5),
+        "rmse_yards_per_opp":round(float(np.sqrt(np.mean((p-a)**2))),5),
+    }
+
+
 def compare(history):
     train = rows_for_period(history, 2025, (9,10,11,12))
     holdout = rows_for_period(history, 2026, (4,5,6,7,8))
     train_results = {str(w):metrics(train,w) for w in WEIGHTS}
     choice = min(WEIGHTS, key=lambda w:(train_results[str(w)]["mae_yards_per_opp"],w))
     test_results = {str(w):metrics(holdout,w) for w in WEIGHTS}
+    channel_policy = trained_channel_policy(train)
+    train_policy_metrics = measure_channel_policy(train, channel_policy)
+    holdout_policy_metrics = measure_channel_policy(holdout, channel_policy)
     by_channel = {}
     for channel in sorted(set(r["channel"]+":"+r["position"]
                               for r in holdout)):
@@ -79,6 +109,12 @@ def compare(history):
         "training": train_results,
         "holdout": test_results,
         "per_channel": by_channel,
+        "trained_channel_weights_2025_only": channel_policy,
+        "training_channel_policy": train_policy_metrics,
+        "holdout_channel_policy": holdout_policy_metrics,
+        "holdout_channel_policy_improved": (
+            holdout_policy_metrics["mae_yards_per_opp"] <
+            test_results["0.0"]["mae_yards_per_opp"]),
         "holdout_mae_improved": (
             test_results[str(choice)]["mae_yards_per_opp"]
             < test_results["0.0"]["mae_yards_per_opp"]),
