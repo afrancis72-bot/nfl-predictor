@@ -662,6 +662,11 @@ else:
                         "Hypotheses only — not a calibrated fantasy-point adjustment."))
                 st.caption(matchup_summary.get("yards_only_warning",
                         "No verified opponent-position yardage adjustment was applied."))
+                if matchup_summary.get("relative_evidence_note"):
+                    st.info(matchup_summary["relative_evidence_note"])
+                if matchup_summary.get("relative_evidence_issue"):
+                    st.warning("Opponent-relative baseline unavailable: " +
+                               str(matchup_summary["relative_evidence_issue"]))
                 if matchup_rows:
                     st.dataframe(_ai2_pd.DataFrame(matchup_rows),
                                  use_container_width=True, hide_index=True, height=400)
