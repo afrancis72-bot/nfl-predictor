@@ -45,8 +45,14 @@ def observed_pbp_team_games(pbp, drives, schedules):
     f["rush"]=f["rush_attempt"].gt(0)
     f["sacked"]=f["sack"].gt(0)
     f=f[f[["pass","rush","sacked"]].any(axis=1)].copy()
-    if (f[["pass","rush","sacked"]].sum(axis=1)>1).any():
-        raise ValueError("PBP pass/sack/rush flags overlap; cannot audit exact play accounting")
+    overlaps=f[f[["pass","rush","sacked"]].sum(axis=1)>1]
+    if len(overlaps):
+        example_cols=[x for x in ("season","week","game_id","play_id","play_type",
+                    "pass_attempt","rush_attempt","sack") if x in overlaps.columns]
+        counts=overlaps.groupby(["pass","rush","sacked"],dropna=False).size().to_dict()
+        raise ValueError(f"PBP ambiguous scrimmage flags: n={len(overlaps)}, "
+                         f"flag combinations={counts}, "
+                         f"first examples={overlaps[example_cols].head(8).to_dict('records')}")
     if f.duplicated(["season","week","game_id","play_id"]).any():
         raise ValueError("Duplicate PBP game play IDs")
     counts=(f.groupby(["season","week","game_id","team"],sort=True)
