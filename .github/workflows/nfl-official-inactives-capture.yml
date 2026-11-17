@@ -70,6 +70,11 @@ jobs:
           python -m unittest discover -s tests -p 'test_nfl_team_pass_prior_ab.py' -v
           python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
           python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Past NFL.com explicitly ACTIVE report parser smoke (not pregame evidence)
+        continue-on-error: true
+        env:
+          PYTHONPATH: .
+        run: python -u scripts/probe_nfl_named_active.py
       - name: Independently load real nflverse kickoff schedule (not game status)
         env:
           PYTHONPATH: .
