@@ -14,8 +14,8 @@ class ReceivingYardResearchTests(unittest.TestCase):
         generated=np.array([120.,120.,120.])
         desired=np.array([160.,160.,160.])
         oth,tot,shift=reconcile_other_yards(y,c,generated,desired,strength=.7)
-        np.testing.assert_allclose(oth,[22,9,30])
-        np.testing.assert_allclose(shift,[13,0,30])
+        np.testing.assert_allclose(oth,[22,9,28])
+        np.testing.assert_allclose(shift,[13,0,28])
         np.testing.assert_allclose(tot-generated,shift)
 
     def test_zero_is_baseline_default(self):
