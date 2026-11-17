@@ -1,0 +1,57 @@
+name: NFL pregame red-zone usage data schema verification
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - '.github/workflows/nfl-redzone-schema-smoke.yml'
+      - 'ai2_nfl_redzone_usage.py'
+      - 'tests/test_nfl_redzone_usage.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-nflverse-player-opportunities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install read-only data dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow fsspec
+      - name: Verify real PBP player IDs and true red-zone opportunities
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from ai2_nfl_pbp_drives import PBP_RELEASE
+          url=PBP_RELEASE.format(season=2025)
+          columns=["season","week","season_type","posteam","yardline_100",
+                   "play_type","pass_attempt","rush_attempt","receiver_player_id",
+                   "rusher_player_id","passer_player_id","receiver_player_name",
+                   "rusher_player_name","pass_touchdown","rush_touchdown",
+                   "two_point_attempt"]
+          df=pd.read_parquet(url,columns=columns)
+          print("Real nflverse season 2025 rows:",len(df))
+          for k in ("receiver_player_id","rusher_player_id","passer_player_id",
+                    "yardline_100","two_point_attempt"):
+              print("Column",k,"non-null rows",int(df[k].notna().sum()))
+          rz=df[(df["yardline_100"]<=20)&
+                df["season_type"].eq("REG")&
+                (df["pass_attempt"].eq(1)|df["rush_attempt"].eq(1))&
+                ~df["two_point_attempt"].eq(1)]
+          print("Real red-zone pass/rush opportunities:",len(rz))
+          print("Rows with attributed receiving targets:",int(rz["receiver_player_id"].notna().sum()))
+          print("Rows with attributed carries:",int(rz["rusher_player_id"].notna().sum()))
+          print("Observed redzone TD events:",int(rz["pass_touchdown"].eq(1).sum()+rz["rush_touchdown"].eq(1).sum()))
+          print("Sample player rows:",rz[["posteam","yardline_100","receiver_player_id","rusher_player_id"]].dropna(how="all").head(8).to_dict("records"))
+          assert len(rz)>800
+          assert rz["receiver_player_id"].notna().sum()>200
+          assert rz["rusher_player_id"].notna().sum()>200
+          PY
+      - name: Run feature-specific unit tests if available
+        run: |
+          if test -f ai2_nfl_redzone_usage.py && test -f tests/test_nfl_redzone_usage.py; then
+            PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_redzone_usage.py' -v
+          fi
