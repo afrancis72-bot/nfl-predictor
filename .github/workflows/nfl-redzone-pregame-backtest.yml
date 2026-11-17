@@ -1,0 +1,60 @@
+name: NFL red-zone GSIS role-aware touchdown research A-B
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'ai2_nfl_redzone_usage.py'
+      - 'dfs_stats_engine.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/backtest_nfl_redzone_usage.py'
+      - 'tests/test_nfl_redzone_usage.py'
+      - 'tests/test_nfl_redzone_usage_backtest.py'
+      - '.github/workflows/nfl-redzone-pregame-backtest.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  measure-player-goalline-opportunities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install offline scoring and historical PBP dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4 pyarrow fsspec
+      - name: Compile and verify GSIS identity, role, and TD conservation tests
+        run: |
+          python -m py_compile ai2_nfl_redzone_usage.py dfs_stats_engine.py scripts/backtest_nfl_redzone_usage.py
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_redzone_usage.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_redzone_usage_backtest.py' -v
+      - name: Pregame only real PBP GSIS usage and paired Sunday projection benchmark
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u scripts/backtest_nfl_redzone_usage.py \
+            --n-sims 300 --out-dir nfl_redzone_audit
+      - name: Preserve every paired player forecast even if model fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-redzone-role-audit
+          path: nfl_redzone_audit/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Reject uncalibrated or non-improving goal-line predictions
+        run: |
+          python - <<'PY'
+          import json,sys
+          result=json.load(open('nfl_redzone_audit/results.json'))
+          print('2025-only selected strength:',result['selected_from_2025'])
+          for test,passed in result['gates'].items():
+              print(('PASS ' if passed else 'FAIL ')+test)
+          print('Production approved:',result['production_approved'])
+          if not result['research_pass']:
+              print('Player red-zone TD allocation has NOT passed research validation.')
+              sys.exit(1)
+          print('Research passed; not production ready without new prospective holdout.')
+          PY
