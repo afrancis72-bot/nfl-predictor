@@ -24,6 +24,7 @@ from ai2_nfl_pbp_drives import pregame_possession_profiles
 from ai2_nfl_redzone_usage import pregame_redzone_profiles
 from dfs_stats_engine import simulate_stat_driven_dfs
 from ai2_nfl_opportunity_audit import extract_player_stats
+from ai2_nfl_wr_role_audit import (pregame_receiver_ranks,receiver_row,team_other_row)
 from props_data import fetch_weekly, clean_weekly, make_rates, dk_classic_points
 
 GAMES_SOURCE = "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv"
@@ -94,7 +95,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              game_matchup_strength=0.,possession_drives=None,
              possession_strength=0.,redzone_pbp=None,
              redzone_strength=0.,stat_audit_rows=None,
-             audit_model_name="neutral"):
+             audit_model_name="neutral",wr_role_rows=None,
+             team_target_rows=None):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -132,6 +134,12 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             if pool.empty:
                 failures.append(f"{season} W{week} {away}@{home}: no eligible prior-week QB")
                 continue
+            role_ranks=role_groups=None
+            if wr_role_rows is not None or team_target_rows is not None:
+                # Rank WR1/2/3 exclusively from prior-week rate observations
+                # BEFORE looking at the target-game box score.
+                role_ranks,role_groups=pregame_receiver_ranks(
+                    rates,pool,season,week,(away,home))
             try:
                 players,draws,stat_draws=simulate_stat_driven_dfs(
                     pool,rates,n_sims=n_sims,seed=season*100+week,
@@ -169,6 +177,13 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                 k=(_norm_name(a["player_name"]),canonical_team(a["recent_team"]),
                    str(a["position"]).upper())
                 lookup.setdefault(k,[]).append(a)
+            if team_target_rows is not None:
+                for team in (away,home):
+                    team_target_rows.append(team_other_row(
+                        team=team,opponent=(home if team==away else away),
+                        season=season,week=week,game=f"{away}@{home}",
+                        pool=pool,observations=observations,stat_draws=stat_draws,
+                        history_ranked=role_groups.get(team,[])))
             rate_lookup={
                 (_norm_name(r["player"]),canonical_team(r["team"]),
                  str(r["position"]).upper()):r
@@ -200,6 +215,18 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                 if not np.isfinite(hist):
                     continue
                 scores=draws[:,i]
+                if wr_role_rows is not None and p["Position"]=="WR":
+                    key_role=(p["TeamAbbrev"],_norm_name(p["Name"]))
+                    rr=receiver_row(
+                        player=p["Name"],team=p["TeamAbbrev"],
+                        opponent=(home if p["TeamAbbrev"]==away else away),
+                        season=season,week=week,game=f"{away}@{home}",
+                        observed=observed[0],prior=pre,
+                        simulated_stats=stat_draws.get(str(p["Name"])),
+                        role_info=role_ranks.get(key_role),
+                        n_sims=n_sims,model=audit_model_name)
+                    if rr is not None:
+                        wr_role_rows.append(rr)
                 if stat_audit_rows is not None:
                     player_name=str(p["Name"])
                     stat_audit_rows.extend(extract_player_stats(
