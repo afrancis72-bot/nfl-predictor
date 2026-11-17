@@ -347,3 +347,48 @@ def save_new_capture(raw,parsed,snapshot,out_dir,*,real_network_fetch=True):
     }
     (root/"manifest.json").write_text(json.dumps(metadata,indent=2,sort_keys=True))
     return str(root)
+
+
+def load_verified_capture(archive_dir,*,as_of_utc=None):
+    """Reload/reparse a previously archived real pregame NFL OUT-only report.
+
+    Fails closed if source bytes, digest, parser result, status rows or capture
+    time no longer agree. An archived GitHub artifact is only durable for its
+    configured retention period; original NFL authorship still depends on
+    trustworthy network fetch and preserved GitHub Actions job provenance.
+    """
+    root=Path(archive_dir)
+    if not root.is_dir():
+        raise ValueError("Official inactive capture archive does not exist")
+    paths={k:root/k for k in (
+        "official_source.html","inactive_player_snapshot.json",
+        "verified_parser.json","manifest.json")}
+    if not all(p.is_file() for p in paths.values()):
+        raise ValueError("Incomplete archived NFL source/evidence files")
+    raw=paths["official_source.html"].read_bytes()
+    if not 200<len(raw)<=MAX_BYTES:
+        raise ValueError("Archived official source HTML byte count invalid")
+    snap=json.loads(paths["inactive_player_snapshot.json"].read_text())
+    parsed=json.loads(paths["verified_parser.json"].read_text())
+    manifest=json.loads(paths["manifest.json"].read_text())
+    if manifest.get("archive_type")!="NFL_OFFICIAL_INACTIVES_PREGAME_CAPTURE":
+        raise ValueError("Not a previously captured official pregame inactive report")
+    if not manifest.get("http_capture_was_performed_by_this_program"):
+        raise ValueError("Archive lacks real network-fetch provenance")
+    if not manifest.get("source_reparsed_and_statuses_matched"):
+        raise ValueError("Archive lacks source-to-status verification marker")
+    actual_sha=hashlib.sha256(raw).hexdigest()
+    if (manifest.get("source_html_sha256")!=actual_sha
+        or parsed.get("source_html_sha256")!=actual_sha):
+        raise ValueError("Archived official NFL HTML SHA-256 has changed")
+    if (manifest.get("source_url")!=parsed.get("source_url")
+        or manifest.get("capture_utc")!=snap.get("captured_at_utc")
+        or manifest.get("kickoff_utc")!=snap.get("kickoff_utc")):
+        raise ValueError("Archived official source manifest disagrees with status metadata")
+    verify_snapshot_against_raw_html(raw,parsed,snap)
+    if as_of_utc is not None:
+        if _utc(snap["captured_at_utc"],"captured_at_utc")>_utc(as_of_utc,"as_of_utc"):
+            raise ValueError("Cannot use a later pregame capture to make earlier prediction")
+    if any(x["status"]!=OUT for x in snap["records"]):
+        raise ValueError("Inactive-list collector cannot produce ACTIVE claims")
+    return snap,manifest
