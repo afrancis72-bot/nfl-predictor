@@ -40,7 +40,7 @@ class TestDrivePassAccounting(unittest.TestCase):
         self.truth=dict(season=2026,week=9,game="AAA@BBB",team="AAA",
             actual_pass_attempts=15,actual_sacks=1,actual_rushes=8,
             actual_dropbacks=16,actual_plays=24,eligible_observed_drives=5)
-        self.roles=[dict(player_key="firstwr",role="WR1")]
+        self.roles=[dict(player_key="first wr",role="WR1")]
         self.actual_players=pd.DataFrame([
             dict(recent_team="AAA",position="WR",player_name="First WR",targets=10),
             dict(recent_team="AAA",position="TE",player_name="A TE",targets=3)
