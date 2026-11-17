@@ -111,7 +111,7 @@ class ResearchRoleTargetShareTests(unittest.TestCase):
     def test_stat_simulator_only_role_share_differs(self):
         args=dict(n_sims=250,seed=260611,
                   allow_role_proxies=False,team_environment=self.env,
-                  other_yard_strength=0.)
+                  other_yard_strength=0.,wr_role_team_rng_isolated=True)
         p0,s0,d0=simulate_stat_driven_dfs(self.pool,self.rates,**args)
         p1,s1,d1=simulate_stat_driven_dfs(self.pool,self.rates,
                   wr_role_strength=.7,wr_role_target_season=2026,
