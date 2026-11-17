@@ -110,7 +110,7 @@ class TestDrivePassAccounting(unittest.TestCase):
         self.assertEqual(observed[(2026,9,"AAA@BBB","AAA")]["actual_dropbacks"],3)
         bad=pd.DataFrame(sample)
         bad.loc[0,"sack"]=1
-        with self.assertRaisesRegex(ValueError,"overlap"):
+        with self.assertRaisesRegex(ValueError,"ambiguous scrimmage flags"):
             observed_pbp_team_games(bad,drives,game)
 
     def test_report_metric_rejects_duplicate(self):
