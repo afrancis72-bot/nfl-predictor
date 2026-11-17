@@ -1,0 +1,60 @@
+name: NFL WR1 WR2 WR3 pregame target and OTHER bucket audit
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'ai2_nfl_wr_role_audit.py'
+      - 'scripts/audit_nfl_wr_target_roles.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'tests/test_nfl_wr_role_audit.py'
+      - '.github/workflows/nfl-wr-role-target-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wr-target-roles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install historical football simulation dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4 pyarrow fsspec
+      - name: Verify WR role ranking before kickoff and correct model OTHER accounting
+        run: |
+          python -m py_compile ai2_nfl_wr_role_audit.py scripts/audit_nfl_wr_target_roles.py scripts/backtest_nfl_player_dk_means.py
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Replay complete historical Sunday slates with pregame WR roles
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u scripts/audit_nfl_wr_target_roles.py \
+            --n-sims 300 --out-dir nfl_wr_role_audit
+      - name: Archive individual WR targets and each team target budget
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-wr1-wr2-wr3-target-audit
+          path: nfl_wr_role_audit/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Require complete WR scoring coverage, no production activation
+        run: |
+          python - <<'PY'
+          import json
+          r=json.load(open('nfl_wr_role_audit/wr_role_target_audit.json'))
+          for label,data in r['windows'].items():
+              print(label,'WRs',data['ranked_wr_target_rows'],
+                    'team games',data['sample_team_games'])
+              print('role targets',{k:(v['n'],v.get('sim_bias_targets'))
+                                    for k,v in data['roles'].items()})
+              assert data['ranked_wr_target_rows']==data['matched_wr_points']
+              assert data['skipped_simulator_game_count']==0
+              assert data['sample_team_games']>30
+          assert r['production_approved'] is False
+          print('Role audit completed; no claim of model predictive validation.')
+          PY
