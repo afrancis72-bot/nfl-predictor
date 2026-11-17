@@ -40,6 +40,15 @@ class FootballUniverseResearchTests(unittest.TestCase):
                              "GAME_DAY_STATUS_UNVERIFIED").all())
         validate_football_only_players(self.ghosts,self.pool,self.rates)
 
+    def test_salary_listed_but_ineligible_is_still_a_football_player(self):
+        candidate=self.pool.iloc[0].to_dict()
+        candidate.update(Name="Missing Salary WR",ID="NONSELECTABLE-WR",
+                         Position="WR",optimizer_eligible=False)
+        extended=pd.concat([self.pool,pd.DataFrame([candidate])],ignore_index=True)
+        ghost=build_football_only_players(extended,self.rates,
+                                          season=2026,week=7)
+        self.assertIn("Missing Salary WR",ghost["Name"].tolist())
+
     def test_known_out_is_excluded_before_simulation(self):
         excluded=build_football_only_players(self.pool,self.rates,
                   season=2026,week=7,
@@ -79,6 +88,9 @@ class FootballUniverseResearchTests(unittest.TestCase):
             football_universe_target_season=2026,
             football_universe_target_week=7)
         self.assertEqual(oldpool["ID"].tolist(),newpool["ID"].tolist())
+        self.assertEqual(oldpool.columns.tolist(),newpool.columns.tolist())
+        self.assertNotIn("football_only",oldpool.columns)
+        self.assertNotIn("football_only",newpool.columns)
         self.assertEqual(oldscore.shape,newscore.shape)
         self.assertFalse(newpool["ID"].astype(str).str.startswith("FOOTBALL_ONLY").any())
         self.assertFalse(newpool["Name"].isin(self.ghosts["Name"]).any())
