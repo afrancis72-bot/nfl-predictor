@@ -34,7 +34,7 @@ def audit(weekly,schedules,snaps,drives,observed,*,n_sims=220,windows=None):
                 "Synthetic DK historical pool lacks dated salaries and verified inactives",
                 "The old engine has no drive count; only possession mode generates modeled drives",
                 "220 scenarios/game descriptive; production release requires 10,000 scenarios and forward holdout",
-            ]},"diagnostic_checks":{}}
+            ],"diagnostic_checks":{}}
     files={}
     for label,(season,weeks) in (windows or WINDOWS).items():
         frames={}
