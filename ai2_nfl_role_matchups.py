@@ -212,7 +212,7 @@ def defense_role_profiles(history, season, week, *,
     return pd.DataFrame(profiles,columns=PROFILE_COLUMNS), out
 
 
-def slate_role_report(salary_rows, history, season, week, profiles):
+def slate_role_report(salary_rows, history, season, week, profiles, *, official_status_by_id=None):
     """Show EVERY salary-file player: plausible pregame usage rank + matchup.
 
     Live role rank is among non-OUT salary rows with at least two observed
@@ -220,6 +220,7 @@ def slate_role_report(salary_rows, history, season, week, profiles):
     """
     if not isinstance(profiles, pd.DataFrame):
         raise ValueError("Role profiles must be sourced")
+    official_status_by_id = official_status_by_id or {}
     h = clean_weekly(history)
     h = h[h["season"].ge(int(season)-1) &
           ((h["season"].lt(int(season))) |
@@ -242,7 +243,13 @@ def slate_role_report(salary_rows, history, season, week, profiles):
         team = _canon(item.get("TeamAbbrev") or item.get("Team") or "")
         opponent = opponent_from_game_info(team, str(item.get("Game Info", "")))
         name = str(item.get("Name", "")).strip()
-        status = str(item.get("Status", "") or "").upper().strip()
+        dk_status = str(item.get("Status", "") or "").upper().strip()
+        official = str(official_status_by_id.get(str(item.get("ID","")), "") or "").upper().strip()
+        # Either explicit authoritative OUT or a blocked DK status removes a
+        # player from the present-slate role rank; stale DK statuses must not
+        # silently override verified official OUT designations.
+        status = (dk_status if dk_status in INVALID_STATUS else
+                  official if official else dk_status)
         relevant = by_name.get((_name(name),team,pos),[])[-8:]
         scores = [dk_classic_points(z,pos) for z in relevant]
         usages = [_usage(z,pos) for z in relevant]
