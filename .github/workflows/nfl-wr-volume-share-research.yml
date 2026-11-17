@@ -1,0 +1,57 @@
+name: NFL WR pregame pass-volume vs target-share retrospective audit
+on:
+  push:
+    branches:
+      - research/wr-pass-volume-share-20261117
+    paths:
+      - 'ai2_nfl_pass_volume_share_audit.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/audit_nfl_wr_volume_share.py'
+      - 'tests/test_nfl_wr_volume_share.py'
+      - '.github/workflows/nfl-wr-volume-share-research.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wr-volume-share:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install historical dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4 pyarrow fsspec
+      - name: Unit checks for exact decomposition and original pregame rate audit
+        run: |
+          python -m py_compile ai2_nfl_pass_volume_share_audit.py scripts/backtest_nfl_player_dk_means.py scripts/audit_nfl_wr_volume_share.py
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_wr_volume_share.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_wr_pool_sensitivity.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Replay full Sunday windows and reconcile every WR target error
+        env:
+          PYTHONPATH: .
+        run: python -u scripts/audit_nfl_wr_volume_share.py --n-sims 300 --out-dir wr_volume_share_audit
+      - name: Retain detailed player-game diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wr-volume-vs-allocation-research
+          path: wr_volume_share_audit/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Require no production promotion
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('wr_volume_share_audit/wr_volume_share_audit.json'))
+          assert d['production_approved'] is False
+          assert d['independent_holdout'] is False
+          for windows in d['windows'].values():
+            for case in windows.values():
+              assert case['team_passes']['team_games']>=40
+              assert case['WR1']['n']>20 and case['WR2']['n']>20
+          print("Validated decomposition only; NOT predictive acceptance")
+          PY
