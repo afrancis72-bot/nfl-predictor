@@ -87,7 +87,13 @@ def run(weekly,schedules,snaps,*,windows=WINDOWS,n_sims=220):
             mismatch["delta"]=mismatch.model_pass_attempts_candidate-mismatch.model_pass_attempts_base
             cols=["season","week","game","team","passing_qb_base",
                   "passing_qb_candidate","model_pass_attempts_base",
-                  "model_pass_attempts_candidate","delta"]
+                  "model_pass_attempts_candidate",
+                  "sim_dropbacks_mean_base","sim_dropbacks_mean_candidate",
+                  "sim_sacks_mean_base","sim_sacks_mean_candidate",
+                  "sim_plays_mean_base","sim_plays_mean_candidate",
+                  "pregame_expected_dropbacks_base","pregame_expected_dropbacks_candidate",
+                  "pregame_sack_rate_base","pregame_sack_rate_candidate",
+                  "pregame_expected_plays_base","pregame_expected_plays_candidate","delta"]
             raise ValueError("Full player-universe candidate changed team pass-attempt totals: "+
                              f"n={len(mismatch)} max_delta={float(mismatch.delta.abs().max()):.4f} "+
                              f"examples={mismatch[cols].head(8).to_dict('records')}")
