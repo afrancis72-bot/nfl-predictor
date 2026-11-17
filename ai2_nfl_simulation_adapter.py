@@ -14,7 +14,12 @@ REQUIRED_RATES = {"player", "team", "position", "games_played", "pass_attempts_p
 
 def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, out_players=None,
                                  team_environment=None, snap_profiles=None, injury_presence=None,
-                                 defense_profiles=None, defense_weight=0.):
+                                 defense_profiles=None, defense_weight=0.,
+                                 football_only_players=None,
+                                 football_universe_target_season=None,
+                                 football_universe_target_week=None,
+                                 football_availability_snapshots=None,
+                                 football_availability_as_of_utc=None):
     """Run the existing game-level engine only on explicitly verified inputs.
 
     Returns the engine's (players, points matrix, stat draws) without marking
@@ -168,6 +173,21 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
             factor = float(profile.get("factor", float("nan")))
             if not np.isfinite(factor) or not .75 <= factor <= 1.25:
                 raise ValueError("Invalid defensive matchup factor")
+    football_options={}
+    if football_only_players is not None:
+        if (not isinstance(football_only_players,pd.DataFrame) or
+            football_universe_target_season is None or
+            football_universe_target_week is None):
+            raise ValueError("Availability-aware simulation needs verified dated football-only pool")
+        if not isinstance(football_availability_snapshots,dict):
+            raise ValueError("Availability-aware simulation needs explicit game source snapshots")
+        football_options=dict(
+            football_only_players=football_only_players,
+            football_universe_target_season=football_universe_target_season,
+            football_universe_target_week=football_universe_target_week,
+            football_availability_snapshot=football_availability_snapshots,
+            football_availability_as_of_utc=football_availability_as_of_utc,
+        )
     return simulate_stat_driven_dfs(active, rates, n_sims=int(n_sims),
                                     seed=int(seed), out_players=out_players,
                                     allow_role_proxies=False, team_environment=team_environment,
@@ -177,4 +197,5 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
                                     # Reconcile team passing yards through actually
                                     # observed omitted receivers before uniformly
                                     # inflating every roster-eligible WR projection.
-                                    other_yard_strength=0.70)
+                                    other_yard_strength=0.70,
+                                    **football_options)
