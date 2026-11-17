@@ -57,7 +57,11 @@ def build_football_only_players(
             games[team]=game
         elif games[team]!=game:
             raise ValueError("Ambiguous game identity for modeled team")
-        roster[(team,name)]=True
+        # An entry in a salary upload is NOT equivalent to selection
+        # eligibility. Salary-listed but ineligible players still need
+        # participation in the modeled football game.
+        if bool(row["optimizer_eligible"]):
+            roster[(team,name)]=True
     for team,game in games.items():
         if "@" not in game:
             raise ValueError("Game key must identify both teams")
