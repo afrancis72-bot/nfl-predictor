@@ -200,15 +200,17 @@ def parse_official_inactive_article(raw,url,*,season,week,game):
     root=None
     for node in soup.select(
         "article, .nfl-c-article__body, .nfl-c-article__content,"
-        " .nfl-c-article__container, [data-testid='article-content']"):
+        " .nfl-c-article__container, [data-testid='article-content'],"
+        " main"):
         headings=[_team_heading(h.get_text(" ",strip=True))
                   for h in node.find_all("h3")]
         if set(target).issubset(set(headings)):
             root=node
             break
     if root is None:
-        # Do not search global navigation text: if the article-body boundary
-        # cannot be identified, refuse to infer official inactive rows.
+        # Do not search global navigation text: if a verified story body
+        # or the site's explicit <main> landmark containing BOTH exact team
+        # headings cannot be identified, refuse to infer inactive rows.
         raise ValueError("Official article body with both team lists not found")
 
     by_team={}
