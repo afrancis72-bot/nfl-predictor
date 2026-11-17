@@ -392,3 +392,28 @@ def load_verified_capture(archive_dir,*,as_of_utc=None):
     if any(x["status"]!=OUT for x in snap["records"]):
         raise ValueError("Inactive-list collector cannot produce ACTIVE claims")
     return snap,manifest
+
+
+def load_verified_capture_index(archive_directories,*,as_of_utc):
+    """Index only independently revalidated source captures for research replay.
+
+    This dictionary can be passed to historical evaluate(...,
+    availability_gate=True,availability_snapshots=...). The caller must supply
+    original archives created before kickoff; no postgame reconstructed
+    source/status list is accepted. Duplicate captures of the same game must
+    be explicitly adjudicated, never merged by last-write-wins.
+    """
+    if not isinstance(archive_directories,(list,tuple)):
+        raise ValueError("Provide an explicit list of frozen source archives")
+    indexed={}
+    for directory in archive_directories:
+        snapshot,manifest=load_verified_capture(
+            directory,as_of_utc=as_of_utc)
+        key=(int(snapshot["season"]),int(snapshot["week"]),
+             str(snapshot["game"]))
+        if key in indexed:
+            raise ValueError("Duplicate pregame official source archives for one game")
+        if manifest.get("production_approved") is not False:
+            raise ValueError("Research evidence must not assert production approval")
+        indexed[key]=snapshot
+    return indexed
