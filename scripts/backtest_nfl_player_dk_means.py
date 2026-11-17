@@ -23,6 +23,7 @@ from ai2_nfl_game_matchup import team_defense_game_profiles
 from ai2_nfl_pbp_drives import pregame_possession_profiles
 from ai2_nfl_redzone_usage import pregame_redzone_profiles
 from dfs_stats_engine import simulate_stat_driven_dfs
+from ai2_nfl_opportunity_audit import extract_player_stats
 from props_data import fetch_weekly, clean_weekly, make_rates, dk_classic_points
 
 GAMES_SOURCE = "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv"
@@ -92,7 +93,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              defense_weight=0.,other_yard_strength=0.,component_strength=0.,
              game_matchup_strength=0.,possession_drives=None,
              possession_strength=0.,redzone_pbp=None,
-             redzone_strength=0.):
+             redzone_strength=0.,stat_audit_rows=None,
+             audit_model_name="neutral"):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -131,7 +133,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                 failures.append(f"{season} W{week} {away}@{home}: no eligible prior-week QB")
                 continue
             try:
-                players,draws,_=simulate_stat_driven_dfs(
+                players,draws,stat_draws=simulate_stat_driven_dfs(
                     pool,rates,n_sims=n_sims,seed=season*100+week,
                     allow_role_proxies=False,team_environment=environment,
                     snap_profiles=snap,injury_presence={},
@@ -198,6 +200,14 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                 if not np.isfinite(hist):
                     continue
                 scores=draws[:,i]
+                if stat_audit_rows is not None:
+                    player_name=str(p["Name"])
+                    stat_audit_rows.extend(extract_player_stats(
+                        player=player_name,team=p["TeamAbbrev"],
+                        position=p["Position"],game=f"{away}@{home}",
+                        season=season,week=week,observed=observed[0],
+                        prior=pre,simulated_stats=stat_draws.get(player_name),
+                        n_sims=n_sims,model=audit_model_name))
                 results.append({
                     "season":season,"week":week,"player":p["Name"],
                     "team":p["TeamAbbrev"],"position":p["Position"],
