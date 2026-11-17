@@ -74,7 +74,7 @@ class MergedProofTests(unittest.TestCase):
                 combined_verified_game_snapshot(
                     [a,a],season=2026,week=10,game=GAME,
                     as_of_utc=CAPTURE)
-            with self.assertRaisesRegex(ValueError,"Future source"):
+            with self.assertRaisesRegex(ValueError,"later pregame capture"):
                 combined_verified_game_snapshot(
                     [a,b],season=2026,week=10,game=GAME,
                     as_of_utc="2026-11-15T16:00:00Z")
