@@ -130,6 +130,16 @@ class RoleOpponentMatchupTests(unittest.TestCase):
         self.assertEqual(by_name["Alpha"]["Slate status"],"OUT")
         self.assertEqual(by_name["Beta"]["Role"],"WR1")
 
+    def test_last_season_only_is_not_current_wr1_evidence(self):
+        h=example()
+        rows=slate_role_report([
+            {"ID":"1","Name":"Alpha","Position":"WR","TeamAbbrev":"AAA",
+             "Salary":"8000","Status":"",
+             "Game Info":"AAA@MIA 11/22/2026 1:00PM ET"}],
+            h,2026,11,pd.DataFrame())
+        self.assertEqual(rows[0]["Role"],"")
+        self.assertIsNone(rows[0]["Player pregame DK baseline"])
+
     def test_missing_opponent_rejected_and_duplicate_rejected(self):
         h=example()
         with self.assertRaisesRegex(ValueError,"opponent_team"):
