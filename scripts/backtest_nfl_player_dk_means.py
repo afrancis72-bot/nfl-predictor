@@ -19,6 +19,7 @@ from ai2_nfl_game_market import market_totals_for_slate
 from ai2_nfl_matchup_diagnostics import defensive_allowance
 from ai2_nfl_defensive_efficiency import build_defense_profiles
 from ai2_nfl_defense_components import defense_component_profiles
+from ai2_nfl_game_matchup import team_defense_game_profiles
 from dfs_stats_engine import simulate_stat_driven_dfs
 from props_data import fetch_weekly, clean_weekly, make_rates, dk_classic_points
 
@@ -86,7 +87,8 @@ def actual_partial(row,position):
 
 def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              role_share_concentration=None,market_weight=0.,receiving_td_weight=0.,
-             defense_weight=0.,other_yard_strength=0.,component_strength=0.):
+             defense_weight=0.,other_yard_strength=0.,component_strength=0.,
+             game_matchup_strength=0.):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -99,6 +101,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             defensive_allowance(weekly,season,week),season,week) if defense_weight else {}
         components=(defense_component_profiles(weekly,season,week)
                     if component_strength else None)
+        game_matchups=(team_defense_game_profiles(weekly,season,week)
+                       if game_matchup_strength else None)
         week_games=schedules[
             (schedules["season"].eq(season))&
             (schedules["week"].eq(week))&
@@ -129,7 +133,11 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                     component_profiles=components,
                     component_strength=component_strength,
                     component_target_season=season,
-                    component_target_week=week)
+                    component_target_week=week,
+                    game_matchup_profiles=game_matchups,
+                    game_matchup_strength=game_matchup_strength,
+                    game_matchup_target_season=season,
+                    game_matchup_target_week=week)
             except (KeyError,ValueError,TypeError,IndexError) as e:
                 failures.append(f"{season} W{week} {away}@{home}: {str(e)[:150]}")
                 continue
