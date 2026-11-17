@@ -1,0 +1,69 @@
+name: NFL WR role-aware target-share research A/B
+on:
+  push:
+    branches:
+      - research/nfl-role-target-share-ab-20261117
+    paths:
+      - 'ai2_nfl_role_target_share.py'
+      - 'dfs_stats_engine.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/audit_nfl_role_target_share_ab.py'
+      - 'tests/test_nfl_role_target_share.py'
+      - '.github/workflows/nfl-role-target-share-ab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  role-share-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install historical read-only nflverse and simulator dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4 pyarrow fsspec
+      - name: Validate no lookahead, target conservation and old engine regressions
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m py_compile ai2_nfl_role_target_share.py dfs_stats_engine.py scripts/backtest_nfl_player_dk_means.py scripts/audit_nfl_role_target_share_ab.py
+          python -m unittest discover -s tests -p 'test_nfl_role_target_share.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_team_pass_prior_ab.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_wr_volume_share.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_drive_pass_accounting.py' -v
+      - name: Compare frozen pregame role-share candidate vs unchanged football simulator
+        env:
+          PYTHONPATH: .
+        run: python -u scripts/audit_nfl_role_target_share_ab.py --n-sims 220 --out-dir nfl_role_target_share_ab
+      - name: Archive all matched game/WR/football-stat/transfer-ledger audit rows
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-role-target-share-research-ab
+          path: nfl_role_target_share_ab/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Enforce research-only accounting, no live promotion
+        run: |
+          python - <<'PY'
+          import json
+          r=json.load(open('nfl_role_target_share_ab/validation.json'))
+          assert r['production_approved'] is False
+          assert r['one_click_modified'] is False
+          assert r['independent_holdout'] is False
+          assert r['strength']=={'baseline':0.0,'candidate':0.7}
+          for name,s in r['windows'].items():
+              assert s['count']['teams']>=40
+              assert s['count']['players']>=150
+              assert s['count']['WR']>=80
+              print(name,'WR1/2 target MAE',s['WR_targets_by_pregame_role'].get('WR1'),
+                    s['WR_targets_by_pregame_role'].get('WR2'))
+              print('Player DK MAE',s['player_partial_dk']['baseline_mae'],
+                    '->',s['player_partial_dk']['candidate_mae'],
+                    'allocation coverage',s['team_role_coverage'])
+          print('Diagnostic complete; production and approved lineups unchanged')
+          PY
