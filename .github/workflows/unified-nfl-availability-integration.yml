@@ -53,6 +53,12 @@ jobs:
           python -m unittest discover -s tests -p 'test_nfl_oneclick_smoke.py' -v
           python -m unittest discover -s tests -p 'test_ai2_nfl_team_pace_scoring.py' -v
           python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
+      - name: Guard all four sports in the same unified app
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_ai2_nascar_unified.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_pga_unified.py' -v
       - name: Verify no separate app created or feature automatically enabled
         run: |
           python - <<'PY'
