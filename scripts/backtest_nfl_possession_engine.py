@@ -43,6 +43,12 @@ def run_audit(weekly, schedules, snaps, drives, *, n_sims=220,
             weekly,schedules,snaps,year,weeks,
             games_per_week=None,n_sims=n_sims,
             possession_drives=drives,possession_strength=1.)
+        print(f"{label}: neutral {len(original)} matched players; "
+              f"possession {len(experimental)} matched players; "
+              f"neutral skipped {len(skip0)}; possession skipped {len(skip1)}",
+              flush=True)
+        if len(skip1)>len(skip0):
+            print("Possession-only failure examples:",skip1[:16],flush=True)
         paired=match_results(original,experimental)
         measures=paired_metrics(paired)
         ci=measures["paired_game_cluster_lift_ci"]["lift_pct_95_ci"]
