@@ -1,0 +1,58 @@
+name: NFL full-Sunday player projection benchmark (research only)
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'scripts/audit_nfl_full_slates.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'tests/test_nfl_full_slate_audit.py'
+      - '.github/workflows/nfl-full-slate-forecast-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  projection-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install benchmark dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4
+      - name: Compile and verify audit calculations (no network)
+        run: |
+          python -m py_compile scripts/audit_nfl_full_slates.py scripts/backtest_nfl_player_dk_means.py
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_full_slate_audit.py' -v
+          PYTHONPATH=. python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Replay every completed Sunday game in 2025 and 2026 research periods
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u scripts/audit_nfl_full_slates.py \
+            --n-sims 400 --out-dir nfl_full_slate_audit
+      - name: Retain complete per-player audit and summary reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-full-slate-audit
+          path: nfl_full_slate_audit/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Research diagnostic gate (a pass is NOT permission to enter contests)
+        run: |
+          python - <<'PY'
+          import json,sys
+          d=json.load(open('nfl_full_slate_audit/validation.json'))
+          checks=d['diagnostic_gates']['checks']
+          print('IMPORTANT: This is a retrospective, partial-DK, reconstructed-player-pool research audit.')
+          for name,passed in checks.items():
+              print(('PASS ' if passed else 'FAIL ')+name)
+          print('Production approved:', d['diagnostic_gates']['production_approved'])
+          if not d['diagnostic_gates']['research_diagnostic_pass']:
+              print('Research predictive accuracy has NOT passed the proposed diagnostic gates.')
+              sys.exit(1)
+          print('Research diagnostic gates passed; independent forward test and full app replay remain required.')
+          PY
