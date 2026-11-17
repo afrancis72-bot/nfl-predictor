@@ -104,7 +104,9 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
         ].copy()
         if "weekday" in week_games:
             week_games=week_games[week_games["weekday"].eq("Sunday")].copy()
-        week_games=week_games.sort_values("game_id").head(games_per_week)
+        week_games=week_games.sort_values("game_id")
+        if games_per_week is not None:
+            week_games=week_games.head(games_per_week)
         for _,match in week_games.iterrows():
             away,home=canonical_team(match["away_team"]),canonical_team(match["home_team"])
             pool=pregame_game_pool(rates,away,home,season,week)
@@ -166,9 +168,11 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                 results.append({
                     "season":season,"week":week,"player":p["Name"],
                     "team":p["TeamAbbrev"],"position":p["Position"],
+                    "game":f"{away}@{home}","opponent":(home if p["TeamAbbrev"]==away else away),
                     "actual_partial_dk":float(actual),
                     "history_mean_partial_dk":float(hist),
                     "simulated_mean_dk":float(np.mean(scores)),
+                    "simulated_p10_dk":float(np.percentile(scores,10)),
                     "simulated_p90_dk":float(np.percentile(scores,90))
                 })
     return pd.DataFrame(results),failures
