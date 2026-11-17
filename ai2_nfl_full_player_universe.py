@@ -181,16 +181,26 @@ def validate_football_only_players(football_only, selected, rates,
         raise ValueError("Football-only input must be a DataFrame")
     if football_only.empty:
         return football_only.copy()
-    evidence={}
+    evidence_by_game={}
     if availability_snapshot is not None:
         if season is None or week is None:
             raise ValueError("Validated football-only game status requires dated target season/week")
         games=set(selected["game"].astype(str))
-        if len(games)!=1:
-            raise ValueError("Snapshot cannot verify multiple separate games")
-        evidence=validate_availability_snapshot(
-            availability_snapshot,season=season,week=week,
-            game=next(iter(games)),as_of_utc=as_of_utc)
+        if isinstance(availability_snapshot,dict) and "records" in availability_snapshot:
+            if len(games)!=1:
+                raise ValueError("One status snapshot cannot verify multiple games")
+            supplied={next(iter(games)):availability_snapshot}
+        elif isinstance(availability_snapshot,dict):
+            supplied=availability_snapshot
+        else:
+            raise ValueError("Availability evidence must be a game-keyed dictionary")
+        if not set(supplied).issubset(games):
+            raise ValueError("Availability evidence includes a game not on the DK slate")
+        evidence_by_game={
+            game:validate_availability_snapshot(
+                snap,season=season,week=week,game=game,as_of_utc=as_of_utc)
+            for game,snap in supplied.items()
+        }
     needed={"ID","Name","TeamAbbrev","Position","game","optimizer_eligible",
             "football_only","role_evidence_status","Salary","proj",
             "latest_observed_season","latest_observed_week"}
@@ -222,7 +232,7 @@ def validate_football_only_players(football_only, selected, rates,
             or position not in {"WR","RB","TE"}):
             raise ValueError("Invalid/duplicate/nonhistorical football-only candidate")
         if str(row["role_evidence_status"])=="OFFICIAL_SOURCE_CLAIM_ACTIVE_UNVERIFIED_CONTENT":
-            record=evidence.get((team,name))
+            record=evidence_by_game.get(str(row["game"]),{}).get((team,name))
             if not record or record["status"]!=ACTIVE:
                 raise ValueError("Unverified official ACTIVE row cannot enter football simulator")
             if (str(row.get("availability_source_url"))!=record["source_url"]
