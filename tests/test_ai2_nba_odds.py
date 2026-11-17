@@ -57,7 +57,7 @@ class NBAMarketImportTests(unittest.TestCase):
                 return ([{"id":"evt-nba-1","home_team":data["home_team"],
                     "away_team":data["away_team"],"commence_time":data["commence_time"]},
                     {"id":"evt-next-day","home_team":data["home_team"],
-                    "away_team":data["away_team"],"commence_time":"2026-11-01T02:00:00Z"}],{})
+                    "away_team":data["away_team"],"commence_time":"2026-11-01T02:00:00Z"}],{"x-requests-remaining":"75"})
             return data,{"x-requests-remaining":"75"}
         with patch("nba_engine.odds_feed._api_get",side_effect=mock_get):
             rows,meta=load_current_props(self.proj,{"LAL":"GSW","GSW":"LAL"},
