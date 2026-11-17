@@ -263,10 +263,20 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             if team_pass_rows is not None:
                 from ai2_nfl_pass_volume_share_audit import team_pass_attempt_row
                 for team in (away, home):
-                    team_pass_rows.append(team_pass_attempt_row(
+                    record=team_pass_attempt_row(
                         season=season, week=week, game=f"{away}@{home}",
                         team=team, players=players, stat_draws=stat_draws,
-                        actual_week=observations, n_sims=n_sims))
+                        actual_week=observations, n_sims=n_sims)
+                    from ai2_nfl_pbp_drives import engine_team
+                    model=stat_draws[f"__TEAM_PLAYS__|{engine_team(team)}"]
+                    record["sim_dropbacks_mean"]=float(np.mean(model["simulated_dropbacks"]))
+                    record["sim_sacks_mean"]=float(np.mean(model["simulated_sacks"]))
+                    record["sim_plays_mean"]=float(np.mean(model["simulated_plays"]))
+                    record["pregame_expected_dropbacks"]=float(model["pregame_expected_dropbacks"])
+                    record["pregame_sack_rate"]=float(model["pregame_sack_rate"])
+                    record["pregame_expected_plays"]=float(model["expected_plays"])
+                    record["game_team_order"]=str(players[players["TeamAbbrev"]==team]["TeamAbbrev"].iloc[0])
+                    team_pass_rows.append(record)
             rate_lookup={
                 (_norm_name(r["player"]),canonical_team(r["team"]),
                  str(r["position"]).upper()):r
