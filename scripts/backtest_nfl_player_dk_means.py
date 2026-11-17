@@ -102,7 +102,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              actual_pbp_by_team=None,team_component_engine=None,
              team_pass_env_weight=.5,wr_role_strength=0.,
              role_allocation_rows=None,wr_role_team_rng_isolated=False,
-             full_player_universe=False,full_universe_rows=None):
+             full_player_universe=False,full_universe_rows=None,
+             full_universe_fix_team_aliases=False):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -110,6 +111,19 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
         rates=make_rates(weekly,season,week)
         environment=predict_team_environment(weekly,season,week)
         snap=predict_snap_roles(weekly,snaps,season,week,team_environment=environment)
+        # In this isolated research A/B only, correct a discovered WAS/WSH
+        # alias mismatch BEFORE either control or candidate simulation. Keep
+        # historical canonical WAS keys for snap_role builder above. Otherwise
+        # missing team environment lets DK pool size alter pass/run budgets.
+        sim_environment=environment
+        if full_universe_fix_team_aliases:
+            from ai2_nfl_pbp_drives import engine_team
+            sim_environment={}
+            for key,profile in environment.items():
+                standardized=engine_team(key)
+                if standardized in sim_environment:
+                    raise ValueError("Ambiguous normalized team environment alias")
+                sim_environment[standardized]=profile
         market_totals=market_totals_for_slate(schedules,season,week) if market_weight else {}
         defensive=build_defense_profiles(
             defensive_allowance(weekly,season,week),season,week) if defense_weight else {}
@@ -154,7 +168,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             try:
                 players,draws,stat_draws=simulate_stat_driven_dfs(
                     pool,rates,n_sims=n_sims,seed=season*100+week,
-                    allow_role_proxies=False,team_environment=environment,
+                    allow_role_proxies=False,team_environment=sim_environment,
                     team_pass_env_weight=team_pass_env_weight,
                     wr_role_strength=wr_role_strength,
                     wr_role_target_season=season,wr_role_target_week=week,
