@@ -12,6 +12,7 @@ from ai2_nfl_game_market import market_tds_prior
 from ai2_nfl_receiving_tds import receiving_td_factors
 from ai2_nfl_defensive_efficiency import matchup_yard_multiplier
 from ai2_nfl_sim_component_factors import validated_component_lookup, component_factor
+from ai2_nfl_game_matchup import validated_game_profile_lookup, get_game_effect
 from ai2_nfl_other_yard_reconcile import reconcile_other_yards
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
@@ -253,7 +254,10 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              receiving_td_weight=0.,defense_profiles=None,defense_weight=0.,
                              other_yard_strength=0., component_profiles=None,
                              component_strength=0., component_target_season=None,
-                             component_target_week=None):
+                             component_target_week=None,
+                             game_matchup_profiles=None,game_matchup_strength=0.,
+                             game_matchup_target_season=None,
+                             game_matchup_target_week=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -276,6 +280,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     component_lookup = validated_component_lookup(
         component_profiles, season=component_target_season,
         week=component_target_week, strength=component_strength)
+    game_matchup_lookup = validated_game_profile_lookup(
+        game_matchup_profiles, season=game_matchup_target_season,
+        week=game_matchup_target_week, strength=game_matchup_strength)
     # None preserves explicit legacy simulation callers. Unified NFL passes a
     # measured dict, and an unknown player's share defaults to ZERO rather
     # than silently awarding a full conditional OUT-player workload.
@@ -370,6 +377,30 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         # Shared pace/script shock for both teams in the game.
         pace=rng.lognormal(-0.5*.10**2,.10,size=ns)
         script=rng.normal(0,1,size=ns)
+        # RESEARCH-ONLY pregame scoring and pace interaction. The original
+        # uniform-zero-center script is untouched unless measured opponent
+        # team-game effects have been explicitly enabled.
+        game_effects={}
+        game_scoring_priors={}
+        script_center=0.
+        if game_matchup_strength and game_matchup_lookup:
+            for ti0, offense in enumerate(gteams):
+                opponent=gteams[1-ti0]
+                defense_td, defense_plays=get_game_effect(
+                    game_matchup_lookup,opponent)
+                game_effects[offense]=(defense_td,defense_plays)
+                own=team_environment.get(offense) or {}
+                own_td=_safe(own.get('expected_offensive_tds'),2.1)
+                game_scoring_priors[offense]=float(np.clip(
+                    own_td+defense_td,.35,4.8))
+            if any(abs(x)>0 for factors in game_effects.values()
+                   for x in factors):
+                # Positive script -> trailing offense throws more. Both sides
+                # use opposite signs and the SAME shared simulated game shock.
+                margin_td=(game_scoring_priors[gteams[1]]-
+                           game_scoring_priors[gteams[0]])
+                script_center=float(np.clip(.40*margin_td,-.85,.85))
+                script=script+script_center
         for ti,team in enumerate(gteams):
             opp=gteams[1-ti]; tx=gx[gx.TeamAbbrev==team]
             qbrows=tx[tx.Position.astype(str)=='QB']
@@ -541,6 +572,29 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 expected_plays=float(np.clip(float(env['expected_plays']),48.,78.))
                 team_rush=float(np.clip(expected_plays-expected_dropbacks,12.,42.))
                 expected_plays=float(np.clip(expected_dropbacks+team_rush,48.,78.))
+            defense_td_delta,defense_plays_delta=game_effects.get(
+                team,(0.,0.))
+            if game_matchup_strength and defense_plays_delta:
+                # Defensive pace impact changes the shared TEAM play budget;
+                # QB dropbacks and rushing opportunities still sum to it.
+                new_plays=float(np.clip(
+                    expected_plays+defense_plays_delta,48.,78.))
+                team_rush=float(np.clip(
+                    new_plays-expected_dropbacks,12.,42.))
+                expected_plays=float(np.clip(
+                    expected_dropbacks+team_rush,48.,78.))
+            if game_matchup_strength:
+                stat_draws[f'__OPPONENT_GAME_EFFECT__|{team}']={
+                    'opponent':opp,
+                    'td_delta':defense_td_delta,
+                    'plays_delta':defense_plays_delta,
+                    'script_center_trailing_positive':(
+                        script_center if ti==0 else -script_center),
+                    'own_pregame_expected_tds':game_scoring_priors.get(team),
+                    'opponent_pregame_expected_tds':game_scoring_priors.get(opp),
+                    'scoring_model':'EXPERIMENTAL_PRIOR_OPPONENT_RELATIVE_TD_AND_PLAYS',
+                    'production_enabled':False,
+                }
             stat_draws[f'__TEAM_ENVIRONMENT__|{team}']={
                 'scored_team_history':bool(env),
                 'team_plays_prior':float(env['expected_plays']) if env else None,
@@ -754,6 +808,13 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 # out-of-time calibration identifies a defensible weight.
                 expected_td=float(np.clip(
                     .65*expected_td+.35*float(team_td_evidence),.35,4.8))
+            if game_matchup_strength and defense_td_delta:
+                # Measured excess touchdowns allowed above prior opponents'
+                # OWN historical norm. No direct DK-point adjustments and no
+                # doubling of passing/receiving TDs: scoring is allocated once
+                # from this shared team budget below.
+                expected_td=float(np.clip(
+                    expected_td+defense_td_delta,.35,4.8))
             market_key=tuple(sorted((team,opp)))
             market_info=market_game_totals.get(market_key) or {}
             market_line=market_info.get("total_points")
@@ -779,6 +840,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'prior_expected_tds_before_team_scoring':original_td_prior,
                 'team_scoring_model_weight':.35 if team_td_evidence is not None else 0.,
                 'team_scoring_calibrated':False,
+                'opponent_relative_td_delta':defense_td_delta,
+                'opponent_script_center':(
+                    script_center if ti==0 else -script_center),
                 'expected_offensive_tds':float(expected_td),
                 'market_total_line':market_line,
                 'market_weight':float(market_weight) if market_line is not None else 0.,
