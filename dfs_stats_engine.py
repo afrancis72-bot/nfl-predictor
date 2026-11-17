@@ -1290,7 +1290,12 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                            +3*(np.asarray(stats['receiving_yards'])>=100)
                            +3*(np.asarray(stats['rushing_yards'])>=100),atol=.0001):
             broken.append(f"{name}: DK scoring differs from simulated stats")
-        elif float(np.mean(non_td))<0.15 and float(np.mean(td))>0.02:
+        elif (not bool(row.get('football_only',False))
+              and float(np.mean(non_td))<0.15 and float(np.mean(td))>0.02):
+            # This guard blocks bogus TD-only fantasy punts in the SALARY
+            # selection pool. Football-only low-volume teammates are never
+            # exported to the optimizer; their TD counts are still checked
+            # against actual simulated catches/carries by team invariants.
             broken.append(f"{name}: TD-only output (non-TD mean={np.mean(non_td):.3f})")
     if broken:
         raise ValueError('V3.4 skill allocation validation failed: '
