@@ -191,6 +191,58 @@ class UnifiedNFLAvailabilityIntegrationTests(unittest.TestCase):
                     **sources,"OTHER@EAA":status1},
                 season=2026,week=7)
 
+    def test_final_unified_sim_adapter_really_consumes_verified_football_teammate(self):
+        import numpy as np
+        from test_nfl_full_player_universe import fixture
+        from test_nfl_pregame_availability import snapshot,evidence,ACTIVE
+        from ai2_nfl_simulation_adapter import run_verified_stat_simulation
+        pool,rates=fixture()
+        snap=snapshot(
+            evidence("Missing Salary WR",ACTIVE,"NFL_GAME_DAY_ACTIVE_ROSTER"))
+        ctx={"snapshots_by_game":{"AAA@BBB":snap},
+             "report":{"as_of_utc":snap["captured_at_utc"],
+                       "game_snapshot_count":1,"verified_active_players":1,
+                       "verified_out_players":0,"source_urls":[],
+                       "predictive_accuracy_validated":False}}
+        x,extras,outs,ledger=apply_status_sources_to_pool(
+            pool,rates,context=ctx,season=2026,week=7)
+        self.assertEqual(len(extras),1)
+        ctrl_p,ctrl_scores,ctrl_stats=run_verified_stat_simulation(
+            pool,rates,n_sims=450,seed=20261117,
+            injury_presence={})
+        exp_p,exp_scores,exp_stats=run_verified_stat_simulation(
+            x,rates,n_sims=450,seed=20261117,
+            injury_presence={},
+            football_only_players=extras,
+            football_universe_target_season=2026,
+            football_universe_target_week=7,
+            football_availability_snapshots=ctx["snapshots_by_game"],
+            football_availability_as_of_utc=snap["captured_at_utc"])
+        self.assertEqual(exp_p.ID.tolist(),ctrl_p.ID.tolist())
+        self.assertEqual(exp_p.columns.tolist(),ctrl_p.columns.tolist())
+        self.assertEqual(exp_scores.shape,ctrl_scores.shape)
+        self.assertFalse(np.array_equal(exp_scores,ctrl_scores))
+        self.assertGreater(np.asarray(exp_stats["Missing Salary WR"]["targets"]).mean(),0)
+        self.assertEqual(exp_stats["__FOOTBALL_PLAYER_UNIVERSE__"][
+                         "historical_football_only_players"],1)
+        self.assertEqual(exp_stats["__FOOTBALL_PLAYER_UNIVERSE__"][
+                         "football_only_players_exported_to_optimizer"],0)
+        empty_ctx={"snapshots_by_game":{},
+                   "report":{"as_of_utc":snap["captured_at_utc"],
+                             "predictive_accuracy_validated":False}}
+        unchanged,empty,_,_=apply_status_sources_to_pool(
+            pool,rates,context=empty_ctx,season=2026,week=7)
+        same_p,same_scores,_=run_verified_stat_simulation(
+            unchanged,rates,n_sims=450,seed=20261117,
+            injury_presence={},
+            football_only_players=empty,
+            football_universe_target_season=2026,
+            football_universe_target_week=7,
+            football_availability_snapshots={},
+            football_availability_as_of_utc=snap["captured_at_utc"])
+        self.assertEqual(same_p.ID.tolist(),ctrl_p.ID.tolist())
+        np.testing.assert_array_equal(same_scores,ctrl_scores)
+
     def test_mode_signature_stays_same_oneclick_builder(self):
         from inspect import signature
         from ai2_nfl_oneclick import build_oneclick_portfolio
