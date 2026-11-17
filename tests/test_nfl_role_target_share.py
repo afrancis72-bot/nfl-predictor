@@ -56,7 +56,6 @@ class ResearchRoleTargetShareTests(unittest.TestCase):
         adjusted,other,info=self.allocate()
         self.assertEqual(info["status"],"allocated")
         self.assertTrue(info["top3_covered"])
-        np.testing.assert_allclose(adjusted[[0,2]],self.target[[0,2]]) if False else None
         m=dict(zip(self.skill.Name,range(len(self.skill))))
         self.assertGreater(adjusted[m["WAAA"]],self.target[m["WAAA"]])
         self.assertGreater(adjusted[m["WAAA Extra 2"]],self.target[m["WAAA Extra 2"]])
