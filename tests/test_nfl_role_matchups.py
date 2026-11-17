@@ -24,7 +24,7 @@ def example():
                 season=2025,week=week,season_type="REG",
                 player_display_name=name,player_id=name,
                 recent_team=team,position=pos,
-                opponent_team="MIA" if week==4 else "NYJ",
+                opponent_team=("MIA" if team=="AAA" else "DAL") if week==4 else "NYJ",
                 passing_yards=245 if pos=="QB" else 0,
                 passing_tds=2 if pos=="QB" else 0,
                 passing_interceptions=0,
