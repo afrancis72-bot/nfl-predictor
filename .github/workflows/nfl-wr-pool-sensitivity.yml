@@ -1,0 +1,52 @@
+name: NFL WR cutoff research sensitivity (3.5 vs 2.0)
+on:
+  push:
+    branches:
+      - research/wr-target-pool-20261117
+    paths:
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/audit_nfl_wr_pool_sensitivity.py'
+      - 'tests/test_nfl_wr_pool_sensitivity.py'
+      - '.github/workflows/nfl-wr-pool-sensitivity.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sensitivity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install historical dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4 pyarrow fsspec
+      - name: Unit and regression checks
+        run: |
+          python -m py_compile scripts/backtest_nfl_player_dk_means.py scripts/audit_nfl_wr_pool_sensitivity.py
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_wr_pool_sensitivity.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Run full Sunday historical A/B
+        env:
+          PYTHONPATH: .
+        run: python -u scripts/audit_nfl_wr_pool_sensitivity.py --n-sims 300 --out-dir wr_pool_sensitivity
+      - name: Archive paired matched-cohort and coverage results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wr-cutoff-3point5-vs-2point0-research
+          path: wr_pool_sensitivity/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Assert test stays research-only
+        run: |
+          python - <<'PY'
+          import json
+          r=json.load(open('wr_pool_sensitivity/wr_pool_sensitivity.json'))
+          assert r['production_approved'] is False and r['independent_holdout'] is False
+          for item in r['windows'].values():
+              assert item['team_games']>=40
+              assert item['relaxed_top3_omitted']<=item['base_top3_omitted']
+          PY
