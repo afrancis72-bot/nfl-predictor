@@ -32,7 +32,7 @@ The JSON below is *illustrative only*: fake teams, fake players, fake
 publication timestamps, and a placeholder source URL. It must never be used to
 assert real NFL status.
 
-\`\`\`json
+```json
 {
   "season": 2026,
   "week": 7,
@@ -58,12 +58,12 @@ assert real NFL status.
     }
   ]
 }
-\`\`\`
+```
 
 Explicit source types currently accepted:
-\`NFL_GAME_DAY_ACTIVE_ROSTER\` only for positive ACTIVE evidence;
-\`NFL_OFFICIAL_INACTIVES\` only for OUT;
-\`NFL_OFFICIAL_GAME_STATUS_REPORT\` only for OUT or UNCERTAIN.
+`NFL_GAME_DAY_ACTIVE_ROSTER` only for positive ACTIVE evidence;
+`NFL_OFFICIAL_INACTIVES` only for OUT;
+`NFL_OFFICIAL_GAME_STATUS_REPORT` only for OUT or UNCERTAIN.
 An inactive-list article which **does not name a player** is NOT positive
 ACTIVE proof. The system does not infer their status by omission.
 
@@ -76,13 +76,13 @@ contradictory or inconsistent evidence.
 consistency* of supplied URLs, timestamps and player records. It does **not**
 fetch the page and verify its contents or authentic publication time; a user
 or algorithm can still submit fabricated metadata. The field
-\`source_content_independently_fetched=false\` is explicit. The live interface
+`source_content_independently_fetched=false` is explicit. The live interface
 must not treat these records as verified actual game-day actives until an
 independent official-source acquisition and saved-content check is added.
 
 ## Research call
 
-\`\`\`python
+```python
 from ai2_nfl_full_player_universe import build_football_only_players
 from dfs_stats_engine import simulate_stat_driven_dfs
 
@@ -100,13 +100,13 @@ players, draws, stat_draws = simulate_stat_driven_dfs(
     football_availability_snapshot=source_snapshot,
     football_availability_as_of_utc="2026-11-22T17:00:00Z",
 )
-\`\`\`
+```
 
 A missing snapshot with the evidence gate enabled produces **zero** additional
 football-only players. The original salary-pool scoring path remains
 unchanged; this is intentional. In the research backtest function, pass
-\`full_player_universe=True\`, \`availability_gate=True\` and a dictionary
-\`availability_snapshots[(season, week, "AWAY@HOME")]=snapshot\`. Never
+`full_player_universe=True`, `availability_gate=True` and a dictionary
+`availability_snapshots[(season, week, "AWAY@HOME")]=snapshot`. Never
 use postgame weekly rosters, target-week box scores or retroactively fabricated
 capture dates as proof of pregame status.
 
