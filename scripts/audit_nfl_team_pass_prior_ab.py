@@ -117,7 +117,7 @@ def compare_window(scores,wr,team):
                  "simulated_mean_dk_base","simulated_mean_dk_candidate"),
         "wr_targets":errors(wc,"actual_targets_base",
                  "predicted_targets_base","predicted_targets_candidate"),
-        "wr_by_role":by_groups(wc,"role","actual_targets_base",
+        "wr_by_role":by_groups(wc,"role_base","actual_targets_base",
                  "predicted_targets_base","predicted_targets_candidate"),
         "team_pass_attempts":errors(tc,"actual_pass_attempts_base",
                  "model_pass_attempts_base","model_pass_attempts_candidate"),
