@@ -1,0 +1,61 @@
+name: NFL full-Sunday player opportunity stat-by-stat diagnostic
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'ai2_nfl_opportunity_audit.py'
+      - 'scripts/audit_nfl_opportunity_forecasts.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'tests/test_nfl_opportunity_audit.py'
+      - 'tests/test_nfl_opportunity_comparison.py'
+      - '.github/workflows/nfl-player-opportunity-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  football-stat-errors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install audit, simulator, and PBP dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4 pyarrow fsspec
+      - name: Validate exact matching, no target-week leakage, and P10/P90 math
+        run: |
+          python -m py_compile ai2_nfl_opportunity_audit.py scripts/audit_nfl_opportunity_forecasts.py scripts/backtest_nfl_player_dk_means.py
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_opportunity_audit.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_opportunity_comparison.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Replay player stat forecasts for complete Sunday games
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u scripts/audit_nfl_opportunity_forecasts.py \
+            --n-sims 220 --compare-possession --output-dir nfl_opportunity_audit
+      - name: Archive matched player/game/stat comparisons
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-player-opportunity-full-sunday-audit
+          path: nfl_opportunity_audit/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Check audit coverage, not production validation
+        run: |
+          python - <<'PY'
+          import json
+          f=json.load(open('nfl_opportunity_audit/opportunity_audit.json'))
+          for period,record in f['windows'].items():
+              print(period,record['neutral']['distinct_player_games'],
+                    'matched players,',
+                    record['neutral']['stat_observations'],'stat observations')
+              assert record['neutral']['stat_observations']>600
+              assert record['match_consistent_player_stat_keys']
+              assert record['match_consistent_games']
+          assert f['research_only'] and not f['production_approved']
+          print('Audit complete. Predictive engine remains unvalidated; production scoring unchanged.')
+          PY
