@@ -63,6 +63,18 @@ jobs:
           python -m unittest discover -s tests -p 'test_nfl_team_pass_prior_ab.py' -v
           python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
           python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Independently load real nflverse kickoff schedule (not game status)
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from ai2_nfl_schedule_capture_guard import GAMES_SOURCE,verified_match_kickoff
+          games=pd.read_csv(GAMES_SOURCE)
+          kickoff=verified_match_kickoff(games,season=2026,week=10,game="KC@ATL")
+          print("Real published KC@ATL 2026 W10 kickoff:",kickoff,
+                "(parser smoke only; not pregame evidence)")
+          PY
       - name: Nonpregame 2026 Week 10 official article FETCH/PARSER smoke
         continue-on-error: true
         env:
