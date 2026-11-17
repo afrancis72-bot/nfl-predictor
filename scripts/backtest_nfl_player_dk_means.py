@@ -30,7 +30,7 @@ from props_data import fetch_weekly, clean_weekly, make_rates, dk_classic_points
 GAMES_SOURCE = "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv"
 
 
-def pregame_game_pool(rates, away, home, season, week):
+def pregame_game_pool(rates, away, home, season, week, *, wr_min_targets_pg=3.5):
     """Every roster member comes from BEFORE week, never from future box scores."""
     away,home=canonical_team(away),canonical_team(home)
     sides=(away,home)
@@ -60,7 +60,7 @@ def pregame_game_pool(rates, away, home, season, week):
                 continue
             if pos=="RB" and touches<6:
                 continue
-            if pos=="WR" and value("targets_pg")<3.5:
+            if pos=="WR" and value("targets_pg")<wr_min_targets_pg:
                 continue
             if pos=="TE" and value("targets_pg")<2.3:
                 continue
@@ -96,7 +96,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              possession_strength=0.,redzone_pbp=None,
              redzone_strength=0.,stat_audit_rows=None,
              audit_model_name="neutral",wr_role_rows=None,
-             team_target_rows=None):
+             team_target_rows=None,wr_min_targets_pg=3.5):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -130,7 +130,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             week_games=week_games.head(games_per_week)
         for _,match in week_games.iterrows():
             away,home=canonical_team(match["away_team"]),canonical_team(match["home_team"])
-            pool=pregame_game_pool(rates,away,home,season,week)
+            pool=pregame_game_pool(rates,away,home,season,week,
+                                   wr_min_targets_pg=wr_min_targets_pg)
             if pool.empty:
                 failures.append(f"{season} W{week} {away}@{home}: no eligible prior-week QB")
                 continue
