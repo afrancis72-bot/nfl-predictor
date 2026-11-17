@@ -141,6 +141,11 @@ def simulate_possession_worlds(game, profiles, *, season, week,
                 play_count=max(1,min(play_count,int(time_left//15)+1))
                 if time_left<55:
                     result="other"  # No invented last-second scoring.
+            # Decide whether a turnover ends on an interception before
+            # assigning scrimmage pass/rush plays; an interception needs a
+            # genuine attempted pass in that SAME sampled possession.
+            turnover_int=(result=="turnover" and rng.random()<
+                          float(profiles["turnover_interception_rate"]))
             frac=params[current]["pass_frac"]
             if score_diff<=-7:
                 frac+=.055
@@ -150,7 +155,7 @@ def simulate_possession_worlds(game, profiles, *, season, week,
                 frac+=.08
             frac=float(np.clip(frac,.25,.89))
             drops=int(rng.binomial(play_count,frac))
-            if result=="pass_td":
+            if result=="pass_td" or turnover_int:
                 drops=max(1,drops)
             elif result=="rush_td":
                 drops=min(drops,play_count-1)
@@ -175,7 +180,7 @@ def simulate_possession_worlds(game, profiles, *, season, week,
             elif result=="turnover":
                 # The fraction of interceptions versus lost fumbles is still
                 # a research prior, not a fully reconstructed play sequence.
-                if rng.random()<.72:
+                if turnover_int:
                     team["interceptions"][scenario]+=1
                 else:
                     team["fumbles_lost"][scenario]+=1
