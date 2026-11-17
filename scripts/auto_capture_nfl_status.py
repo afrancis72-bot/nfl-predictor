@@ -81,7 +81,7 @@ def _archive_label(game,category,source_sha,utc):
 
 def collect_due_games(*,schedule,now_utc,out_dir,
                       discovery=discover_official_links,
-                      get_html=fetch_official_html):
+                      get_html=fetch_official_html,capture_clock=None):
     """Capture source evidence for each imminent NFL matchup.
 
     Source URL discovery alone NEVER admits any football-only player.
@@ -124,16 +124,24 @@ def collect_due_games(*,schedule,now_utc,out_dir,
                 if url not in cache:
                     cache[url]=get_html(url)
                 raw=cache[url]
+                # The official content cannot be claimed to have been seen at
+                # the start of polling: record time AFTER bytes are obtained.
+                # Any page retrieved after actual kickoff must fail closed.
+                captured=_utc(
+                    (capture_clock or (lambda:datetime.now(timezone.utc).isoformat()))(),
+                    "official_html_observed_at_utc")
+                if captured>=_utc(game["kickoff_utc"],"kickoff_utc"):
+                    raise ValueError("Official article bytes arrived after actual kickoff")
                 if kind=="OFFICIAL_INACTIVES":
                     parsed=parse_official_inactive_article(
                         raw,url,season=game["season"],week=game["week"],
                         game=game["game"])
                     snap=make_pregame_snapshot(parsed,
                         kickoff_utc=game["kickoff_utc"],
-                        captured_at_utc=now.isoformat())
+                        captured_at_utc=captured.isoformat())
                     label=_archive_label(game["game"],"out",
                                          parsed["source_html_sha256"],
-                                         now.isoformat())
+                                         captured.isoformat())
                     saved=save_new_capture(raw,parsed,snap,root/label)
                 elif kind=="EXPLICIT_INJURY_UPDATES":
                     parsed=parse_named_active_news(
@@ -141,10 +149,10 @@ def collect_due_games(*,schedule,now_utc,out_dir,
                         game=game["game"])
                     snap=make_named_active_snapshot(parsed,
                         kickoff_utc=game["kickoff_utc"],
-                        captured_at_utc=now.isoformat())
+                        captured_at_utc=captured.isoformat())
                     label=_archive_label(game["game"],"named_active",
                                          parsed["source_html_sha256"],
-                                         now.isoformat())
+                                         captured.isoformat())
                     saved=save_named_active_capture(raw,parsed,snap,root/label)
                 else:
                     raise ValueError("Unexpected discovery URL category")
@@ -155,7 +163,7 @@ def collect_due_games(*,schedule,now_utc,out_dir,
                     "season":game["season"],"week":game["week"],
                     "game":game["game"],
                     "independently_verified_kickoff_utc":game["kickoff_utc"],
-                    "captured_at_utc":now.isoformat(),
+                    "captured_at_utc":captured.isoformat(),
                     "claimed_future_kickoff_override_used":False,
                 },indent=2,sort_keys=True))
                 report["source_archives"].append({
