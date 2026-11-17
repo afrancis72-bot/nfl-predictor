@@ -136,9 +136,8 @@ def pbp_to_drives(pbp):
         else:
             outcome = "other"
         field = pd.to_numeric(g["yardline_100"],errors="coerce")
-        start = float(field.loc[offensive_play].iloc[0]) if (
-            (field.loc[offensive_play].notna().any())
-        ) else np.nan
+        valid_field=field.loc[offensive_play].dropna()
+        start=float(valid_field.iloc[0]) if len(valid_field) else np.nan
         if not np.isfinite(start) or not 1 <= start <= 99:
             continue
         if "drive_time_of_possession" in g:
