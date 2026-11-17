@@ -251,11 +251,16 @@ def slate_role_report(salary_rows, history, season, week, profiles, *, official_
         status = (dk_status if dk_status in INVALID_STATUS else
                   official if official else dk_status)
         relevant = by_name.get((_name(name),team,pos),[])[-8:]
+        # Do not give a current-season WR1/RB1 label based solely on the
+        # previous season's production or a player absent for a month.
+        fresh = bool(relevant and _recent(
+            [(int(z["season"]), int(z["week"]), 0., 0.)
+             for z in relevant], int(season), int(week)))
         scores = [dk_classic_points(z,pos) for z in relevant]
         usages = [_usage(z,pos) for z in relevant]
         valid_uses = [z for z in usages if np.isfinite(z)]
-        rate = _weighted(valid_uses) if len(valid_uses)>=2 else None
-        own = _weighted(scores) if len(scores)>=3 else None
+        rate = _weighted(valid_uses) if fresh and len(valid_uses)>=2 else None
+        own = _weighted(scores) if fresh and len(scores)>=3 else None
         row = {
             "Player": name, "Team": team, "Opponent": opponent or "",
             "Position": pos, "Role": "",
