@@ -14,6 +14,7 @@ from ai2_nfl_defensive_efficiency import matchup_yard_multiplier
 from ai2_nfl_sim_component_factors import validated_component_lookup, component_factor
 from ai2_nfl_game_matchup import validated_game_profile_lookup, get_game_effect
 from ai2_nfl_possession_engine import simulate_possession_worlds
+from ai2_nfl_redzone_usage import validated_redzone_lookup, factor_for
 from ai2_nfl_other_yard_reconcile import reconcile_other_yards
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
@@ -261,7 +262,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              game_matchup_target_week=None,
                              possession_profiles=None,possession_strength=0.,
                              possession_target_season=None,
-                             possession_target_week=None):
+                             possession_target_week=None,
+                             redzone_profiles=None,redzone_strength=0.,
+                             redzone_target_season=None,redzone_target_week=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -295,6 +298,11 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     if possession_strength and (possession_target_season is None or
                                 possession_target_week is None):
         raise ValueError("Possession worlds require dated pregame historical evidence")
+    if redzone_strength and receiving_td_weight:
+        raise ValueError("Experimental red-zone and historical TD conversion weights cannot stack")
+    redzone_lookup=validated_redzone_lookup(
+        redzone_profiles, season=redzone_target_season,
+        week=redzone_target_week, strength=redzone_strength)
     # None preserves explicit legacy simulation callers. Unified NFL passes a
     # measured dict, and an unknown player's share defaults to ZERO rather
     # than silently awarding a full conditional OUT-player workload.
@@ -1003,6 +1011,25 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                     receiving_td_efficiency**float(receiving_td_weight),1.)
             else:
                 receiving_td_multiplier=None
+            redzone_receiving=np.append([
+                factor_for(redzone_lookup,team,str(p["Name"]),"receiving")
+                for _,p in skill.iterrows()],1.)
+            redzone_rushing=np.append([
+                factor_for(redzone_lookup,team,str(p["Name"]),"rushing")
+                for _,p in skill.iterrows()], [
+                    factor_for(redzone_lookup,team,qname,"rushing"),1.])
+            if redzone_strength:
+                stat_draws[f'__REDZONE_OPPORTUNITY__|{team}']={
+                    'source':'nflverse pregame player GSIS red-zone target and goal-line carry usage',
+                    'strength':float(redzone_strength),
+                    'team_receiving_factors':dict(zip(
+                        skill["Name"].astype(str),redzone_receiving[:-1])),
+                    'team_rushing_factors':dict(zip(
+                        skill["Name"].astype(str),redzone_rushing[:-2])),
+                    'qb_goal_line_factor':float(redzone_rushing[-2]),
+                    'total_team_tds_unchanged':True,
+                    'production_enabled':False,
+                }
             stat_draws[f'__RECEIVING_TD_EFFICIENCY__|{team}']={
                 'strength':float(receiving_td_weight),
                 'actual_pre_game_catch_td_factors':dict(
@@ -1019,6 +1046,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                     # Use actual catches as capacity and scoring opportunity.
                     catches=rec_counts[si]
                     weights=np.asarray(catches,dtype=float)+.05*(catches>0)
+                    if redzone_strength:
+                        weights*=redzone_receiving
                     if receiving_td_multiplier is not None:
                         # Does NOT create an extra TD, move a TD to a player
                         # without a catch, or change the team's TD count.
@@ -1043,6 +1072,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                     qb_smoothed_rate=(qb_hist_tds+30.*.045)/(qb_hist_carries+30.)
                     qb_factor=float(np.clip(qb_smoothed_rate/.065,.35,1.6))
                     rush_weights*=np.append(skill_factors,[qb_factor, .75])
+                    if redzone_strength:
+                        rush_weights*=redzone_rushing
                     # Only runners with carries in this simulation may score.
                     rush_weights=np.where(np.asarray(carr[si])>0,rush_weights,0.)
                     if rush_weights.sum()<=0: rush_weights=np.asarray(carr[si],dtype=float)
