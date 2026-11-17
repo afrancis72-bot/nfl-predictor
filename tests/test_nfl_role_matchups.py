@@ -114,6 +114,22 @@ class RoleOpponentMatchupTests(unittest.TestCase):
         self.assertIsNone(by_name["Out"]["Defense versus role (shrunk DK)"])
         self.assertEqual(by_name["NoData"]["Role"],"")
 
+    def test_official_out_excludes_player_from_current_role_rank(self):
+        h=example()
+        p,_=defense_role_profiles(h,2025,5,min_observations=1)
+        slate=[
+            {"ID":"1","Name":"Alpha","Position":"WR","TeamAbbrev":"AAA",
+             "Salary":"8000","Status":"","Game Info":"AAA@MIA 1:00PM ET"},
+            {"ID":"2","Name":"Beta","Position":"WR","TeamAbbrev":"AAA",
+             "Salary":"6000","Status":"","Game Info":"AAA@MIA 1:00PM ET"},
+        ]
+        rows=slate_role_report(slate,h,2025,5,p,
+                               official_status_by_id={"1":"OUT"})
+        by_name={r["Player"]:r for r in rows}
+        self.assertEqual(by_name["Alpha"]["Role"],"")
+        self.assertEqual(by_name["Alpha"]["Slate status"],"OUT")
+        self.assertEqual(by_name["Beta"]["Role"],"WR1")
+
     def test_missing_opponent_rejected_and_duplicate_rejected(self):
         h=example()
         with self.assertRaisesRegex(ValueError,"opponent_team"):
