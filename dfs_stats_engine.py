@@ -274,7 +274,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              wr_role_team_rng_isolated=False,
                              football_only_players=None,
                              football_universe_target_season=None,
-                             football_universe_target_week=None):
+                             football_universe_target_week=None,
+                             football_availability_snapshot=None,
+                             football_availability_as_of_utc=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -349,7 +351,12 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     internal_count=0
     if football_only_players is not None:
         x['football_only']=False
-        extras=validate_football_only_players(football_only_players,x,rates)
+        extras=validate_football_only_players(
+            football_only_players,x,rates,
+            availability_snapshot=football_availability_snapshot,
+            season=football_universe_target_season,
+            week=football_universe_target_week,
+            as_of_utc=football_availability_as_of_utc)
         if not extras.empty:
             if football_universe_target_season is None or football_universe_target_week is None:
                 raise ValueError("Dated pregame target season and week required for full football universe")
@@ -437,7 +444,11 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         'historical_football_only_players':int(internal_count),
         'football_only_players_exported_to_optimizer':0,
         'verified_game_day_active':False,
-        'status_warning':'Historical player opportunity does not verify game-day active status',
+        'source_asserted_game_day_active':bool(football_availability_snapshot is not None),
+        'source_content_independently_fetched':False,
+        'status_warning':('Official source URL and published timestamp are claim fields, '
+                          'not independent verification of webpage contents. '
+                          'Unverified players remain in OTHER.'),
         'source':'nflverse pregame weekly player roles, no confirmed active roster',
     }
     stat_draws['__INJURY_META__']={
