@@ -16,12 +16,27 @@ import pandas as pd
 
 from ai2_nfl_auto_baselines import _norm_name
 from ai2_nfl_matchups import canonical_team
+from ai2_nfl_pregame_availability import (
+    ACTIVE, OUT, validate_availability_snapshot,
+)
+
+
+FOOTBALL_ONLY_COLUMNS=[
+    "ID","Name","TeamAbbrev","Position","game","Salary","proj",
+    "optimizer_eligible","football_only","role_evidence_status",
+    "availability_source_url","availability_published_utc",
+    "availability_captured_utc",
+    "latest_observed_season","latest_observed_week",
+    "observed_games","observed_targets_pg","observed_carries_pg","source",
+]
 
 
 def build_football_only_players(
     dk_pool, pregame_rates, *,
     season, week, min_games=2, max_weeks_since=3,
     min_touches_pg=0.5, known_out=None,
+    require_verified_active=False, availability_snapshot=None,
+    as_of_utc=None,
 ):
     """Return non-DK offensive players eligible for internal football simulation.
 
@@ -42,6 +57,8 @@ def build_football_only_players(
         raise ValueError("Expected target season/week required")
     if min_games<1 or max_weeks_since<1 or min_touches_pg<0:
         raise ValueError("Invalid historical player universe thresholds")
+    if availability_snapshot is not None and not require_verified_active:
+        raise ValueError("Evidence snapshot cannot be ignored in ungated football universe")
     excluded=set()
     for item in known_out or []:
         if not isinstance(item,dict) or "team" not in item or "player" not in item:
@@ -68,6 +85,24 @@ def build_football_only_players(
         opponents={canonical_team(side) for side in game.split("@")}
         if len(opponents)!=2 or team not in opponents:
             raise ValueError("Team not in game identity")
+    if require_verified_active:
+        # A game with no certified pregame evidence is never an excuse to
+        # assume all historical users played today. Preserve their shares
+        # inside OTHER by returning no extra simulated players.
+        if availability_snapshot is None:
+            return pd.DataFrame(columns=FOOTBALL_ONLY_COLUMNS)
+        unique_games=set(games.values())
+        if len(unique_games)!=1:
+            raise ValueError("Availability snapshot must refer to exactly one scheduled game")
+        proof=validate_availability_snapshot(
+            availability_snapshot,season=season,week=week,
+            game=next(iter(unique_games)),as_of_utc=as_of_utc)
+        for team,name in roster:
+            decision=proof.get((team,name))
+            if decision and decision["status"]==OUT:
+                raise ValueError("Confirmed-OUT player remains DK lineup eligible")
+    else:
+        proof={}
     seen=set()
     additions=[]
     for row in pregame_rates.to_dict("records"):
@@ -81,6 +116,13 @@ def build_football_only_players(
             raise ValueError("Duplicate same-team player history in input")
         seen.add(identity)
         if identity in roster or identity in excluded:
+            continue
+        evidence=proof.get(identity)
+        if require_verified_active and (
+            evidence is None or evidence["status"]!=ACTIVE):
+            # Unreported, questionable, or explicitly OUT historical players
+            # remain outside the modeled football-only pool. They do not get
+            # assumed catches and cannot steal targets from available WR1/2.
             continue
         last=(int(row.get("latest_observed_season") or 0),
               int(row.get("latest_observed_week") or 0))
@@ -110,7 +152,13 @@ def build_football_only_players(
             "proj":0.,
             "optimizer_eligible":False,
             "football_only":True,
-            "role_evidence_status":"PREGAME_HISTORICAL_ROLE_GAME_DAY_STATUS_UNVERIFIED",
+            "role_evidence_status":(
+                "OFFICIAL_SOURCE_CLAIM_ACTIVE_UNVERIFIED_CONTENT"
+                if require_verified_active else
+                "PREGAME_HISTORICAL_ROLE_GAME_DAY_STATUS_UNVERIFIED"),
+            "availability_source_url":(evidence["source_url"] if evidence else None),
+            "availability_published_utc":(evidence["published_at_utc"] if evidence else None),
+            "availability_captured_utc":(evidence["captured_at_utc"] if evidence else None),
             "latest_observed_season":last[0],
             "latest_observed_week":last[1],
             "observed_games":games_played,
@@ -118,15 +166,12 @@ def build_football_only_players(
             "observed_carries_pg":carries,
             "source":"nflverse pregame player weekly use, not DK eligibility or active list",
         })
-    columns=["ID","Name","TeamAbbrev","Position","game","Salary","proj",
-             "optimizer_eligible","football_only","role_evidence_status",
-             "latest_observed_season","latest_observed_week",
-             "observed_games","observed_targets_pg","observed_carries_pg",
-             "source"]
-    return pd.DataFrame(additions,columns=columns)
+    return pd.DataFrame(additions,columns=FOOTBALL_ONLY_COLUMNS)
 
 
-def validate_football_only_players(football_only, selected, rates):
+def validate_football_only_players(football_only, selected, rates,
+                                   *,availability_snapshot=None,
+                                   season=None,week=None,as_of_utc=None):
     """Fail closed if a research-only unselected player is smuggled into DK pool.
 
     The synthetic football slate must not replace or duplicate a selected
@@ -136,6 +181,16 @@ def validate_football_only_players(football_only, selected, rates):
         raise ValueError("Football-only input must be a DataFrame")
     if football_only.empty:
         return football_only.copy()
+    evidence={}
+    if availability_snapshot is not None:
+        if season is None or week is None:
+            raise ValueError("Validated football-only game status requires dated target season/week")
+        games=set(selected["game"].astype(str))
+        if len(games)!=1:
+            raise ValueError("Snapshot cannot verify multiple separate games")
+        evidence=validate_availability_snapshot(
+            availability_snapshot,season=season,week=week,
+            game=next(iter(games)),as_of_utc=as_of_utc)
     needed={"ID","Name","TeamAbbrev","Position","game","optimizer_eligible",
             "football_only","role_evidence_status","Salary","proj",
             "latest_observed_season","latest_observed_week"}
@@ -157,12 +212,24 @@ def validate_football_only_players(football_only, selected, rates):
             or not row["football_only"]
             or not isinstance(row["optimizer_eligible"],(bool,np.bool_))
             or row["optimizer_eligible"]
-            or str(row["role_evidence_status"])!=
-                "PREGAME_HISTORICAL_ROLE_GAME_DAY_STATUS_UNVERIFIED"
+            or str(row["role_evidence_status"]) not in {
+                "PREGAME_HISTORICAL_ROLE_GAME_DAY_STATUS_UNVERIFIED",
+                "OFFICIAL_SOURCE_CLAIM_ACTIVE_UNVERIFIED_CONTENT",
+            }
             or float(row["Salary"])!=0 or
                 (team,name) in original or key in found or key not in expected
             or (team,str(row["game"])) not in slate
             or position not in {"WR","RB","TE"}):
             raise ValueError("Invalid/duplicate/nonhistorical football-only candidate")
+        if str(row["role_evidence_status"])=="OFFICIAL_SOURCE_CLAIM_ACTIVE_UNVERIFIED_CONTENT":
+            record=evidence.get((team,name))
+            if not record or record["status"]!=ACTIVE:
+                raise ValueError("Unverified official ACTIVE row cannot enter football simulator")
+            if (str(row.get("availability_source_url"))!=record["source_url"]
+                or str(row.get("availability_published_utc"))!=record["published_at_utc"]
+                or str(row.get("availability_captured_utc"))!=record["captured_at_utc"]):
+                raise ValueError("Altered player availability evidence provenance")
+        elif availability_snapshot is not None:
+            raise ValueError("Official-status mode cannot include uncertain football-only player")
         found.add(key)
     return football_only.copy().reset_index(drop=True)
