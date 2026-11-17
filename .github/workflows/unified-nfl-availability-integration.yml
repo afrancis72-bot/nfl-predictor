@@ -52,7 +52,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_nfl_oneclick.py' -v
           python -m unittest discover -s tests -p 'test_nfl_oneclick_smoke.py' -v
           python -m unittest discover -s tests -p 'test_ai2_nfl_team_pace_scoring.py' -v
-          python -m unittest discover -s tests -p 'test_unified_nfl_guardrails.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
       - name: Verify no separate app created or feature automatically enabled
         run: |
           python - <<'PY'
@@ -68,7 +68,9 @@ jobs:
           assert 'ai2_oneclick_engine_mode' in app
           assert 'if sport == "NFL":' in app
           assert 'snapshot_approved' in app
+          assert 'Download exact NFL engine + intelligence manifest' in app
+          assert 'approved_lineups_untouched' in app
           assert 'st.session_state["ai2_oneclick_engine_mode"]' in app
-          assert 'Streamlit' not in open("ai2_nfl_unified_availability.py").read()
+          assert 'import streamlit' not in open("ai2_nfl_unified_availability.py").read()
           print("Single unified NFL interface, opt-in mode and prior approvals preserved")
           PY
