@@ -62,13 +62,17 @@ class FullSlateAuditTests(unittest.TestCase):
     @patch("scripts.audit_nfl_full_slates.evaluate")
     def test_full_slate_evaluation_never_caps_games(self, mock_evaluate):
         observations = sample()
-        mock_evaluate.side_effect = [(observations.copy(), []),
+        mock_evaluate.side_effect = [(observations.assign(season=2025, week=9), []),
                                      (observations.copy(), [])]
         schedule = pd.DataFrame([
             {"season": 2025, "week": 9, "game_type": "REG",
              "home_score": 7, "away_score": 14, "weekday": "Sunday"},
+            {"season": 2025, "week": 9, "game_type": "REG",
+             "home_score": 14, "away_score": 7, "weekday": "Sunday"},
             {"season": 2026, "week": 4, "game_type": "REG",
              "home_score": 7, "away_score": 14, "weekday": "Sunday"},
+            {"season": 2026, "week": 4, "game_type": "REG",
+             "home_score": 14, "away_score": 7, "weekday": "Sunday"},
         ])
         report, rows = build_report(pd.DataFrame(), schedule,
                                     pd.DataFrame(), n_sims=400)
