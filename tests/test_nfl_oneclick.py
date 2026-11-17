@@ -59,7 +59,21 @@ class OneClickTests(unittest.TestCase):
                 expected_yards_per_opp=8.5,
                 actual_yards_per_opp=9.7,
                 shrunk_efficiency_pct=3.1,
-                observations=33, opportunities=210)])
+                observations=33, opportunities=210)]),
+            "opponent_role_profiles": pd.DataFrame([dict(
+                defense="ARI", role="WR1", position="WR", n=7, games=7,
+                baseline_dk_avg=15.2, actual_dk_avg=19.2,
+                raw_excess_dk=4., shrunk_excess_dk=2.15,
+                observed_positive_pct=71.4, source="nflverse pregame")]),
+            "opponent_role_details": pd.DataFrame([dict(
+                season=2026, week=5, defense="ARI", offense="SEA",
+                player="Previous Top WR", position="WR", role="WR1",
+                baseline_dk=15.2, actual_dk=19.2, excess_dk=4.,
+                prior_games=5, usual_usage=8.1)]),
+            "opponent_role_slate": [dict(
+                Player="Example Receiver", Team="DAL", Opponent="ARI",
+                Position="WR", Role="WR1",
+                **{"Defense versus role (raw DK above own average)":4.})]
         }
         players = pd.DataFrame([
             {"ID": str(i), "Name": f"P{i}", "Position": "WR", "Salary": 5000,
@@ -124,6 +138,14 @@ class OneClickTests(unittest.TestCase):
         self.assertEqual(channel["Quality-adjusted efficiency delta %"], 3.1)
         self.assertEqual(channel["Effect on current simulation"],
                          "None - research only")
+        self.assertEqual(len(output["opponent_role_player_report"]), 1)
+        self.assertEqual(
+            output["opponent_role_player_report"][0][
+                "Defense versus role (raw DK above own average)"], 4.)
+        self.assertEqual(
+            output["opponent_role_defense_report"][0]["role"], "WR1")
+        self.assertEqual(
+            output["opponent_role_prior_opponents"][0]["excess_dk"], 4.)
         self.assertEqual(simulation.call_args.kwargs["defense_weight"], 0.)
         self.assertEqual(candidates.call_args.kwargs["seed"],117)
         modeled = {row["Name"]:row for row in candidates.call_args.args[0]}
