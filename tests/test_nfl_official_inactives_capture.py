@@ -13,6 +13,7 @@ import unittest
 from ai2_nfl_official_inactives_capture import (
     fetch_official_html,parse_official_inactive_article,make_pregame_snapshot,
     verify_snapshot_against_raw_html,save_new_capture,load_verified_capture,
+    load_verified_capture_index,
 )
 
 URL="https://www.nfl.com/news/nfl-week-10-inactives-synthetic-test"
@@ -172,6 +173,7 @@ class OfficialSourceCaptureTests(unittest.TestCase):
             "source_url":URL,
             "capture_utc":snap["captured_at_utc"],
             "kickoff_utc":snap["kickoff_utc"],
+            "production_approved":False,
         }
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
@@ -181,6 +183,10 @@ class OfficialSourceCaptureTests(unittest.TestCase):
             (root/"manifest.json").write_text(json.dumps(manifest))
             restored,_=load_verified_capture(root,as_of_utc=CAPTURE)
             self.assertEqual(restored,snap)
+            mapping=load_verified_capture_index([root],as_of_utc=CAPTURE)
+            self.assertEqual(mapping[(2026,10,"KC@ATL")],snap)
+            with self.assertRaisesRegex(ValueError,"Duplicate pregame"):
+                load_verified_capture_index([root,root],as_of_utc=CAPTURE)
             with self.assertRaisesRegex(ValueError,"later pregame capture"):
                 load_verified_capture(root,as_of_utc="2026-11-15T16:00:00Z")
             corrupted=deepcopy(snap);corrupted["records"][0]["player"]="Injected Name"
