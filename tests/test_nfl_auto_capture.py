@@ -47,6 +47,7 @@ class AutoNFLResearchCaptureTests(unittest.TestCase):
             result=collect_due_games(schedule=subset,now_utc=self.NOW,
                 out_dir=Path(temp)/"archives",
                 discovery=candidate("OFFICIAL_INACTIVES",INACTIVE_URL),
+                capture_clock=lambda:self.NOW,
                 get_html=lambda url:inactive_html())
             self.assertEqual(result["result"],"CAPTURED_OFFICIAL_PREGAME_EVIDENCE")
             self.assertEqual(len(result["source_archives"]),1)
@@ -63,6 +64,7 @@ class AutoNFLResearchCaptureTests(unittest.TestCase):
             result=collect_due_games(schedule=subset,now_utc=self.NOW,
                 out_dir=Path(temp)/"archives",
                 discovery=candidate("EXPLICIT_INJURY_UPDATES",ACTIVE_URL),
+                capture_clock=lambda:self.NOW,
                 get_html=lambda url:named_html())
             self.assertEqual(len(result["source_archives"]),1)
             snap,manifest=load_verified_named_active_capture(
@@ -87,6 +89,7 @@ class AutoNFLResearchCaptureTests(unittest.TestCase):
             result=collect_due_games(schedule=subset,now_utc=self.NOW,
                 out_dir=Path(temp)/"archives",
                 discovery=candidate("OFFICIAL_INACTIVES",INACTIVE_URL),
+                capture_clock=lambda:self.NOW,
                 get_html=lambda url:named_html())
             self.assertEqual(result["source_archives"],[])
             self.assertEqual(result["result"],"NO_MATCHING_VALID_PREGAME_OFFICIAL_ARTICLE")
