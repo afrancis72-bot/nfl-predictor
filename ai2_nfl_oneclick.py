@@ -316,7 +316,36 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
             })
     opponent_components.sort(key=lambda x: (
         x["Offense"], x["Position"], x["Mechanism"]))
+    # Role-specific DK defensive tendencies are for human projection review.
+    # Roles are based on each prior opponent's historical target/carry/pass
+    # usage BEFORE facing the defense, not the target game's target ranks.
+    # Expose all DK salary rows, including players outside the model pool.
+    role_matchup_players = research.get("opponent_role_slate") or []
+    role_profile_data = research.get("opponent_role_profiles")
+    role_detail_data = research.get("opponent_role_details")
+    relevant_defenses = {opp for _, opp in offense_for_defense}
+    role_profile_report = (
+        role_profile_data[role_profile_data["defense"].isin(
+            relevant_defenses)].to_dict("records")
+        if isinstance(role_profile_data, pd.DataFrame)
+        and not role_profile_data.empty else [])
+    role_detail_report = (
+        role_detail_data[role_detail_data["defense"].isin(
+            relevant_defenses)].to_dict("records")
+        if isinstance(role_detail_data, pd.DataFrame)
+        and not role_detail_data.empty else [])
     opposing_summary = report_summary(opposing_report)
+    opposing_summary["role_matchup_issue"] = research.get("opponent_role_issue")
+    opposing_summary["role_matchup_note"] = (
+        "Previous QB1, RB1/RB2, WR1/WR2/WR3 and TE1/TE2 opponents "
+        "classified by THEIR OWN pregame usage (QB attempts, RB carries + "
+        "targets, WR/TE targets). Their actual partial DraftKings fantasy "
+        "points are compared with THEIR OWN rolling pregame averages. "
+        "A +4.00 reading means four MORE points than those players normally "
+        "produced, not four total points. Raw and sample-shrunk values both "
+        "shown. Unavailable, unmatched and low-sample players have no boost. "
+        "This is NOT verified depth-chart/coverage, and no adjustment "
+        "is currently applied to simulated scores.")
     opposing_summary["component_data_issue"] = research.get("opponent_component_issue")
     opposing_summary["component_note"] = (
         "Observed passing yards/attempt, rushing yards/carry and receiving "
@@ -415,6 +444,9 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "opponent_matchup_report": opposing_report,
         "opponent_matchup_summary": opposing_summary,
         "opponent_component_report": opponent_components,
+        "opponent_role_player_report": role_matchup_players,
+        "opponent_role_defense_report": role_profile_report,
+        "opponent_role_prior_opponents": role_detail_report,
         "research_warning": (
             "Experimental, uncalibrated own-model forecasts based on observed play "
             "rates and official injury designations. Depth-chart changes, late "
