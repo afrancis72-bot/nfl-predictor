@@ -7,6 +7,7 @@ This is intentionally a transparent game-level model, not a play-by-play engine.
 from __future__ import annotations
 import numpy as np
 import pandas as pd
+import hashlib
 from injury_opportunity import redistribute
 from ai2_nfl_game_market import market_tds_prior
 from ai2_nfl_receiving_tds import receiving_td_factors
@@ -268,7 +269,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              redzone_target_season=None,redzone_target_week=None,
                              team_pass_env_weight=.5,
                              wr_role_strength=0.,wr_role_target_season=None,
-                             wr_role_target_week=None):
+                             wr_role_target_week=None,
+                             wr_role_team_rng_isolated=False):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -286,6 +288,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         raise ValueError("Team passing-volume evidence weight must be finite in [0,1]")
     team_environment=team_environment or {}
     snap_profiles=snap_profiles or {}
+    if not isinstance(wr_role_team_rng_isolated,bool):
+        raise ValueError("Research team RNG isolation flag must be boolean")
     if (isinstance(wr_role_strength,bool) or
         not isinstance(wr_role_strength,(int,float,np.floating)) or
         not np.isfinite(wr_role_strength) or
@@ -462,7 +466,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                            game_scoring_priors[gteams[0]])
                 script_center=float(np.clip(.40*margin_td,-.85,.85))
                 script=script+script_center
+        # Research-only common-random-numbers A/B: isolate team sampling so
+        # changed WR target draws cannot alter the opposing team's pass volume.
+        # Both baseline and candidate use this same schedule in the paired study.
+        # Default False retains the exact production RNG stream/order.
+        original_game_rng=rng
         for ti,team in enumerate(gteams):
+            if wr_role_team_rng_isolated:
+                stable=(f"{int(seed)}|{game}|{team}").encode("utf-8")
+                team_seed=int.from_bytes(hashlib.sha256(stable).digest()[:8],"little")
+                rng=np.random.default_rng(team_seed)
             opp=gteams[1-ti]; tx=gx[gx.TeamAbbrev==team]
             possession_world=(possession_worlds[team] if possession_worlds
                               is not None else None)
@@ -1211,6 +1224,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 out[:,didx]=dst_dk.astype(np.float32)
                 stat_draws[str(x.loc[didx,'Name'])]={'sacks':sacks,'interceptions':ints,'fumble_recoveries':fum,'defensive_tds':def_td,'safeties':saf,'points_allowed':pts_allowed}
             processed.add(team)
+        if wr_role_team_rng_isolated:
+            rng=original_game_rng
 
     # Verify that skill-player non-touchdown points were actually generated.
     # A previous broken deployment returned only 0/6/12 scores while passing
