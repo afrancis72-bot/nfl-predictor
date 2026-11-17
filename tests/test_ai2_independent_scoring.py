@@ -36,11 +36,21 @@ class IndependentScoringBudgetTests(unittest.TestCase):
             ["historical_pass_tds", "historical_rush_tds", "expected_field_goals"],
         )
 
-    def test_simulator_source_does_not_read_market_implied_points(self):
+    def test_simulator_does_not_default_to_market_implied_points(self):
+        # The budget itself must be based on observed football rates, not an
+        # input betting line. The full simulator can separately test a
+        # documented optional PREgame market prior, but must opt into it.
+        params = inspect.signature(simulate_stat_driven_dfs).parameters
+        self.assertIn("market_game_totals", params)
+        self.assertIn("market_weight", params)
+        self.assertEqual(params["market_weight"].default, 0.0)
         source = inspect.getsource(simulate_stat_driven_dfs)
         self.assertNotIn("team_implied_points", source)
         self.assertNotIn("implied_points", source)
-        self.assertIn("historical_rates_only", source)
+        self.assertIn("_team_scoring_budget(", source)
+        # Distinguish a guarded optional pregame market prior from directly
+        # loading a sportsbook-implied team score into scoring by default.
+        self.assertIn("if market_weight and market_line is not None:", source)
 
 
 if __name__ == "__main__":
