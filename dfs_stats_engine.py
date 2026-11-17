@@ -264,7 +264,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              possession_target_season=None,
                              possession_target_week=None,
                              redzone_profiles=None,redzone_strength=0.,
-                             redzone_target_season=None,redzone_target_week=None):
+                             redzone_target_season=None,redzone_target_week=None,
+                             team_pass_env_weight=.5):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -273,6 +274,13 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     are also shared between offense and DST.
     """
     out_players=out_players or []
+    # Research knob: exactly .5 reproduces the existing released forecast.
+    # Alternate values are used only in explicitly isolated historical A/B.
+    if (isinstance(team_pass_env_weight,bool) or
+        not isinstance(team_pass_env_weight,(int,float,np.floating)) or
+        not np.isfinite(team_pass_env_weight) or
+        not 0 <= team_pass_env_weight <= 1):
+        raise ValueError("Team passing-volume evidence weight must be finite in [0,1]")
     team_environment=team_environment or {}
     snap_profiles=snap_profiles or {}
     if (not np.isfinite(receiving_td_weight) or
@@ -499,11 +507,12 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 team_pass_observed=float('nan'); sample_games=0.
                 team_pass_baseline=32.
             env=team_environment.get(team) or {}
-            # A real, prior-game team-specific pass volume forecast now matters
-            # to scoring.  Blend with the existing QB evidence rather than
-            # abruptly replacing the QB's on-field baseline.
+            # The default 50:50 baseline is retained byte-for-byte at .5.
+            # Research A/B may instead trust the strictly pregame team history
+            # more heavily; without that evidence, fall back to QB baseline.
             if env:
-                pass_pg=float(np.clip(.5*team_pass_baseline + .5*float(env['expected_pass_attempts']),18.,48.))
+                pass_pg=float(np.clip((1.-team_pass_env_weight)*team_pass_baseline
+                    +team_pass_env_weight*float(env['expected_pass_attempts']),18.,48.))
             else:
                 pass_pg=team_pass_baseline
             stat_draws[f'__TEAM_PASS_BASELINE__|{team}']={
@@ -514,6 +523,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'selected_qb_attempts_per_game':raw_pass_pg,
                 'team_pass_attempts_prior':32.,
                 'team_pass_attempts_baseline':team_pass_baseline,
+                'team_env_pass_attempts':float(env['expected_pass_attempts']) if env else None,
+                'team_env_weight_effective':float(team_pass_env_weight) if env else 0.,
+                'pregame_pass_attempt_forecast':pass_pg,
             }
             comp_pg=_safe(qr.get('completions_pg') if qr is not None else np.nan, pass_pg*.65)
             pass_yd_pg=_safe(qr.get('pass_yards_pg') if qr is not None else np.nan, 220.0)
