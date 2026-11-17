@@ -23,6 +23,7 @@ from ai2_nfl_game_matchup import team_defense_game_profiles
 from ai2_nfl_pbp_drives import pregame_possession_profiles
 from ai2_nfl_redzone_usage import pregame_redzone_profiles
 from dfs_stats_engine import simulate_stat_driven_dfs
+from ai2_nfl_full_player_universe import build_football_only_players
 from ai2_nfl_opportunity_audit import extract_player_stats
 from ai2_nfl_wr_role_audit import (pregame_receiver_ranks,receiver_row,team_other_row)
 from props_data import fetch_weekly, clean_weekly, make_rates, dk_classic_points
@@ -100,7 +101,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              team_pass_rows=None,team_component_rows=None,
              actual_pbp_by_team=None,team_component_engine=None,
              team_pass_env_weight=.5,wr_role_strength=0.,
-             role_allocation_rows=None,wr_role_team_rng_isolated=False):
+             role_allocation_rows=None,wr_role_team_rng_isolated=False,
+             full_player_universe=False,full_universe_rows=None):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -139,6 +141,9 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             if pool.empty:
                 failures.append(f"{season} W{week} {away}@{home}: no eligible prior-week QB")
                 continue
+            full_football_players=(build_football_only_players(
+                pool,rates,season=season,week=week)
+                if full_player_universe else None)
             role_ranks=role_groups=None
             if (wr_role_rows is not None or team_target_rows is not None
                 or team_component_rows is not None):
@@ -154,6 +159,9 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                     wr_role_strength=wr_role_strength,
                     wr_role_target_season=season,wr_role_target_week=week,
                     wr_role_team_rng_isolated=wr_role_team_rng_isolated,
+                    football_only_players=full_football_players,
+                    football_universe_target_season=(season if full_player_universe else None),
+                    football_universe_target_week=(week if full_player_universe else None),
                     snap_profiles=snap,injury_presence={},
                     role_share_concentration=role_share_concentration,
                     market_game_totals=market_totals,market_weight=market_weight,
@@ -182,6 +190,32 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             observations=h[(h["season"].eq(season))&
                            (h["week"].eq(week))&
                            h["recent_team"].map(canonical_team).isin((away,home))].copy()
+            if full_universe_rows is not None and full_player_universe:
+                universe_info=stat_draws.get("__FOOTBALL_PLAYER_UNIVERSE__",{})
+                if universe_info.get("historical_football_only_players")!=len(full_football_players):
+                    raise ValueError("Internal football-only player count mismatch")
+                for ghost in full_football_players.to_dict("records"):
+                    stat=stat_draws.get(str(ghost["Name"]))
+                    if not isinstance(stat,dict):
+                        raise ValueError("Historical teammate lacks simulated football stats")
+                    actual_player=observations[
+                        observations["recent_team"].map(canonical_team).eq(ghost["TeamAbbrev"]) &
+                        observations["player_name"].map(_norm_name).eq(_norm_name(ghost["Name"])) &
+                        observations["position"].eq(ghost["Position"])]
+                    full_universe_rows.append({
+                        "season":int(season),"week":int(week),
+                        "game":f"{away}@{home}","team":ghost["TeamAbbrev"],
+                        "player":ghost["Name"],"position":ghost["Position"],
+                        "eligible_in_original_DK_pool":False,
+                        "pregame_recent_games":ghost["observed_games"],
+                        "role_evidence_status":ghost["role_evidence_status"],
+                        "sim_targets_mean":float(np.mean(stat["targets"])),
+                        "sim_receptions_mean":float(np.mean(stat["receptions"])),
+                        "sim_carries_mean":float(np.mean(stat["carries"])),
+                        "actual_boxscore_present":bool(len(actual_player)==1),
+                        "actual_targets":(float(actual_player.iloc[0]["targets"])
+                                          if len(actual_player)==1 else None),
+                    })
             lookup={}
             for a in observations.to_dict("records"):
                 k=(_norm_name(a["player_name"]),canonical_team(a["recent_team"]),
