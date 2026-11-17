@@ -97,6 +97,19 @@ jobs:
         env:
           PYTHONPATH: .
         run: python -u scripts/probe_nfl_article_discovery.py --week 11
+      - name: Exercise unattended source collector against current published NFL schedule
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u scripts/auto_capture_nfl_status.py             --out-base nfl_official_captures             --report nfl_official_capture_run.json
+          python - <<'PY'
+          import json
+          r=json.load(open("nfl_official_capture_run.json"))
+          assert r["production_app_modified"] is False
+          assert r["betting_action_taken"] is False
+          assert r["positive_active_by_omission"] is False
+          print("Unattended collector completed safe read-only pregame source check:",r["result"])
+          PY
       - name: Nonpregame 2026 Week 10 official article FETCH/PARSER smoke
         continue-on-error: true
         env:
