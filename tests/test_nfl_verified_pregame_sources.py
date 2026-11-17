@@ -36,7 +36,7 @@ def store(root,raw,parsed,snap,kind):
         "production_approved":False,
         "source_url":parsed["source_url"],
         "source_html_sha256":hashlib.sha256(raw).hexdigest(),
-        "capture_utc":CAPTURE,"kickoff_utc":KICKOFF,
+        "capture_utc":snap["captured_at_utc"],"kickoff_utc":snap["kickoff_utc"],
     }
     (root/"manifest.json").write_text(json.dumps(manifest))
 
