@@ -103,7 +103,9 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              team_pass_env_weight=.5,wr_role_strength=0.,
              role_allocation_rows=None,wr_role_team_rng_isolated=False,
              full_player_universe=False,full_universe_rows=None,
-             full_universe_fix_team_aliases=False):
+             full_universe_fix_team_aliases=False,
+             availability_gate=False,availability_snapshots=None,
+             availability_as_of_utc=None,availability_gate_rows=None):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -155,9 +157,31 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             if pool.empty:
                 failures.append(f"{season} W{week} {away}@{home}: no eligible prior-week QB")
                 continue
+            # This game-specific snapshot must be persisted BEFORE kickoff.
+            # Missing evidence keeps every omitted player in OTHER, not in
+            # the football universe. Never derive it from target-week boxscores.
+            if availability_gate and not full_player_universe:
+                raise ValueError("Pregame game-status gate needs full football-universe research mode")
+            game_key=f"{away}@{home}"
+            evidence=(availability_snapshots or {}).get(
+                (int(season),int(week),game_key)) if availability_gate else None
             full_football_players=(build_football_only_players(
-                pool,rates,season=season,week=week)
+                pool,rates,season=season,week=week,
+                require_verified_active=availability_gate,
+                availability_snapshot=evidence,
+                as_of_utc=availability_as_of_utc)
                 if full_player_universe else None)
+            if availability_gate_rows is not None and availability_gate:
+                availability_gate_rows.append({
+                    "season":int(season),"week":int(week),"game":game_key,
+                    "source_snapshot_present":evidence is not None,
+                    "source_content_independently_verified":False,
+                    "internal_players_admitted":len(full_football_players),
+                    "status":("CLAIMED_GAME_DAY_EVIDENCE" if evidence is not None
+                              else "NO_PREGAME_AVAILABILITY_EVIDENCE"),
+                    "generated_from_postgame_rosters":False,
+                    "live_app_approved":False,
+                })
             role_ranks=role_groups=None
             if (wr_role_rows is not None or team_target_rows is not None
                 or team_component_rows is not None):
@@ -176,6 +200,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                     football_only_players=full_football_players,
                     football_universe_target_season=(season if full_player_universe else None),
                     football_universe_target_week=(week if full_player_universe else None),
+                    football_availability_snapshot=evidence,
+                    football_availability_as_of_utc=availability_as_of_utc,
                     snap_profiles=snap,injury_presence={},
                     role_share_concentration=role_share_concentration,
                     market_game_totals=market_totals,market_weight=market_weight,
