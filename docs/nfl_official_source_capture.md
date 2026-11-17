@@ -76,6 +76,21 @@ snapshot, manifest = load_verified_capture(
     as_of_utc="YYYY-MM-DDTHH:MM:SSZ")
 ~~~
 
+The verified archive can be passed into the existing **research-only** evaluator
+without retyping source claims:
+
+~~~python
+from ai2_nfl_official_inactives_capture import load_verified_capture_index
+snapshots = load_verified_capture_index(
+    ["nfl_official_captures/<CAPTURE_DIR>"],
+    as_of_utc="YYYY-MM-DDTHH:MM:SSZ")
+# evaluate(..., full_player_universe=True, availability_gate=True,
+#          availability_snapshots=snapshots)
+~~~
+
+This strict loader refuses duplicates, altered source content, or archives
+captured after the intended model-as-of time.
+
 **Limits:** GitHub Actions artifact retention isn't permanent storage or a
 cryptographic signature of NFL authorship. The archive proves the bytes that
 the capture job saw and flags subsequent tampering. It does not guarantee
