@@ -1,0 +1,69 @@
+name: NFL full football player universe research validation
+on:
+  push:
+    branches:
+      - research/nfl-full-player-universe-20261117
+    paths:
+      - 'ai2_nfl_full_player_universe.py'
+      - 'dfs_stats_engine.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/audit_nfl_full_player_universe.py'
+      - 'tests/test_nfl_full_player_universe.py'
+      - '.github/workflows/nfl-full-player-universe-research.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  full-player-universe-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install historical research and simulation libraries
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4 pyarrow fsspec
+      - name: Verify no extra DFS eligibility, pregame provenance, and team conservation
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m py_compile ai2_nfl_full_player_universe.py dfs_stats_engine.py scripts/audit_nfl_full_player_universe.py scripts/backtest_nfl_player_dk_means.py
+          python -m unittest discover -s tests -p 'test_nfl_full_player_universe.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_drive_pass_accounting.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_team_pass_prior_ab.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Compare identical historical DK slates with internally complete football universe
+        env:
+          PYTHONPATH: .
+        run: python -u scripts/audit_nfl_full_player_universe.py --n-sims 220 --out-dir nfl_full_player_universe
+      - name: Preserve full source-identified internal-player audit ledger
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-full-player-universe-research
+          path: nfl_full_player_universe/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Lock production release and history interpretation
+        run: |
+          python - <<'PY'
+          import json
+          r=json.load(open("nfl_full_player_universe/comparison.json"))
+          assert r["production_approved"] is False
+          assert r["one_click_modified"] is False
+          assert r["independent_holdout"] is False
+          for window,metrics in r["windows"].items():
+              assert metrics["n"]["player_games"]>=150
+              assert metrics["n"]["team_games"]>=40
+              assert metrics["n"]["non_DK_internal_player_games"]>0
+              assert metrics["all_eligible_DK_players_unchanged"]
+              assert metrics["passing_attempts_unchanged"]
+              print(window,metrics["n"],
+                    "DK MAE",metrics["player_partial_DK"]["baseline_mae"],
+                    "->",metrics["player_partial_DK"]["candidate_mae"],
+                    "WR targets MAE",metrics["WR_targets"]["baseline_mae"],
+                    "->",metrics["WR_targets"]["candidate_mae"])
+          print("Production still untouched; known injury/active history not verified")
+          PY
