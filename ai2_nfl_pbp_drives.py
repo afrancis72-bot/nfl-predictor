@@ -153,6 +153,7 @@ def pbp_to_drives(pbp):
             "start_yardline_100":start,
             "plays":play_count,"duration_seconds":duration,
             "outcome":outcome,
+            "turnover_interception":int(lost and bool(g["interception"].gt(0).any())),
         })
     out = pd.DataFrame(rows)
     if out.empty:
@@ -250,12 +251,17 @@ def pregame_possession_profiles(drives, season, week, *,
         field_multiplier.append(float(np.clip(
             shrunk/max(base_scoring,1e-5),.5,2.)))
     last=historic.sort_values(["season","week"]).iloc[-1]
+    turnovers=historic[historic["outcome"].eq("turnover")]
+    interception_rate=float(np.clip(
+        (turnovers["turnover_interception"].sum()+12*.70)/
+        (len(turnovers)+12), .1,.95))
     return {
         "source":SOURCE,
         "target_season":int(season),"target_week":int(week),
         "last_observed_season":int(last["season"]),
         "last_observed_week":int(last["week"]),
         "total_drives":int(len(historic)),
+        "turnover_interception_rate":interception_rate,
         "league_probs":base,
         "teams":by_team,
         "outcomes":outcomes,
