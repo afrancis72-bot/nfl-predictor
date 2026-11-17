@@ -1,0 +1,73 @@
+name: NFL real play-by-play possession engine research and full-slate audit
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'ai2_nfl_pbp_drives.py'
+      - 'ai2_nfl_possession_engine.py'
+      - 'dfs_stats_engine.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/backtest_nfl_possession_engine.py'
+      - 'tests/test_nfl_possession_engine.py'
+      - '.github/workflows/nfl-possession-engine-research.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  possession-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install read-only nflverse PBP and simulator dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4 pyarrow fsspec
+      - name: Compile and test simulated drive/score/stat accounting
+        run: |
+          python -m py_compile ai2_nfl_pbp_drives.py ai2_nfl_possession_engine.py dfs_stats_engine.py scripts/backtest_nfl_possession_engine.py
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_possession_engine.py' -v
+      - name: Verify actual nflverse public PBP fields and pregame drive learning
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u - <<'PY'
+          from ai2_nfl_pbp_drives import load_historical_pbp,pbp_to_drives,pregame_possession_profiles
+          p=load_historical_pbp([2025])
+          d=pbp_to_drives(p)
+          profile=pregame_possession_profiles(d,2026,9)
+          print('Verified real season 2025 PBP plays:',len(p))
+          print('Nonambiguous real offensive drives:',len(d))
+          print('Pregame evidence source:',profile['source'])
+          print('Empirical drive outcome probabilities:',profile['league_probs'])
+          assert len(d)>1500 and profile['total_drives']>1500
+          PY
+      - name: Compare possession engine with unchanged NFL simulator on complete historical Sunday slates
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u scripts/backtest_nfl_possession_engine.py \
+            --n-sims 220 --output-dir nfl_possession_audit
+      - name: Upload every per-player result even if the research gate fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-possession-audit
+          path: nfl_possession_audit/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep unvalidated possession model OUT of production
+        run: |
+          python - <<'PY'
+          import json,sys
+          r=json.load(open('nfl_possession_audit/validation.json'))
+          for name,result in r['gates'].items():
+              print(('PASS ' if result else 'FAIL ')+name)
+          print('Current production is unchanged:',not r['production_approved'])
+          if not r['research_gate_pass']:
+              print('This possession model is NOT ready for production.')
+              sys.exit(1)
+          print('Only research acceptance passed; prospective freeze still required.')
+          PY
