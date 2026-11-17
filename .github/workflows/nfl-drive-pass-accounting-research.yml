@@ -1,0 +1,63 @@
+name: NFL internal play-dropback-sack component diagnostic
+on:
+  push:
+    branches:
+      - research/nfl-drive-pass-accounting-20261117
+    paths:
+      - 'ai2_nfl_drive_pass_accounting.py'
+      - 'scripts/audit_nfl_drive_pass_components.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'dfs_stats_engine.py'
+      - 'tests/test_nfl_drive_pass_accounting.py'
+      - '.github/workflows/nfl-drive-pass-accounting-research.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  component-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install offline audit dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4 pyarrow fsspec
+      - name: Unit-check strict attempt, sack and role accounting; retain old simulator tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m py_compile ai2_nfl_drive_pass_accounting.py scripts/audit_nfl_drive_pass_components.py scripts/backtest_nfl_player_dk_means.py dfs_stats_engine.py
+          python -m unittest discover -s tests -p 'test_nfl_drive_pass_accounting.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_possession_engine.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_wr_volume_share.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+      - name: Replay existing neutral and experimental possession worlds against actual NFL PBP
+        env:
+          PYTHONPATH: .
+        run: python -u scripts/audit_nfl_drive_pass_components.py --n-sims 220 --out-dir nfl_drive_pass_accounting
+      - name: Archive raw team-game and exact component results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-drive-pass-accounting
+          path: nfl_drive_pass_accounting/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Ensure diagnostics succeeded without production activation
+        run: |
+          python - <<'PY'
+          import json
+          r=json.load(open('nfl_drive_pass_accounting/component_audit.json'))
+          assert r['status']=='research_only'
+          assert r['production_approved'] is False
+          assert r['one_click_modified'] is False
+          for label,window in r['windows'].items():
+              assert window['paired_team_games']>=40
+              assert window['neutral']['n_team_games']==window['possession']['n_team_games']
+              for key in ['neutral','possession']:
+                  m=window[key]
+                  assert abs(m['component_bias']['sum']-m['pass_attempts']['bias'])<.002
+          print('Research accounting passed; prediction and deployment gates remain closed')
+          PY
