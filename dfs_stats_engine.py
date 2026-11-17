@@ -709,6 +709,15 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'team_plays_guardrail_max':90,
                 'simulated_dropbacks':dropbacks,
                 'simulated_rushes':rushes,
+                # Research diagnostics only: these record already-computed
+                # pregame assumptions and simulated conservation. No new RNG
+                # draws, model adjustments, or optimizer changes.
+                'pregame_expected_dropbacks':expected_dropbacks,
+                'pregame_pass_fraction':float(pass_fraction),
+                'pregame_sack_rate':float(sack_rate),
+                'pregame_pass_attempts':float(pass_pg),
+                'simulated_pass_attempts':attempts,
+                'simulated_sacks':sacks,
             }
             if not np.array_equal(team_plays,dropbacks+rushes):
                 raise ValueError(f'V3.8 team-play conservation failed for {team}')
