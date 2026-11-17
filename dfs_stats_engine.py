@@ -342,13 +342,12 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     # pregame-only teammates are simulated internally but NEVER exported as
     # optimizer-selectable players, regardless of their modeled fantasy score.
     x=pool[pool['optimizer_eligible']==True].copy().reset_index(drop=True)
-    original_dk_names=set(zip(x["Name"].map(_clean_name),x["TeamAbbrev"].map(_team)))
     if out_keys:
         x=x[[(_clean_name(row['Name']),_team(row['TeamAbbrev'])) not in out_keys
              for _,row in x.iterrows()]].copy().reset_index(drop=True)
-    x['football_only']=False
     internal_count=0
     if football_only_players is not None:
+        x['football_only']=False
         extras=validate_football_only_players(football_only_players,x,rates)
         if not extras.empty:
             if football_universe_target_season is None or football_universe_target_week is None:
@@ -1315,7 +1314,6 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         select=~x['football_only'].fillna(False).to_numpy(bool)
         if not select.any():
             raise ValueError("Full football universe removed all eligible DK players")
-        stat_draws['__FOOTBALL_PLAYER_UNIVERSE__']['football_only_players_exported_to_optimizer']=int((~select & False).sum())
         x=x.loc[select].copy().reset_index(drop=True)
         out=out[:,select]
         x=x.drop(columns=['football_only'])
