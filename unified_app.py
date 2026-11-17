@@ -679,6 +679,63 @@ else:
                 if matchup_summary.get("historical_data_issue"):
                     st.warning("Historical opponent data unavailable: " +
                                str(matchup_summary["historical_data_issue"]))
+                st.markdown("**How prior QB1 / RB1-RB2 / WR1-WR3 / TE1-TE2 performed versus each defense**")
+                st.caption(matchup_summary.get("role_matchup_note",
+                    "Average partial DraftKings points ABOVE each previous opponent's own pregame average; research only."))
+                role_rows = output_one.get("opponent_role_player_report") or []
+                role_profiles = output_one.get("opponent_role_defense_report") or []
+                role_games = output_one.get("opponent_role_prior_opponents") or []
+                if role_rows:
+                    role_teams = sorted({
+                        str(r["Team"]) + " vs " + str(r["Opponent"])
+                        for r in role_rows if r.get("Opponent")})
+                    role_selection = st.selectbox(
+                        "Filter player matchup report by offense",
+                        ["All slate players"] + role_teams, key="nfl_role_matchup_team")
+                    role_positions = st.selectbox(
+                        "Position group", ["All positions", "QB", "RB", "WR", "TE"],
+                        key="nfl_role_matchup_position")
+                    role_filtered = role_rows
+                    if role_selection != "All slate players":
+                        role_filtered = [
+                            r for r in role_filtered
+                            if str(r["Team"]) + " vs " + str(r["Opponent"]) == role_selection]
+                    if role_positions != "All positions":
+                        role_filtered = [
+                            r for r in role_filtered if r["Position"] == role_positions]
+                    st.dataframe(_ai2_pd.DataFrame(role_filtered),
+                                 use_container_width=True, hide_index=True, height=360)
+                    st.download_button(
+                        "Download every player vs same-role defense averages",
+                        data=_ai2_pd.DataFrame(role_rows).to_csv(
+                            index=False).encode("utf-8-sig"),
+                        file_name="ai2_nfl_all_players_vs_defensive_roles.csv",
+                        mime="text/csv", key="nfl_role_player_csv")
+                if role_profiles:
+                    st.markdown("**Historical defense-by-role averages (raw and sample-shrunk)**")
+                    st.dataframe(_ai2_pd.DataFrame(role_profiles),
+                                 use_container_width=True, hide_index=True, height=260)
+                    st.download_button(
+                        "Download defense vs WR1/WR2/TE1/QB1/RB1 summary",
+                        data=_ai2_pd.DataFrame(role_profiles).to_csv(
+                            index=False).encode("utf-8-sig"),
+                        file_name="ai2_nfl_defense_role_residual_summary.csv",
+                        mime="text/csv", key="nfl_role_defense_csv")
+                if role_games:
+                    st.markdown("**Every prior opponent behind those averages**")
+                    st.dataframe(_ai2_pd.DataFrame(role_games),
+                                 use_container_width=True, hide_index=True, height=260)
+                    st.download_button(
+                        "Download prior opponent game-by-game evidence",
+                        data=_ai2_pd.DataFrame(role_games).to_csv(
+                            index=False).encode("utf-8-sig"),
+                        file_name="ai2_nfl_defense_roles_prior_games.csv",
+                        mime="text/csv", key="nfl_role_opponent_game_csv")
+                if matchup_summary.get("role_matchup_issue"):
+                    st.warning("Role matchup evidence unavailable: " +
+                               str(matchup_summary["role_matchup_issue"]))
+                elif not role_rows:
+                    st.caption("Insufficient sourced role evidence for this slate. No defensive advantage inferred.")
                 st.markdown("**Opponent quality-adjusted football efficiency (research only)**")
                 st.caption(matchup_summary.get("component_note",
                     "Past opponents are compared against their own prior pass, rush and reception efficiency. No scoring adjustment."))
