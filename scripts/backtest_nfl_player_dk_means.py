@@ -100,7 +100,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              team_pass_rows=None,team_component_rows=None,
              actual_pbp_by_team=None,team_component_engine=None,
              team_pass_env_weight=.5,wr_role_strength=0.,
-             role_allocation_rows=None):
+             role_allocation_rows=None,wr_role_team_rng_isolated=False):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -153,6 +153,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                     team_pass_env_weight=team_pass_env_weight,
                     wr_role_strength=wr_role_strength,
                     wr_role_target_season=season,wr_role_target_week=week,
+                    wr_role_team_rng_isolated=wr_role_team_rng_isolated,
                     snap_profiles=snap,injury_presence={},
                     role_share_concentration=role_share_concentration,
                     market_game_totals=market_totals,market_weight=market_weight,
