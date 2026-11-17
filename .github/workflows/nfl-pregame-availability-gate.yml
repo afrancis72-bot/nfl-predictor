@@ -9,6 +9,9 @@ on:
       - 'dfs_stats_engine.py'
       - 'tests/test_nfl_pregame_availability.py'
       - 'scripts/audit_nfl_pregame_availability.py'
+      - 'scripts/audit_nfl_pregame_availability_integration.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'docs/nfl_pregame_availability_gate.md'
       - '.github/workflows/nfl-pregame-availability-gate.yml'
   workflow_dispatch:
 permissions:
@@ -39,6 +42,10 @@ jobs:
         env:
           PYTHONPATH: .:tests
         run: python -u scripts/audit_nfl_pregame_availability.py --sims 10000 --out nfl_pregame_availability_gate/validation.json
+      - name: Verify real historical 2026 game forecast unchanged when no pregame source exists
+        env:
+          PYTHONPATH: .:tests
+        run: python -u scripts/audit_nfl_pregame_availability_integration.py --out nfl_pregame_availability_gate/historical_no_source_control.json
       - name: Preserve synthetic gate audit
         if: always()
         uses: actions/upload-artifact@v4
@@ -61,5 +68,12 @@ jobs:
           assert r["same_team_pass_attempts_and_conserved_player_targets"]
           assert r["all_original_DK_players_untouched"]
           assert r["original_salary_pool_scoring_bitwise_unchanged_with_no_verifiable_evidence"]
-          print("Safe evidence gate proven in synthetic 10k scenarios only")
+          assert r["source_content_independently_checked"] is False
+          historical=json.load(open("nfl_pregame_availability_gate/historical_no_source_control.json"))
+          assert historical["same_player_dk_means_and_p90_bitwise"]
+          assert historical["same_receiver_target_means_and_p90_bitwise"]
+          assert historical["source_snapshots_used"]==0
+          assert historical["unverified_teammates_simulated"]==0
+          assert historical["production_approved"] is False
+          print("Safe synthetic 10k gate + no-source real historical fallback proven")
           PY
