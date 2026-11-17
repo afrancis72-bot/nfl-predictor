@@ -76,7 +76,11 @@ def simulate_possession_worlds(game, profiles, *, season, week,
     if not isinstance(n_sims,int) or n_sims<1 or n_sims>100000:
         raise ValueError("Invalid possession simulation count")
     sample=profiles["outcomes"]
-    start=np.asarray(profiles["starting_field_positions"],dtype=float)
+    start=np.asarray(profiles["opening_drive_fields"],dtype=float)
+    next_fields=profiles["next_start_by_outcome"]
+    if set(next_fields)!=set(OUTCOMES) or any(
+            len(next_fields[x])<25 for x in OUTCOMES):
+        raise ValueError("Insufficient observed next-possession field-position evidence")
     if len(start)<100 or not np.isfinite(start).all():
         raise ValueError("No measured prior-game starting field-position distribution")
     league=np.asarray(profiles["league_probs"],float)
@@ -184,11 +188,10 @@ def simulate_possession_worlds(game, profiles, *, season, week,
                     team["interceptions"][scenario]+=1
                 else:
                     team["fumbles_lost"][scenario]+=1
-                # Turnover can plausibly give opponent shorter field. This
-                # initial field-position change is an explicit heuristic and
-                # must be calibrated in a future drive-transition study.
-                next_start=float(np.clip(
-                    field-rng.integers(12,33),15,85))
+            # Learn the next offense's field from ACTUAL earlier games after
+            # this particular type of drive. This accounts for kickoff and
+            # turnover field position without a fabricated fixed yard shift.
+            next_start=float(rng.choice(next_fields[result]))
             # Add a brief between-drive/possession transition, same clock.
             sec-=time_left+min(sec-time_left,int(rng.integers(6,18)))
             drives_count+=1
