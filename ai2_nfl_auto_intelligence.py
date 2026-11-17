@@ -11,7 +11,7 @@ from ai2_nfl_workload import redistribute_opportunities
 from ai2_nfl_matchup_diagnostics import defensive_allowance
 from ai2_nfl_opponent_relative import opponent_relative_profiles
 from ai2_nfl_defense_components import defense_component_profiles
-from ai2_nfl_role_matchups import defense_role_profiles
+from ai2_nfl_role_matchups import defense_role_profiles, slate_role_report
 from ai2_nfl_input_integrity import player_role_trends
 from ai2_nfl_pregame_consistency import build_pregame_role_evidence
 from ai2_nfl_team_environment import predict_team_environment
@@ -173,9 +173,12 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         # only: no automatic model boost until independent holdout improves.
         role_profiles, role_matchup_details = defense_role_profiles(
             history, season, week)
+        role_matchup_slate = slate_role_report(
+            salary_rows, history, season, week, role_profiles)
     except (KeyError, ValueError, TypeError) as exc:
         role_profiles = pd.DataFrame()
         role_matchup_details = pd.DataFrame()
+        role_matchup_slate = []
         role_matchup_issue = str(exc)
     missing = baseline[baseline["match_status"].ne("matched")]
     blockers = ["Workload redistribution is estimated from observed rates, not validated against current depth charts",
@@ -192,6 +195,7 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         "opponent_component_issue": component_issue,
         "opponent_role_profiles": role_profiles,
         "opponent_role_details": role_matchup_details,
+        "opponent_role_slate": role_matchup_slate,
         "opponent_role_issue": role_matchup_issue,
         "opportunity_changes": opportunity_changes, "role_trends": role_trends,
         "pregame_role_evidence": pregame_role_evidence,
