@@ -295,6 +295,45 @@ else:
                     st.session_state.pop("ai2_nfl_audit_storage_warning", None)
                 except (OSError, sqlite3.Error) as audit_exc:
                     st.session_state["ai2_nfl_audit_storage_warning"] = str(audit_exc)
+                # Archive the EXACT intelligence and engine selection with
+                # these lineup results. A later injury refresh or model
+                # version cannot silently rewrite this build's history.
+                build_manifest={
+                    "generated_utc":datetime.now(timezone.utc).isoformat(),
+                    "app_build":{
+                        "branch":_LIVE_BUILD.get("branch"),
+                        "git_commit":_LIVE_BUILD.get("git_commit"),
+                        "entrypoint":_LIVE_BUILD.get("entrypoint"),
+                        "fingerprint":_LIVE_BUILD.get("fingerprint"),
+                    },
+                    "nfl_engine_mode":nfl_engine_mode,
+                    "statistical_engine_version":output_one.get(
+                        "statistical_engine_version","UNKNOWN"),
+                    "dk_slate_sha256":_ai2_sha256(salaries_one[1]).hexdigest(),
+                    "lineup_count":int(requested_count),
+                    "seeds":output_one.get("core_diversification_seeds",
+                                           [int(seed_one)]),
+                    "existing_official_injury_feed":output_one.get(
+                        "pregame_report",{}).get("official_injury_url"),
+                    "existing_injury_feed_checked_utc":output_one.get(
+                        "pregame_report",{}).get("checked_utc"),
+                    "experimental_status_intelligence":output_one.get(
+                        "availability_intelligence",{}),
+                    "player_universe_accuracy_independently_validated":False,
+                    "approved_lineups_untouched":True,
+                }
+                manifest_name=(f"team_ai2_nfl_build_manifest_seed_{int(seed_one)}_"
+                               f"{nfl_engine_mode}.json")
+                manifest_bytes=json.dumps(
+                    build_manifest,sort_keys=True,indent=2,
+                    default=str,allow_nan=False).encode("utf-8")
+                st.session_state["ai2_nfl_build_manifest_filename"]=manifest_name
+                st.session_state["ai2_nfl_build_manifest_bytes"]=manifest_bytes
+                try:
+                    _ai2_save_file(DATA_DIR, "NFL", "Build manifest",
+                                   manifest_name, manifest_bytes)
+                except (OSError, sqlite3.Error) as exc:
+                    st.session_state["ai2_nfl_manifest_storage_warning"]=str(exc)
                 st.session_state["ai2_oneclick_result"] = output_one
                 st.session_state["ai2_oneclick_seed"] = int(seed_one)
                 st.session_state["ai2_oneclick_count"] = int(requested_count)
@@ -321,6 +360,19 @@ else:
             output_one = None
 
         if output_one:
+            manifest_bytes=st.session_state.get("ai2_nfl_build_manifest_bytes")
+            if manifest_bytes:
+                st.download_button(
+                    "Download exact NFL engine + intelligence manifest (JSON)",
+                    data=manifest_bytes,
+                    file_name=st.session_state.get(
+                        "ai2_nfl_build_manifest_filename","nfl_manifest.json"),
+                    mime="application/json", key="ai2_nfl_manifest_download",
+                    on_click="ignore")
+            if st.session_state.get("ai2_nfl_manifest_storage_warning"):
+                st.warning("The current manifest is downloadable, but permanent "
+                           "storage needs attention: "+
+                           st.session_state["ai2_nfl_manifest_storage_warning"])
             st.subheader("NFL engine and intelligence used for THIS build")
             status_report=output_one.get("availability_intelligence") or {}
             st.write("**Engine:** "+
