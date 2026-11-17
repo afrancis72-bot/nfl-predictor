@@ -13,6 +13,7 @@ from ai2_nfl_receiving_tds import receiving_td_factors
 from ai2_nfl_defensive_efficiency import matchup_yard_multiplier
 from ai2_nfl_sim_component_factors import validated_component_lookup, component_factor
 from ai2_nfl_game_matchup import validated_game_profile_lookup, get_game_effect
+from ai2_nfl_possession_engine import simulate_possession_worlds
 from ai2_nfl_other_yard_reconcile import reconcile_other_yards
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
@@ -257,7 +258,10 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              component_target_week=None,
                              game_matchup_profiles=None,game_matchup_strength=0.,
                              game_matchup_target_season=None,
-                             game_matchup_target_week=None):
+                             game_matchup_target_week=None,
+                             possession_profiles=None,possession_strength=0.,
+                             possession_target_season=None,
+                             possession_target_week=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -283,6 +287,14 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     game_matchup_lookup = validated_game_profile_lookup(
         game_matchup_profiles, season=game_matchup_target_season,
         week=game_matchup_target_week, strength=game_matchup_strength)
+    if not np.isfinite(possession_strength) or not 0.<=possession_strength<=1.:
+        raise ValueError("Possession strength must be finite between 0 and 1")
+    if possession_strength and (game_matchup_strength or component_strength
+                                or defense_weight or market_weight):
+        raise ValueError("Possession experiment cannot stack other matchup or market priors")
+    if possession_strength and (possession_target_season is None or
+                                possession_target_week is None):
+        raise ValueError("Possession worlds require dated pregame historical evidence")
     # None preserves explicit legacy simulation callers. Unified NFL passes a
     # measured dict, and an unknown player's share defaults to ZERO rather
     # than silently awarding a full conditional OUT-player workload.
@@ -374,6 +386,31 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     for game in games:
         gx=x[x.game.astype(str)==game]; gteams=list(dict.fromkeys(gx.TeamAbbrev.astype(str)))
         if len(gteams)!=2: continue
+        # Research-only option: generate ONE chronological drive sequence with
+        # a shared clock and score for both offenses before allocating players.
+        # The default production path does not call or load possession data.
+        possession_worlds=None
+        if possession_strength:
+            baseline_pass={}
+            for t in gteams:
+                e=team_environment.get(t) or {}
+                attempt=_safe(e.get('expected_pass_attempts'),32.)
+                plays=_safe(e.get('expected_plays'),65.)
+                baseline_pass[t]=float(np.clip((attempt+2.3)/max(plays,1.),.3,.79))
+            possession_worlds=simulate_possession_worlds(
+                game,possession_profiles,season=possession_target_season,
+                week=possession_target_week,n_sims=ns,
+                seed=seed+sum(ord(ch) for ch in str(game)),
+                strength=possession_strength,
+                offense_pass_fraction=baseline_pass)
+            stat_draws[f'__POSSESSION_WORLD__|{game}']={
+                'source':'nflverse pregame fixed-drive play-by-play histories',
+                'strength':float(possession_strength),
+                'measured_prior_drives':possession_profiles['total_drives'],
+                'opponent_conditioned':True,
+                'live_lineup_scoring_enabled':False,
+                'game_clock_shared':True,
+            }
         # Shared pace/script shock for both teams in the game.
         pace=rng.lognormal(-0.5*.10**2,.10,size=ns)
         script=rng.normal(0,1,size=ns)
@@ -403,6 +440,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 script=script+script_center
         for ti,team in enumerate(gteams):
             opp=gteams[1-ti]; tx=gx[gx.TeamAbbrev==team]
+            possession_world=(possession_worlds[team] if possession_worlds
+                              is not None else None)
             qbrows=tx[tx.Position.astype(str)=='QB']
             # Team simulation must not disappear just because the active DK optimizer pool
             # has no eligible QB (injury/status/salary filtering can remove him).  Use the
@@ -617,6 +656,24 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             pass_fraction_scenario=np.clip(pass_fraction*np.exp(.12*team_script),.25,.88)
             dropbacks=rng.binomial(team_plays,pass_fraction_scenario)
             dropbacks=np.maximum(0,dropbacks)
+            if possession_world is not None:
+                # Actual TEAM plays/dropbacks are sums of sequential drives,
+                # not re-sampled from an independent team-game Poisson prior.
+                team_plays=possession_world['plays'].astype(np.int32)
+                dropbacks=possession_world['dropbacks'].astype(np.int32)
+                if (team_plays<dropbacks).any() or (team_plays<1).any():
+                    raise ValueError("Possession model generated illegal team play counts")
+                stat_draws[f'__POSSESSION_TEAM__|{team}']={
+                    'simulated_drives':possession_world['drives'],
+                    'simulated_plays':team_plays,
+                    'simulated_dropbacks':dropbacks,
+                    'simulated_pass_tds':possession_world['pass_tds'],
+                    'simulated_rush_tds':possession_world['rush_tds'],
+                    'simulated_field_goals':possession_world['field_goals'],
+                    'simulated_interceptions':possession_world['interceptions'],
+                    'simulated_fumbles_lost':possession_world['fumbles_lost'],
+                    'simulated_points':possession_world['points'],
+                }
             # DST pass-rush strength is conservatively inferred from its DFS baseline until
             # a dedicated team sack-rate table is available; QB sack tendency supplies offense side.
             dstrow=x[(x.TeamAbbrev==opp)&(x.Position.astype(str)=='DST')]
@@ -624,6 +681,14 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             dst_sack_mult=float(np.clip(1.0+(dst_mean-6.5)*.035,.78,1.28))
             sack_rate=np.clip((sack_pg/max(pass_pg+sack_pg,1))*dst_sack_mult,.025,.14)
             sacks=rng.binomial(dropbacks,sack_rate)
+            if possession_world is not None:
+                # Every possession INT and passing TD requires a surviving
+                # attempted pass, not a drive that consists entirely of sacks.
+                required=(possession_world['pass_tds']+
+                          possession_world['interceptions']).astype(np.int32)
+                if np.any(required>dropbacks):
+                    raise ValueError("Passing scoring/turnover events exceed drive dropbacks")
+                sacks=np.minimum(sacks,dropbacks-required)
             attempts=np.maximum(0,dropbacks-sacks)
             rushes=team_plays-dropbacks
             stat_draws[f'__TEAM_PLAYS__|{team}']={
@@ -738,6 +803,34 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             oth_c=rng.binomial(oth_t,team_catch_rate)
             oth_y=np.where(oth_c>0,rng.gamma(np.maximum(oth_c,1)*2.0,4.5),0.)
             team_comp+=oth_c; team_rec_yd+=oth_y
+            if possession_world is not None:
+                # A drive that ended in a PASS TD must have a genuine catch.
+                # The player-allocation step may miss all passes by random
+                # chance; convert ONLY an existing incomplete target into a
+                # catch, preserving attempts, targets and pass-yard identity.
+                for scenario in np.flatnonzero(
+                        possession_world['pass_tds']>team_comp):
+                    needed=int(possession_world['pass_tds'][scenario]-
+                               team_comp[scenario])
+                    for _ in range(needed):
+                        available=[int(player_rec[j][0][scenario]-
+                                       player_rec[j][1][scenario])
+                                   for j in player_rec]
+                        available.append(int(oth_t[scenario]-oth_c[scenario]))
+                        best=int(np.argmax(available))
+                        if available[best]<=0:
+                            raise ValueError("Drive passing TD has no real target to complete")
+                        # Conservative provisional reception gain; future PBP
+                        # version must distribute drive terminal yardage.
+                        gained=6.0
+                        if best==len(player_rec):
+                            oth_c[scenario]+=1
+                            oth_y[scenario]+=gained
+                        else:
+                            player_rec[best][1][scenario]+=1
+                            player_rec[best][2][scenario]+=gained
+                        team_comp[scenario]+=1
+                        team_rec_yd[scenario]+=gained
             # When some team's receivers are absent from the DK/player pool,
             # routing all missing QB passing yards to the modeled receivers
             # can overcredit a high-target player. An experimental OTHER-only
@@ -831,10 +924,19 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             td_probability=float(np.clip(expected_td/max(expected_plays,1.),.002,.095))
             total_td=np.minimum(rng.binomial(team_plays,td_probability),8)
             fgs=rng.poisson(fg_mean,size=ns)
+            if possession_world is not None:
+                total_td=(possession_world['pass_tds']+
+                          possession_world['rush_tds']).astype(np.int32)
+                fgs=possession_world['field_goals'].astype(np.int32)
+                expected_td=float(np.mean(total_td))
+                fg_mean=float(np.mean(fgs))
+                td_probability=float(expected_td/max(np.mean(team_plays),1.))
             stat_draws[f'__TEAM_SCORING__|{team}']={
                 'scoring_source':(
-                    'pregame_nflverse_team_scoring_plus_QB_observed_shrinkage'
-                    if team_td_evidence is not None else 'historical_QB_rates_only'),
+                    'pregame_nflverse_possession_game_clock_drive_outcomes'
+                    if possession_world is not None else
+                    ('pregame_nflverse_team_scoring_plus_QB_observed_shrinkage'
+                     if team_td_evidence is not None else 'historical_QB_rates_only')),
                 'source_team_expected_tds':(
                     float(team_td_evidence) if team_td_evidence is not None else None),
                 'prior_expected_tds_before_team_scoring':original_td_prior,
@@ -861,6 +963,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 pass_share=float(np.clip(
                     .65*pass_share+.35*observed_share,.35,.78))
             pass_td=rng.binomial(total_td,pass_share)
+            if possession_world is not None:
+                pass_td=possession_world['pass_tds'].astype(np.int32)
             # A passing touchdown must be a completed pass. Preserve the team
             # touchdown budget by moving any excess to rushing opportunities.
             # A TD must be backed by an actual reception or carry. Under a
@@ -868,6 +972,11 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # exceed the number of eligible scoring events. Constrain the draw
             # before allocating it instead of raising a capacity exception.
             total_capacity=team_comp.astype(np.int64)+np.asarray(rushes,dtype=np.int64)
+            if possession_world is not None:
+                if np.any(total_td>total_capacity):
+                    raise ValueError("Drive touchdown result exceeds target/carry capacity")
+                if np.any(pass_td>team_comp) or np.any(total_td-pass_td>rushes):
+                    raise ValueError("Drive terminal touchdown has no matching pass or rush")
             total_td=np.minimum(total_td,total_capacity)
             min_pass=np.maximum(0,total_td-np.asarray(rushes,dtype=np.int64))
             max_pass=np.minimum(total_td,team_comp.astype(np.int64))
@@ -877,6 +986,10 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             stat_draws[f'__TEAM_SCORING__|{team}']['simulated_offensive_tds']=total_td
             stat_draws[f'__TEAM_SCORING__|{team}']['simulated_offensive_points']=7*total_td+3*fgs
             int_rate=np.clip(int_pg/max(pass_pg,1),.005,.065); ints=rng.binomial(attempts,int_rate)
+            if possession_world is not None:
+                ints=possession_world['interceptions'].astype(np.int32)
+                if np.any(ints>attempts):
+                    raise ValueError("Drive interceptions exceed simulated pass attempts")
 
             # Allocate scores using *scenario-specific* opportunity rather than
             # fixed pregame target/carry shares. This preserves correlation:
@@ -1015,7 +1128,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             if didx_candidates:
                 didx=didx_candidates[0]
                 # Fumble recoveries/defensive TDs are rare events tied partly to sacks/turnovers.
-                fum=rng.binomial(np.maximum(sacks,0),.075)
+                fum=(possession_world['fumbles_lost'].astype(np.int32)
+                     if possession_world is not None else
+                     rng.binomial(np.maximum(sacks,0),.075))
                 takeaways=ints+fum
                 def_td=rng.binomial(np.minimum(takeaways,1),.075)
                 saf=rng.binomial(1,.012,size=ns)
