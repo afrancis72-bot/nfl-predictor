@@ -332,6 +332,7 @@ else:
                 try:
                     _ai2_save_file(DATA_DIR, "NFL", "Build manifest",
                                    manifest_name, manifest_bytes)
+                    st.session_state.pop("ai2_nfl_manifest_storage_warning",None)
                 except (OSError, sqlite3.Error) as exc:
                     st.session_state["ai2_nfl_manifest_storage_warning"]=str(exc)
                 st.session_state["ai2_oneclick_result"] = output_one
