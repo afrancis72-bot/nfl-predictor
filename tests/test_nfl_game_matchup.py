@@ -92,8 +92,8 @@ class OpponentGameEffectTests(unittest.TestCase):
                         expected_passing_tds=1.75,expected_rushing_tds=.85,
                         observed_games=6,source="nflverse pregame"),
             "BBB":dict(expected_plays=67.,expected_pass_attempts=34.,
-                        expected_offensive_tds=1.9,
-                        expected_passing_tds=1.2,expected_rushing_tds=.7,
+                        expected_offensive_tds=2.8,
+                        expected_passing_tds=1.85,expected_rushing_tds=.95,
                         observed_games=6,source="nflverse pregame"),
         }
         _,base,raw=simulate_stat_driven_dfs(
