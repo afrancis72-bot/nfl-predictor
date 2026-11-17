@@ -69,6 +69,11 @@ jobs:
             --url https://www.nfl.com/news/nfl-week-10-inactives-players-ruled-out-sunday-2026-season \
             --season 2026 --week 10 --game KC@ATL \
             --parser-smoke-only
+      - name: Research diagnostic for live official NFL inactive article HTML boundaries
+        continue-on-error: true
+        env:
+          PYTHONPATH: .
+        run: python -u scripts/debug_nfl_official_article_dom.py
       - name: Collect actual pregame official source — only for explicitly scheduled future kickoff
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'capture'
         env:
