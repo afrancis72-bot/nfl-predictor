@@ -82,7 +82,15 @@ def run(weekly,schedules,snaps,*,windows=WINDOWS,n_sims=220):
         # change total attempts, play volume, or induce targets from nowhere.
         if not np.allclose(t.model_pass_attempts_base,
                            t.model_pass_attempts_candidate,rtol=0,atol=1e-8):
-            raise ValueError("Full player-universe candidate changed team pass-attempt totals")
+            mismatch=t.loc[~np.isclose(t.model_pass_attempts_base,
+                t.model_pass_attempts_candidate,rtol=0,atol=1e-8)].copy()
+            mismatch["delta"]=mismatch.model_pass_attempts_candidate-mismatch.model_pass_attempts_base
+            cols=["season","week","game","team","passing_qb_base",
+                  "passing_qb_candidate","model_pass_attempts_base",
+                  "model_pass_attempts_candidate","delta"]
+            raise ValueError("Full player-universe candidate changed team pass-attempt totals: "+
+                             f"n={len(mismatch)} max_delta={float(mismatch.delta.abs().max()):.4f} "+
+                             f"examples={mismatch[cols].head(8).to_dict('records')}")
         ghosts=b["ghost"]
         if ghosts.empty or ghosts["eligible_in_original_DK_pool"].any():
             raise ValueError("Missing or DK-selectable internal historical teammates")
