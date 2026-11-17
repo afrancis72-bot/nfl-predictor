@@ -66,11 +66,11 @@ def allocate_role_target_share(target_rates,other_budget,skill,rates,*,team,
     if not isinstance(team_environment,dict):
         raise ValueError("Verified pregame team volume is required")
     env=team_environment
-    if not str(env.get("source","")).startswith("nflverse"):
-        raise ValueError("Role share candidate requires observed NFL team pass volume")
-    if int(env.get("observed_games",0))<3:
+    if not env or int(env.get("observed_games",0))<3:
         info["status"]="insufficient_team_games"
         return active,leftover,info
+    if not str(env.get("source","")).startswith("nflverse"):
+        raise ValueError("Role share candidate requires observed NFL team pass volume")
     env_last=(int(env.get("last_observed_season",0)),
               int(env.get("last_observed_week",0)))
     if env_last >= (season,week):
