@@ -118,6 +118,7 @@ def replay(weekly,schedules,snaps,*,windows=WINDOWS,n_sims=220):
         "independent_holdout":False,
         "candidate_chosen_after_2025_2026_outcomes_inspected":True,
         "simulations_per_game":n_sims,
+        "paired_common_team_rng":True,
         "windows":{},
         "limitations":[
             "2025 early, 2025 reference and 2026 retrospective already inspected: NOT blinded",
@@ -126,7 +127,8 @@ def replay(weekly,schedules,snaps,*,windows=WINDOWS,n_sims=220):
             "OTHER includes unmodeled receivers and throwaways; conservative floor is only a proxy",
             "The candidate only transfers targets when WR1/WR2 plus WR3 have prior eligible usage",
             "P90 coverage with 220 scenarios is descriptive, not production 10000 calibration",
-            "Random scenario paths may diverge after changed target multinomial draw",
+            "Baseline and candidate use same research-only per-team RNG seeds to keep team passing attempts fixed",
+            "This isolates role-allocation effects, but research-only RNG scheduling is different from production",
             "No projected return/fumble scoring in partial DK history",
         ]
     }
@@ -138,6 +140,7 @@ def replay(weekly,schedules,snaps,*,windows=WINDOWS,n_sims=220):
             score,issues=evaluate(weekly,schedules,snaps,season,weeks,
                 games_per_week=None,n_sims=n_sims,team_pass_env_weight=.5,
                 other_yard_strength=0.,wr_role_strength=strength,
+                wr_role_team_rng_isolated=True,
                 wr_role_rows=role,team_pass_rows=team,
                 role_allocation_rows=role_diag,stat_audit_rows=stat,
                 audit_model_name=model)
