@@ -1,0 +1,65 @@
+name: NFL pregame availability source gate research
+on:
+  push:
+    branches:
+      - research/nfl-pregame-availability-gate-20261117
+    paths:
+      - 'ai2_nfl_pregame_availability.py'
+      - 'ai2_nfl_full_player_universe.py'
+      - 'dfs_stats_engine.py'
+      - 'tests/test_nfl_pregame_availability.py'
+      - 'scripts/audit_nfl_pregame_availability.py'
+      - '.github/workflows/nfl-pregame-availability-gate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pregame-evidence-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install simulation test dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4 pyarrow fsspec
+      - name: Contract and pregame data provenance regression
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m py_compile ai2_nfl_pregame_availability.py ai2_nfl_full_player_universe.py dfs_stats_engine.py scripts/audit_nfl_pregame_availability.py
+          python -m unittest discover -s tests -p 'test_nfl_pregame_availability.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_full_player_universe.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_team_pass_prior_ab.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_drive_pass_accounting.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Ten thousand simulated scenarios with synthetic pregame source evidence only
+        env:
+          PYTHONPATH: .:tests
+        run: python -u scripts/audit_nfl_pregame_availability.py --sims 10000 --out nfl_pregame_availability_gate/validation.json
+      - name: Preserve synthetic gate audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-pregame-availability-gate-research
+          path: nfl_pregame_availability_gate/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Verify no unwarranted production approval or fake official availability assertion
+        run: |
+          python - <<'PY'
+          import json
+          r=json.load(open("nfl_pregame_availability_gate/validation.json"))
+          assert r["source_content_independently_checked"] is False
+          assert r["is_nfl_real_world_availability_data"] is False
+          assert r["status_model_release_approved"] is False
+          assert r["full_universe_live_enabled"] is False
+          assert r["independent_holdout"] is False
+          assert r["n_sims"]==10000
+          assert r["same_team_pass_attempts_and_conserved_player_targets"]
+          assert r["all_original_DK_players_untouched"]
+          assert r["original_salary_pool_scoring_bitwise_unchanged_with_no_verifiable_evidence"]
+          print("Safe evidence gate proven in synthetic 10k scenarios only")
+          PY
