@@ -21,6 +21,7 @@ import pandas as pd
 
 from ai2_nfl_auto_baselines import _norm_name
 from ai2_nfl_matchups import canonical_team
+from ai2_nfl_pbp_drives import engine_team
 
 
 def _finite(value):
@@ -121,7 +122,7 @@ def team_other_row(*, team, opponent,season,week,game,
     receiving targets; it additionally includes unattached attempts. Display
     both side by side as diagnostics, NEVER treat their difference as bias.
     """
-    label=str(team)
+    label=engine_team(team)  # The simulator uses WSH internally; schedules may say WAS.
     diag=stat_draws.get(f"__OPPORTUNITY__|{label}")
     other=stat_draws.get(f"__OTHER_RECEIVER__|{label}")
     if not isinstance(diag,dict) or not isinstance(other,dict):
