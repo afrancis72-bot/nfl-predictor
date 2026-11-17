@@ -1,0 +1,60 @@
+name: NFL opponent-conditioned team scoring/game-script research A-B
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'ai2_nfl_game_matchup.py'
+      - 'dfs_stats_engine.py'
+      - 'scripts/backtest_nfl_player_dk_means.py'
+      - 'scripts/backtest_nfl_game_matchup.py'
+      - 'tests/test_nfl_game_matchup.py'
+      - '.github/workflows/nfl-game-matchup-research.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  game-matchup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install historical-stat dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy beautifulsoup4
+      - name: Compile and run opponent historical-source and game-event consistency checks
+        run: |
+          python -m py_compile ai2_nfl_game_matchup.py dfs_stats_engine.py scripts/backtest_nfl_game_matchup.py
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_game_matchup.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_matchup_component_simulator.py' -v
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_matchup_simulator_backtest.py' -v
+      - name: Test complete Sundays with trained strength and independent paired simulation
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u scripts/backtest_nfl_game_matchup.py \
+            --n-sims 400 --out-dir nfl_game_matchup_audit
+      - name: Archive complete paired player forecasts and validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-team-scoring-game-script-research
+          path: nfl_game_matchup_audit/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Require model accuracy improvements and calibrated tails before considering activation
+        run: |
+          python - <<'PY'
+          import json,sys
+          j=json.load(open('nfl_game_matchup_audit/results.json'))
+          print('2025 selected strength:',j['2025_selected_strength'])
+          for name,ok in j['checks'].items():
+              print(('PASS ' if ok else 'FAIL ')+name)
+          print('Production approved:',j['production_approved'])
+          if not j['research_diagnostic_pass']:
+              print('Research gate rejected change; current production forecasts unchanged.')
+              sys.exit(1)
+          print('Research passed only: future frozen pregame test required.')
+          PY
