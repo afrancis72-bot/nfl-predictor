@@ -1,0 +1,67 @@
+name: NFL official pregame availability research monitor
+on:
+  schedule:
+    # Research capture only. NFL game windows in UTC, Sep-Jan.
+    # Off-minute scheduling reduces top-of-hour Github Actions delays.
+    - cron: '17,47 12-23 * 9-12 *'
+    - cron: '17,47 0-5 * 9-12 *'
+    - cron: '17,47 12-23 * 1 *'
+    - cron: '17,47 0-5 * 1 *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nfl-official-pregame-source-research-monitor
+  cancel-in-progress: false
+jobs:
+  research-source-capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Scheduled GitHub workflows run from the default branch only.
+      # Check out isolated research; never execute deployment or edit lineups.
+      - uses: actions/checkout@v4
+        with:
+          ref: research/nfl-official-source-capture-20261117
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install read-only official-source research libraries
+        run: python -m pip install --disable-pip-version-check numpy pandas requests beautifulsoup4 scipy pyarrow fsspec
+      - name: Discover imminent games and archive official claims before kickoff
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u scripts/auto_capture_nfl_status.py \
+            --out-base nfl_official_captures \
+            --report nfl_official_capture_run.json
+      - name: Determine whether any authentic source was captured
+        id: evidence
+        run: |
+          python - <<'PY'
+          import os, json
+          with open('nfl_official_capture_run.json') as f:
+              report=json.load(f)
+          if report.get('production_app_modified') is not False:
+              raise ValueError('Research monitor must NEVER modify the DFS optimizer')
+          count=len(report.get('source_archives',[]))
+          print("Captured source archives:",count,
+                "games due:",len(report.get('games_due',[])),
+                "candidate links:",len(report.get('candidate_articles',[])),
+                "source errors:",len(report.get('errors',[])))
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write(f"has_capture={'true' if count else 'false'}\n")
+          PY
+      - name: Preserve original official HTML and game-day status archive
+        if: steps.evidence.outputs.has_capture == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-research-pregame-sources-${{ github.run_id }}
+          path: |
+            nfl_official_captures/
+            nfl_official_capture_run.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Model release boundary
+        run: echo "RESEARCH ONLY — no projections, lineups, or production files modified"
