@@ -189,6 +189,24 @@ else:
                                    max_value=2147483647, value=42, step=1,
                                    key="nfl_one_seed")
         requested_count = st.selectbox("Number of lineups", [15, 20, 40, 50, 150], index=1, key="nfl_one_count")
+        nfl_engine_selection = st.radio(
+            "NFL simulation engine",
+            ["Existing game engine (default)",
+             "Availability-aware game engine (experimental)"],
+            index=0, horizontal=True, key="ai2_nfl_engine_choice")
+        nfl_engine_mode = (
+            "availability_aware" if nfl_engine_selection.startswith("Availability")
+            else "existing")
+        if nfl_engine_mode=="availability_aware":
+            st.caption(
+                "Opt-in: the same Classic lineup optimizer, with official NFL.com "
+                "pregame OUT/explicitly ACTIVE articles only when the original "
+                "source is retrieved and verified. Unlisted players remain UNKNOWN. "
+                "No article or source archive means no new player-universe intelligence. "
+                "Predictive improvement is not validated.")
+        else:
+            st.caption("Existing NFL engine. Experimental football-only teammates "
+                       "and game-day article collector are OFF for this build.")
         if requested_count == 40:
             st.caption("40-entry contest plan: four $3, sixteen $0.50, twenty $0.10. "
                        "Automatically simulates three different seeds and selects "
@@ -205,13 +223,23 @@ else:
                 if not salaries_one:
                     raise ValueError("Upload your DraftKings salary CSV first.")
                 with st.spinner(f"Checking NFL injuries and generating {requested_count} review-ready entries..."):
+                    new_source_context=None
+                    if nfl_engine_mode=="availability_aware":
+                        from ai2_nfl_oneclick import _slate_week
+                        from ai2_nfl_unified_availability import prepare_unified_nfl_availability
+                        year,slate_week=_slate_week(salaries_one)
+                        new_source_context=prepare_unified_nfl_availability(
+                            salaries_one,season=year,week=slate_week,
+                            data_dir=DATA_DIR)
                     if int(requested_count) == 40:
                         from ai2_nfl_core_diversifier import diversify_40_from_stat_simulation
                         source_seeds = list(dict.fromkeys((int(seed_one),47,89)))
                         while len(source_seeds)<3:
                             source_seeds.append((source_seeds[-1]+101)%2147483647)
                         sources=[build_oneclick_portfolio(
-                            salaries_one,seed=seed,count=50)
+                            salaries_one,seed=seed,count=50,
+                            simulation_mode=nfl_engine_mode,
+                            availability_context=new_source_context)
                             for seed in source_seeds]
                         roles={
                             str(row.get("Player",""))
@@ -249,11 +277,15 @@ else:
                         }
                     else:
                         output_one = build_oneclick_portfolio(
-                            salaries_one,seed=int(seed_one),count=int(requested_count))
+                            salaries_one,seed=int(seed_one),count=int(requested_count),
+                            simulation_mode=nfl_engine_mode,
+                            availability_context=new_source_context)
                 # Persist audit bytes independently of Streamlit's temporary
                 # browser download URL. SQLite history can restore the last
                 # generated audit if a UI session or download expires.
-                audit_name = f"team_ai2_nfl_simulation_audit_seed_{int(seed_one)}.csv"
+                audit_name = (
+                    f"team_ai2_nfl_simulation_audit_seed_{int(seed_one)}_"
+                    f"{nfl_engine_mode}.csv")
                 audit_bytes = portfolio_audit_csv(output_one["ranked"], seed=int(seed_one))
                 st.session_state["ai2_nfl_audit_filename"] = audit_name
                 st.session_state["ai2_nfl_audit_bytes"] = audit_bytes
@@ -263,9 +295,50 @@ else:
                     st.session_state.pop("ai2_nfl_audit_storage_warning", None)
                 except (OSError, sqlite3.Error) as audit_exc:
                     st.session_state["ai2_nfl_audit_storage_warning"] = str(audit_exc)
+                # Archive the EXACT intelligence and engine selection with
+                # these lineup results. A later injury refresh or model
+                # version cannot silently rewrite this build's history.
+                build_manifest={
+                    "generated_utc":datetime.now(timezone.utc).isoformat(),
+                    "app_build":{
+                        "branch":_LIVE_BUILD.get("branch"),
+                        "git_commit":_LIVE_BUILD.get("git_commit"),
+                        "entrypoint":_LIVE_BUILD.get("entrypoint"),
+                        "fingerprint":_LIVE_BUILD.get("fingerprint"),
+                    },
+                    "nfl_engine_mode":nfl_engine_mode,
+                    "statistical_engine_version":output_one.get(
+                        "statistical_engine_version","UNKNOWN"),
+                    "dk_slate_sha256":_ai2_sha256(salaries_one[1]).hexdigest(),
+                    "lineup_count":int(requested_count),
+                    "seeds":output_one.get("core_diversification_seeds",
+                                           [int(seed_one)]),
+                    "existing_official_injury_feed":output_one.get(
+                        "pregame_report",{}).get("official_injury_url"),
+                    "existing_injury_feed_checked_utc":output_one.get(
+                        "pregame_report",{}).get("checked_utc"),
+                    "experimental_status_intelligence":output_one.get(
+                        "availability_intelligence",{}),
+                    "player_universe_accuracy_independently_validated":False,
+                    "approved_lineups_untouched":True,
+                }
+                manifest_name=(f"team_ai2_nfl_build_manifest_seed_{int(seed_one)}_"
+                               f"{nfl_engine_mode}.json")
+                manifest_bytes=json.dumps(
+                    build_manifest,sort_keys=True,indent=2,
+                    default=str,allow_nan=False).encode("utf-8")
+                st.session_state["ai2_nfl_build_manifest_filename"]=manifest_name
+                st.session_state["ai2_nfl_build_manifest_bytes"]=manifest_bytes
+                try:
+                    _ai2_save_file(DATA_DIR, "NFL", "Build manifest",
+                                   manifest_name, manifest_bytes)
+                    st.session_state.pop("ai2_nfl_manifest_storage_warning",None)
+                except (OSError, sqlite3.Error) as exc:
+                    st.session_state["ai2_nfl_manifest_storage_warning"]=str(exc)
                 st.session_state["ai2_oneclick_result"] = output_one
                 st.session_state["ai2_oneclick_seed"] = int(seed_one)
                 st.session_state["ai2_oneclick_count"] = int(requested_count)
+                st.session_state["ai2_oneclick_engine_mode"] = nfl_engine_mode
                 st.session_state["ai2_oneclick_digest"] = _ai2_sha256(salaries_one[1]).hexdigest()
                 # A new build starts a new review, never overwrites approvals.
                 st.session_state["ai2_oneclick_review_ranked"] = output_one["ranked"]
@@ -283,10 +356,64 @@ else:
         if (not current_digest or
                 st.session_state.get("ai2_oneclick_seed") != int(seed_one) or
                 st.session_state.get("ai2_oneclick_count") != int(requested_count) or
+                st.session_state.get("ai2_oneclick_engine_mode") != nfl_engine_mode or
                 st.session_state.get("ai2_oneclick_digest") != current_digest):
             output_one = None
 
         if output_one:
+            manifest_bytes=st.session_state.get("ai2_nfl_build_manifest_bytes")
+            if manifest_bytes:
+                st.download_button(
+                    "Download exact NFL engine + intelligence manifest (JSON)",
+                    data=manifest_bytes,
+                    file_name=st.session_state.get(
+                        "ai2_nfl_build_manifest_filename","nfl_manifest.json"),
+                    mime="application/json", key="ai2_nfl_manifest_download",
+                    on_click="ignore")
+            if st.session_state.get("ai2_nfl_manifest_storage_warning"):
+                st.warning("The current manifest is downloadable, but permanent "
+                           "storage needs attention: "+
+                           st.session_state["ai2_nfl_manifest_storage_warning"])
+            st.subheader("NFL engine and intelligence used for THIS build")
+            status_report=output_one.get("availability_intelligence") or {}
+            st.write("**Engine:** "+
+                     ("Availability-aware (experimental)" if output_one.get(
+                         "simulation_mode")=="availability_aware"
+                      else "Existing NFL game engine"))
+            if output_one.get("simulation_mode")=="availability_aware":
+                st.write("**Verified official NFL.com active claims:** "+
+                         str(status_report.get("verified_active_players",0))+
+                         "  |  **Verified inactive claims:** "+
+                         str(status_report.get("verified_out_players",0))+
+                         "  |  **Extra football-only simulated teammates:** "+
+                         str(status_report.get("football_only_players_added",0)))
+                st.caption("Source checked as of: "+
+                           str(status_report.get("as_of_utc","unknown"))+
+                           "  |  Model status: EXPERIMENTAL, not independently "
+                           "validated for predictive improvement.")
+                if status_report.get("game_snapshot_count",0)==0:
+                    st.warning("No verified current-slate pregame article was available. "
+                               "No new official game-day statuses or additional teammates "
+                               "were applied. Existing historical injury intelligence "
+                               "remains in the build.")
+                if status_report.get("source_coverage"):
+                    with st.expander("Official evidence coverage by matchup"):
+                        st.dataframe(_ai2_pd.DataFrame(
+                            status_report["source_coverage"]),
+                            use_container_width=True,hide_index=True)
+                if status_report.get("source_urls"):
+                    with st.expander("Exact verified official NFL article URLs"):
+                        for link in status_report["source_urls"]:
+                            st.write(link)
+                if status_report.get("errors"):
+                    with st.expander("Unavailable sources and rejected evidence"):
+                        for issue in status_report["errors"][:20]:
+                            st.write(str(issue))
+            else:
+                st.caption("New official game-day article collector: OFF. "
+                           "Experimental expanded football player universe: OFF. "
+                           "Existing NFL official injury reports and prior-game "
+                           "opportunity intelligence remain in use.")
             ranked = st.session_state.get("ai2_oneclick_review_ranked") or output_one["ranked"]
             if len(ranked)==40:
                 cover=output_one.get("core_diversification_diagnostics") or {}

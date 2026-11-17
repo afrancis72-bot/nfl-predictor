@@ -7,6 +7,7 @@ This is intentionally a transparent game-level model, not a play-by-play engine.
 from __future__ import annotations
 import numpy as np
 import pandas as pd
+import hashlib
 from injury_opportunity import redistribute
 from ai2_nfl_game_market import market_tds_prior
 from ai2_nfl_receiving_tds import receiving_td_factors
@@ -16,6 +17,8 @@ from ai2_nfl_game_matchup import validated_game_profile_lookup, get_game_effect
 from ai2_nfl_possession_engine import simulate_possession_worlds
 from ai2_nfl_redzone_usage import validated_redzone_lookup, factor_for
 from ai2_nfl_other_yard_reconcile import reconcile_other_yards
+from ai2_nfl_role_target_share import allocate_role_target_share
+from ai2_nfl_full_player_universe import validate_football_only_players
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
 TEAM_ALIASES={"JAC":"JAX","WAS":"WSH","LA":"LAR"}
@@ -264,7 +267,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              possession_target_season=None,
                              possession_target_week=None,
                              redzone_profiles=None,redzone_strength=0.,
-                             redzone_target_season=None,redzone_target_week=None):
+                             redzone_target_season=None,redzone_target_week=None,
+                             team_pass_env_weight=.5,
+                             wr_role_strength=0.,wr_role_target_season=None,
+                             wr_role_target_week=None,
+                             wr_role_team_rng_isolated=False,
+                             football_only_players=None,
+                             football_universe_target_season=None,
+                             football_universe_target_week=None,
+                             football_availability_snapshot=None,
+                             football_availability_as_of_utc=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -273,8 +285,22 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     are also shared between offense and DST.
     """
     out_players=out_players or []
+    # Research knob: exactly .5 reproduces the existing released forecast.
+    # Alternate values are used only in explicitly isolated historical A/B.
+    if (isinstance(team_pass_env_weight,bool) or
+        not isinstance(team_pass_env_weight,(int,float,np.floating)) or
+        not np.isfinite(team_pass_env_weight) or
+        not 0 <= team_pass_env_weight <= 1):
+        raise ValueError("Team passing-volume evidence weight must be finite in [0,1]")
     team_environment=team_environment or {}
     snap_profiles=snap_profiles or {}
+    if not isinstance(wr_role_team_rng_isolated,bool):
+        raise ValueError("Research team RNG isolation flag must be boolean")
+    if (isinstance(wr_role_strength,bool) or
+        not isinstance(wr_role_strength,(int,float,np.floating)) or
+        not np.isfinite(wr_role_strength) or
+        not 0<=wr_role_strength<=1):
+        raise ValueError("WR role candidate strength must be finite in [0,1]")
     if (not np.isfinite(receiving_td_weight) or
             not 0. <= receiving_td_weight <= 1.):
         raise ValueError("Receiving TD propensity strength must be between 0 and 1")
@@ -314,10 +340,44 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         context = injury_presence.get((_clean_name(name), _team(team)))
         return float(context["share"]) if context is not None else 0.0
     out_keys={(_clean_name(item['player']),_team(item['team'])) for item in out_players}
+    # The actual DK pool stays separate from the full football simulation:
+    # pregame-only teammates are simulated internally but NEVER exported as
+    # optimizer-selectable players, regardless of their modeled fantasy score.
     x=pool[pool['optimizer_eligible']==True].copy().reset_index(drop=True)
+    original_dk_columns=list(x.columns)
     if out_keys:
         x=x[[(_clean_name(row['Name']),_team(row['TeamAbbrev'])) not in out_keys
              for _,row in x.iterrows()]].copy().reset_index(drop=True)
+    internal_count=0
+    if football_only_players is not None:
+        x['football_only']=False
+        extras=validate_football_only_players(
+            football_only_players,x,rates,
+            availability_snapshot=football_availability_snapshot,
+            season=football_universe_target_season,
+            week=football_universe_target_week,
+            as_of_utc=football_availability_as_of_utc)
+        if not extras.empty:
+            if football_universe_target_season is None or football_universe_target_week is None:
+                raise ValueError("Dated pregame target season and week required for full football universe")
+            season0=int(football_universe_target_season)
+            week0=int(football_universe_target_week)
+            for _,extra in extras.iterrows():
+                date=(int(extra["latest_observed_season"]),int(extra["latest_observed_week"]))
+                if date >= (season0,week0):
+                    raise ValueError("Target-week or future football-only player observation")
+            # Explicit known-OUT players cannot re-enter as historical teammates.
+            extras=extras[[
+                (_clean_name(row["Name"]),_team(row["TeamAbbrev"])) not in
+                {(name,team) for name,team in out_keys}
+                for _,row in extras.iterrows()
+            ]].copy()
+            if not extras.empty:
+                internal_count=len(extras)
+                # Internal eligibility only: final output is ALWAYS filtered to
+                # original salary-selected players.
+                extras['optimizer_eligible']=True
+                x=pd.concat([x,extras],ignore_index=True,sort=False)
     r, baseline_report = _resolve_baselines(x, rates)
     # Unified verified-data path fails closed; legacy callers retain their
     # existing fallback behavior until separately migrated and tested.
@@ -378,6 +438,19 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         'warning':'Not enabled in one-click NFL scoring without independent holdout validation'
     }
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
+    stat_draws['__FOOTBALL_PLAYER_UNIVERSE__']={
+        'mode':('RESEARCH_FULL_PREGAME_HISTORY' if football_only_players is not None
+                else 'ORIGINAL_DK_PLAYER_POOL'),
+        'historical_football_only_players':int(internal_count),
+        'football_only_players_exported_to_optimizer':0,
+        'verified_game_day_active':False,
+        'source_asserted_game_day_active':bool(football_availability_snapshot is not None),
+        'source_content_independently_fetched':False,
+        'status_warning':('Official source URL and published timestamp are claim fields, '
+                          'not independent verification of webpage contents. '
+                          'Unverified players remain in OTHER.'),
+        'source':'nflverse pregame weekly player roles, no confirmed active roster',
+    }
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
         'out_count':len(out_keys),
@@ -446,7 +519,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                            game_scoring_priors[gteams[0]])
                 script_center=float(np.clip(.40*margin_td,-.85,.85))
                 script=script+script_center
+        # Research-only common-random-numbers A/B: isolate team sampling so
+        # changed WR target draws cannot alter the opposing team's pass volume.
+        # Both baseline and candidate use this same schedule in the paired study.
+        # Default False retains the exact production RNG stream/order.
+        original_game_rng=rng
         for ti,team in enumerate(gteams):
+            if wr_role_team_rng_isolated:
+                stable=(f"{int(seed)}|{game}|{team}").encode("utf-8")
+                team_seed=int.from_bytes(hashlib.sha256(stable).digest()[:8],"little")
+                rng=np.random.default_rng(team_seed)
             opp=gteams[1-ti]; tx=gx[gx.TeamAbbrev==team]
             possession_world=(possession_worlds[team] if possession_worlds
                               is not None else None)
@@ -499,11 +581,12 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 team_pass_observed=float('nan'); sample_games=0.
                 team_pass_baseline=32.
             env=team_environment.get(team) or {}
-            # A real, prior-game team-specific pass volume forecast now matters
-            # to scoring.  Blend with the existing QB evidence rather than
-            # abruptly replacing the QB's on-field baseline.
+            # The default 50:50 baseline is retained byte-for-byte at .5.
+            # Research A/B may instead trust the strictly pregame team history
+            # more heavily; without that evidence, fall back to QB baseline.
             if env:
-                pass_pg=float(np.clip(.5*team_pass_baseline + .5*float(env['expected_pass_attempts']),18.,48.))
+                pass_pg=float(np.clip((1.-team_pass_env_weight)*team_pass_baseline
+                    +team_pass_env_weight*float(env['expected_pass_attempts']),18.,48.))
             else:
                 pass_pg=team_pass_baseline
             stat_draws[f'__TEAM_PASS_BASELINE__|{team}']={
@@ -514,6 +597,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'selected_qb_attempts_per_game':raw_pass_pg,
                 'team_pass_attempts_prior':32.,
                 'team_pass_attempts_baseline':team_pass_baseline,
+                'team_env_pass_attempts':float(env['expected_pass_attempts']) if env else None,
+                'team_env_weight_effective':float(team_pass_env_weight) if env else 0.,
+                'pregame_pass_attempt_forecast':pass_pg,
             }
             comp_pg=_safe(qr.get('completions_pg') if qr is not None else np.nan, pass_pg*.65)
             pass_yd_pg=_safe(qr.get('pass_yards_pg') if qr is not None else np.nan, 220.0)
@@ -709,6 +795,15 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'team_plays_guardrail_max':90,
                 'simulated_dropbacks':dropbacks,
                 'simulated_rushes':rushes,
+                # Research diagnostics only: these record already-computed
+                # pregame assumptions and simulated conservation. No new RNG
+                # draws, model adjustments, or optimizer changes.
+                'pregame_expected_dropbacks':expected_dropbacks,
+                'pregame_pass_fraction':float(pass_fraction),
+                'pregame_sack_rate':float(sack_rate),
+                'pregame_pass_attempts':float(pass_pg),
+                'simulated_pass_attempts':attempts,
+                'simulated_sacks':sacks,
             }
             if not np.array_equal(team_plays,dropbacks+rushes):
                 raise ValueError(f'V3.8 team-play conservation failed for {team}')
@@ -757,6 +852,18 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 or np.any(target_rates<0) or np.any(carry_rates<0)
                 or leftover<0 or carry_other<0):
                 raise ValueError(f"Opportunity conservation failed for {team}; refusing simulated lineup output")
+            if wr_role_strength:
+                target_rates,leftover,role_diag=allocate_role_target_share(
+                    target_rates,leftover,skill,r,
+                    team=team,team_environment=env,
+                    target_season=wr_role_target_season,
+                    target_week=wr_role_target_week,
+                    strength=wr_role_strength,
+                    unmodeled_teammate_targets=historical_other_targets)
+                stat_draws[f'__WR_ROLE_ALLOCATION__|{team}']=role_diag
+                if not np.isclose(target_rates.sum()+leftover,post_target_budget,
+                                  rtol=0.,atol=1e-7):
+                    raise ValueError("WR role candidate changed total receiving opportunity")
             stat_draws[f'__OPPORTUNITY__|{team}']={
                 'target_budget_before':pre_target_budget,
                 'target_budget_after':post_target_budget,
@@ -1170,6 +1277,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 out[:,didx]=dst_dk.astype(np.float32)
                 stat_draws[str(x.loc[didx,'Name'])]={'sacks':sacks,'interceptions':ints,'fumble_recoveries':fum,'defensive_tds':def_td,'safeties':saf,'points_allowed':pts_allowed}
             processed.add(team)
+        if wr_role_team_rng_isolated:
+            rng=original_game_rng
 
     # Verify that skill-player non-touchdown points were actually generated.
     # A previous broken deployment returned only 0/6/12 scores while passing
@@ -1193,7 +1302,12 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                            +3*(np.asarray(stats['receiving_yards'])>=100)
                            +3*(np.asarray(stats['rushing_yards'])>=100),atol=.0001):
             broken.append(f"{name}: DK scoring differs from simulated stats")
-        elif float(np.mean(non_td))<0.15 and float(np.mean(td))>0.02:
+        elif (not bool(row.get('football_only',False))
+              and float(np.mean(non_td))<0.15 and float(np.mean(td))>0.02):
+            # This guard blocks bogus TD-only fantasy punts in the SALARY
+            # selection pool. Football-only low-volume teammates are never
+            # exported to the optimizer; their TD counts are still checked
+            # against actual simulated catches/carries by team invariants.
             broken.append(f"{name}: TD-only output (non-TD mean={np.mean(non_td):.3f})")
     if broken:
         raise ValueError('V3.4 skill allocation validation failed: '
@@ -1209,4 +1323,21 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     x['simulation_engine']='Stat-driven football simulation'
     x['portfolio_relevant']=True
     x['sim_p99_sanity']=np.percentile(out,99,axis=0); x['sim_max_sanity']=out.max(axis=0)
+    if football_only_players is not None:
+        # Filter the modeled-but-not-salary-selectable players AFTER the entire
+        # shared football world (including QB and DST) has been simulated.
+        # The football-only box-score distributions remain in stat_draws for
+        # auditing, but are impossible to select in DraftKings lineup builds.
+        select=~x['football_only'].fillna(False).to_numpy(bool)
+        if not select.any():
+            raise ValueError("Full football universe removed all eligible DK players")
+        x=x.loc[select].copy().reset_index(drop=True)
+        out=out[:,select]
+        # pandas concat with internal teammates adds their provenance fields
+        # to EVERY row. Remove those research-only fields from the public
+        # eligible-DK result, preserving exactly the preexisting schema.
+        output_cols=list(dict.fromkeys(original_dk_columns+
+            ['_name','simulation_engine','portfolio_relevant',
+             'sim_p99_sanity','sim_max_sanity']))
+        x=x.loc[:,output_cols].copy()
     return x,out,stat_draws

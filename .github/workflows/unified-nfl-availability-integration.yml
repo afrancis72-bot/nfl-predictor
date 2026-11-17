@@ -1,0 +1,82 @@
+name: Unified NFL availability-aware Classic integration acceptance
+on:
+  push:
+    branches:
+      - feature/unified-nfl-availability-integration-20261117
+    paths:
+      - 'ai2_nfl_*.py'
+      - 'dfs_stats_engine.py'
+      - 'unified_app.py'
+      - 'scripts/auto_capture_nfl_status.py'
+      - 'tests/test_nfl_*.py'
+      - '.github/workflows/unified-nfl-availability-integration.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  nfl-availability-same-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install unified NFL minimal dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn streamlit openpyxl
+      - name: Compile current oneclick/Streamlit interface and official source bridge
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m py_compile \
+            ai2_nfl_unified_availability.py ai2_nfl_oneclick.py ai2_nfl_simulation_adapter.py \
+            ai2_nfl_full_player_universe.py dfs_stats_engine.py unified_app.py \
+            scripts/auto_capture_nfl_status.py ai2_nfl_verified_pregame_sources.py
+      - name: Validate new official source and status dataflow without live source fabrication
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_official_inactives_capture.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_schedule_capture_guard.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_official_article_discovery.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_official_named_active.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_auto_capture.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_verified_pregame_sources.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_pregame_availability.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_full_player_universe.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_unified_availability_integration.py' -v
+      - name: Protect existing unified one-click Classic lineage and scoring
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_oneclick.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_oneclick_smoke.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nfl_team_pace_scoring.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
+      - name: Guard all four sports in the same unified app
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_ai2_nascar_unified.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_pga_unified.py' -v
+      - name: Verify no separate app created or feature automatically enabled
+        run: |
+          python - <<'PY'
+          import ast
+          source=open("ai2_nfl_oneclick.py").read()
+          tree=ast.parse(source)
+          fn=next(x for x in tree.body if isinstance(x,ast.FunctionDef)
+                  and x.name=="build_oneclick_portfolio")
+          mode=fn.args.kw_defaults[-2]
+          assert isinstance(mode,ast.Constant) and mode.value=="existing"
+          app=open("unified_app.py").read()
+          assert 'Availability-aware game engine (experimental)' in app
+          assert 'ai2_oneclick_engine_mode' in app
+          assert 'if sport == "NFL":' in app
+          assert 'snapshot_approved' in app
+          assert 'Download exact NFL engine + intelligence manifest' in app
+          assert 'approved_lineups_untouched' in app
+          assert 'st.session_state["ai2_oneclick_engine_mode"]' in app
+          assert 'import streamlit' not in open("ai2_nfl_unified_availability.py").read()
+          print("Single unified NFL interface, opt-in mode and prior approvals preserved")
+          PY
