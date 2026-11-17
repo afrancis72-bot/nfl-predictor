@@ -1,0 +1,29 @@
+name: NFL role-specific defense opponent comparison and holdout
+on:
+  push:
+    branches:
+      - feature/unified-ai2-platform
+    paths:
+      - 'ai2_nfl_role_matchups.py'
+      - 'scripts/backtest_nfl_role_matchups.py'
+      - 'tests/test_nfl_role_matchups.py'
+      - '.github/workflows/nfl-role-matchups-holdout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  role-matchups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --disable-pip-version-check numpy pandas
+      - name: Compile and test matchup roles and no future-week leakage
+        run: |
+          python -m py_compile ai2_nfl_role_matchups.py scripts/backtest_nfl_role_matchups.py
+          PYTHONPATH=.:tests python -m unittest discover -s tests -p 'test_nfl_role_matchups.py' -v
+      - name: "Independent opponent role residual test: 2025 train, 2026 holdout"
+        run: PYTHONPATH=. python -u scripts/backtest_nfl_role_matchups.py
