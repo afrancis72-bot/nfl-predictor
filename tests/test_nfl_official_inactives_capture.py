@@ -12,7 +12,7 @@ import unittest
 
 from ai2_nfl_official_inactives_capture import (
     fetch_official_html,parse_official_inactive_article,make_pregame_snapshot,
-    verify_snapshot_against_raw_html,save_new_capture,
+    verify_snapshot_against_raw_html,save_new_capture,load_verified_capture,
 )
 
 URL="https://www.nfl.com/news/nfl-week-10-inactives-synthetic-test"
@@ -156,6 +156,41 @@ class OfficialSourceCaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"Synthetic HTML"):
                 save_new_capture(html(),d,snap,dest,real_network_fetch=False)
             self.assertFalse(dest.exists())
+
+    def test_archived_pregame_source_reparses_and_rejects_altered_or_future_data(self):
+        import hashlib
+        import tempfile
+        from pathlib import Path
+        source=html()
+        d=self.parse(data=source)
+        snap=make_pregame_snapshot(d,kickoff_utc=KICKOFF,captured_at_utc=CAPTURE)
+        manifest={
+            "archive_type":"NFL_OFFICIAL_INACTIVES_PREGAME_CAPTURE",
+            "http_capture_was_performed_by_this_program":True,
+            "source_reparsed_and_statuses_matched":True,
+            "source_html_sha256":hashlib.sha256(source).hexdigest(),
+            "source_url":URL,
+            "capture_utc":snap["captured_at_utc"],
+            "kickoff_utc":snap["kickoff_utc"],
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            (root/"official_source.html").write_bytes(source)
+            (root/"inactive_player_snapshot.json").write_text(json.dumps(snap))
+            (root/"verified_parser.json").write_text(json.dumps(d))
+            (root/"manifest.json").write_text(json.dumps(manifest))
+            restored,_=load_verified_capture(root,as_of_utc=CAPTURE)
+            self.assertEqual(restored,snap)
+            with self.assertRaisesRegex(ValueError,"later pregame capture"):
+                load_verified_capture(root,as_of_utc="2026-11-15T16:00:00Z")
+            corrupted=deepcopy(snap);corrupted["records"][0]["player"]="Injected Name"
+            (root/"inactive_player_snapshot.json").write_text(json.dumps(corrupted))
+            with self.assertRaisesRegex(ValueError,"statuses/timestamps altered"):
+                load_verified_capture(root,as_of_utc=CAPTURE)
+            (root/"inactive_player_snapshot.json").write_text(json.dumps(snap))
+            (root/"official_source.html").write_bytes(source.replace(b"Kenneth Example",b"Someone Else"))
+            with self.assertRaisesRegex(ValueError,"SHA-256 has changed"):
+                load_verified_capture(root,as_of_utc=CAPTURE)
 
     def test_publication_time_requires_machine_readable_utc(self):
         source=html().replace(
