@@ -342,6 +342,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     # pregame-only teammates are simulated internally but NEVER exported as
     # optimizer-selectable players, regardless of their modeled fantasy score.
     x=pool[pool['optimizer_eligible']==True].copy().reset_index(drop=True)
+    original_dk_columns=list(x.columns)
     if out_keys:
         x=x[[(_clean_name(row['Name']),_team(row['TeamAbbrev'])) not in out_keys
              for _,row in x.iterrows()]].copy().reset_index(drop=True)
@@ -1321,5 +1322,11 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             raise ValueError("Full football universe removed all eligible DK players")
         x=x.loc[select].copy().reset_index(drop=True)
         out=out[:,select]
-        x=x.drop(columns=['football_only'])
+        # pandas concat with internal teammates adds their provenance fields
+        # to EVERY row. Remove those research-only fields from the public
+        # eligible-DK result, preserving exactly the preexisting schema.
+        output_cols=list(dict.fromkeys(original_dk_columns+
+            ['_name','simulation_engine','portfolio_relevant',
+             'sim_p99_sanity','sim_max_sanity']))
+        x=x.loc[:,output_cols].copy()
     return x,out,stat_draws
