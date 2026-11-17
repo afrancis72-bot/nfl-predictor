@@ -10,6 +10,8 @@ on:
       - 'ai2_nfl_official_named_active.py'
       - 'scripts/auto_capture_nfl_status.py'
       - 'tests/test_nfl_auto_capture.py'
+      - 'ai2_nfl_verified_pregame_sources.py'
+      - 'tests/test_nfl_verified_pregame_sources.py'
       - 'tests/test_nfl_official_named_active.py'
       - 'scripts/probe_nfl_article_discovery.py'
       - 'tests/test_nfl_official_article_discovery.py'
@@ -68,6 +70,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_nfl_official_article_discovery.py' -v
           python -m unittest discover -s tests -p 'test_nfl_official_named_active.py' -v
           python -m unittest discover -s tests -p 'test_nfl_auto_capture.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_verified_pregame_sources.py' -v
           python -m unittest discover -s tests -p 'test_nfl_pregame_availability.py' -v
           python -m unittest discover -s tests -p 'test_nfl_full_player_universe.py' -v
           python -m unittest discover -s tests -p 'test_nfl_team_pass_prior_ab.py' -v
