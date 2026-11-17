@@ -109,6 +109,15 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
             if key not in present:
                 outs.append(item)
                 present.add(key)
+        # A matchup with no eligible simulated DK players is not part of the
+        # scoring run; do not smuggle its unrelated article status into the
+        # multi-game evidence validator.
+        live_games=set(pool.loc[
+            pool["optimizer_eligible"].eq(True),"game"].astype(str))
+        source_snapshots={
+            game:snap for game,snap in source_snapshots.items()
+            if game in live_games
+        }
     # Player eligibility is evaluated for the current slate. Past human vetoes
     # are audit feedback, not permanent or automatically carried-forward bans.
     # Explicit current-slate exclusions would need to be confirmed separately.
