@@ -1,0 +1,109 @@
+name: NFL official inactive article source capture research
+on:
+  push:
+    branches:
+      - research/nfl-official-source-capture-20261117
+    paths:
+      - 'ai2_nfl_official_inactives_capture.py'
+      - 'ai2_nfl_pregame_availability.py'
+      - 'scripts/capture_nfl_official_inactives.py'
+      - 'tests/test_nfl_official_inactives_capture.py'
+      - '.github/workflows/nfl-official-inactives-capture.yml'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "PARSER SMOKE for past article, CAPTURE only for future before kickoff"
+        required: true
+        type: choice
+        options: [probe, capture]
+      article_url:
+        description: "Verified exact NFL.com inactive article URL, not a summary or search page"
+        required: true
+        type: string
+      season:
+        description: "Scheduled NFL season"
+        required: true
+        type: string
+      week:
+        description: "Scheduled NFL week"
+        required: true
+        type: string
+      game:
+        description: "AWAY@HOME franchise abbreviations (e.g. KC@ATL)"
+        required: true
+        type: string
+      kickoff_utc:
+        description: "Official kickoff in ISO UTC, mandatory for capture; blank only for parser probe"
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  collector-tests-and-optional-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install read-only HTML capture and simulation dependencies
+        run: python -m pip install --disable-pip-version-check requests beautifulsoup4 numpy pandas scipy pyarrow fsspec
+      - name: Source parser, timing, fraud and previous simulator regression suites
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m py_compile ai2_nfl_official_inactives_capture.py scripts/capture_nfl_official_inactives.py ai2_nfl_pregame_availability.py
+          python -m unittest discover -s tests -p 'test_nfl_official_inactives_capture.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_pregame_availability.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_full_player_universe.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_team_pass_prior_ab.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_player_dk_means_holdout.py' -v
+      - name: Nonpregame 2026 Week 10 official article FETCH/PARSER smoke
+        continue-on-error: true
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u scripts/capture_nfl_official_inactives.py \
+            --url https://www.nfl.com/news/nfl-week-10-inactives-players-ruled-out-sunday-2026-season \
+            --season 2026 --week 10 --game KC@ATL \
+            --parser-smoke-only
+      - name: Collect actual pregame official source — only for explicitly scheduled future kickoff
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'capture'
+        env:
+          PYTHONPATH: .
+          ARTICLE_URL: ${{ inputs.article_url }}
+          SEASON: ${{ inputs.season }}
+          WEEK: ${{ inputs.week }}
+          GAME: ${{ inputs.game }}
+          KICKOFF_UTC: ${{ inputs.kickoff_utc }}
+        run: |
+          test -n "$KICKOFF_UTC" || { echo "No verified kickoff provided; refusing capture"; exit 1; }
+          python -u scripts/capture_nfl_official_inactives.py \
+            --url "$ARTICLE_URL" --season "$SEASON" \
+            --week "$WEEK" --game "$GAME" --kickoff-utc "$KICKOFF_UTC" \
+            --out-base nfl_official_captures
+      - name: Probe an official source without creating a pregame status snapshot
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'probe'
+        env:
+          PYTHONPATH: .
+          ARTICLE_URL: ${{ inputs.article_url }}
+          SEASON: ${{ inputs.season }}
+          WEEK: ${{ inputs.week }}
+          GAME: ${{ inputs.game }}
+        run: |
+          python -u scripts/capture_nfl_official_inactives.py \
+            --url "$ARTICLE_URL" --season "$SEASON" \
+            --week "$WEEK" --game "$GAME" --parser-smoke-only
+      - name: Preserve only authentic content and manifest if pregame capture succeeded
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'capture' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-official-pregame-source-evidence
+          path: nfl_official_captures/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Explicit research release prohibition
+        run: |
+          echo "No production or scheduled app installation; no positive ACTIVE verification from inactives"
