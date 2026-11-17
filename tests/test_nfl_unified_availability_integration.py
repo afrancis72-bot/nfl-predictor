@@ -148,6 +148,49 @@ class UnifiedNFLAvailabilityIntegrationTests(unittest.TestCase):
             self.assertEqual(ctx["report"]["game_snapshot_count"],0)
             self.assertEqual(ctx["report"]["verified_out_players"],0)
 
+    def test_multiple_classic_games_validate_independent_status_snapshots(self):
+        # Exact same multi-game interface the unified Classic optimizer uses,
+        # not two unrelated research single-game apps.
+        from ai2_nfl_full_player_universe import (
+            build_football_only_players,validate_football_only_players)
+        from test_nfl_full_player_universe import fixture
+        from test_nfl_pregame_availability import snapshot,evidence,ACTIVE
+        p1,r1=fixture()
+        p2=p1.copy()
+        r2=r1.copy()
+        p2["TeamAbbrev"]=p2["TeamAbbrev"].replace({"AAA":"CCC","BBB":"DDD"})
+        p2["game"]="CCC@DDD"
+        p2["ID"]="B_"+p2["ID"].astype(str)
+        p2["Name"]="Second "+p2["Name"].astype(str)
+        r2["team"]=r2["team"].replace({"AAA":"CCC","BBB":"DDD"})
+        r2["player"]="Second "+r2["player"].astype(str)
+        p=pd.concat([p1,p2],ignore_index=True)
+        rates=pd.concat([r1,r2],ignore_index=True)
+        status1=snapshot(evidence("Missing Salary WR",ACTIVE,"NFL_GAME_DAY_ACTIVE_ROSTER"))
+        status2=snapshot(evidence("Second Missing Salary WR",ACTIVE,
+                                  "NFL_GAME_DAY_ACTIVE_ROSTER",team="CCC"))
+        status2["game"]="CCC@DDD"
+        sources={"AAA@BBB":status1,"CCC@DDD":status2}
+        extras=pd.concat([
+            build_football_only_players(
+                p1,rates,season=2026,week=7,
+                require_verified_active=True,availability_snapshot=status1),
+            build_football_only_players(
+                p2,rates,season=2026,week=7,
+                require_verified_active=True,availability_snapshot=status2),
+        ],ignore_index=True)
+        self.assertEqual(len(extras),2)
+        passed=validate_football_only_players(
+            extras,p,rates,availability_snapshot=sources,
+            season=2026,week=7)
+        self.assertEqual(len(passed),2)
+        self.assertFalse(passed.optimizer_eligible.any())
+        with self.assertRaisesRegex(ValueError,"game not on the DK slate"):
+            validate_football_only_players(
+                extras,p,rates,availability_snapshot={
+                    **sources,"OTHER@EAA":status1},
+                season=2026,week=7)
+
     def test_mode_signature_stays_same_oneclick_builder(self):
         from inspect import signature
         from ai2_nfl_oneclick import build_oneclick_portfolio
