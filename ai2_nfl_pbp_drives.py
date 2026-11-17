@@ -155,6 +155,7 @@ def pbp_to_drives(pbp):
             "season":int(g.iloc[0]["season"]),
             "week":int(g.iloc[0]["week"]),
             "game_id":str(game_id),"drive":str(drive),
+            "first_play_id":float(g["play_id"].min()),
             "offense":str(offenses[0]),"defense":str(defenses[0]),
             "start_yardline_100":start,
             "plays":play_count,"duration_seconds":duration,
@@ -164,7 +165,7 @@ def pbp_to_drives(pbp):
     out = pd.DataFrame(rows)
     if out.empty:
         raise ValueError("No unambiguous offensive drives in supplied PBP")
-    return out.sort_values(["season","week","game_id","drive"]).reset_index(drop=True)
+    return out.sort_values(["season","week","game_id","first_play_id"]).reset_index(drop=True)
 
 
 def _smoothed_prob(frame, base, strength=42.):
@@ -244,6 +245,31 @@ def pregame_possession_profiles(drives, season, week, *,
             "plays":sample["plays"].astype(int).to_list(),
             "seconds":sample["duration_seconds"].astype(int).to_list(),
         }
+    # A game's next offensive drive has an actual start field position.
+    # Learn the transition from the PREVIOUS drive's terminal outcome, rather
+    # than inventing a 12-33-yard turnover field-position swing. Both drives
+    # are from already completed historical games before the target week.
+    historical_order=historic.sort_values(
+        ["season","week","game_id","first_play_id"],kind="stable").copy()
+    games=historical_order.groupby(["season","game_id"],sort=False)
+    historical_order["next_start"]=games["start_yardline_100"].shift(-1)
+    historical_order["next_offense"]=games["offense"].shift(-1)
+    transitions=historical_order[
+        historical_order["next_start"].notna() &
+        historical_order["next_offense"].ne(historical_order["offense"])
+    ].copy()
+    next_start_by_outcome={}
+    for outcome in OUTCOMES:
+        values=np.clip(transitions.loc[
+            transitions["outcome"].eq(outcome),"next_start"
+        ].to_numpy(float),1,99).astype(int)
+        if len(values)<25:
+            raise ValueError("Too few actual next-drive fields for "+outcome)
+        next_start_by_outcome[outcome]=values.tolist()
+    first_drives=(historical_order.groupby(["season","game_id"],sort=False)
+                  .head(1))
+    kickoff_starts=np.clip(first_drives["start_yardline_100"].to_numpy(float),
+                           1,99).astype(int)
     starts=np.clip(
         historic["start_yardline_100"].to_numpy(float),1,99).astype(int)
     buckets=[(1,25),(26,50),(51,75),(76,99)]
@@ -272,6 +298,10 @@ def pregame_possession_profiles(drives, season, week, *,
         "teams":by_team,
         "outcomes":outcomes,
         "starting_field_positions":starts.tolist(),
+        "opening_drive_fields":kickoff_starts.tolist(),
+        "next_start_by_outcome":next_start_by_outcome,
+        "transition_samples":{key:len(value)
+                              for key,value in next_start_by_outcome.items()},
         "field_bins":buckets,
         "field_scoring_multiplier":field_multiplier,
         "overall_mean_drives_per_team":float(
