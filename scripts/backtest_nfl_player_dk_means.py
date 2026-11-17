@@ -99,7 +99,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              team_target_rows=None,wr_min_targets_pg=3.5,
              team_pass_rows=None,team_component_rows=None,
              actual_pbp_by_team=None,team_component_engine=None,
-             team_pass_env_weight=.5):
+             team_pass_env_weight=.5,wr_role_strength=0.,
+             role_allocation_rows=None):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -150,6 +151,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                     pool,rates,n_sims=n_sims,seed=season*100+week,
                     allow_role_proxies=False,team_environment=environment,
                     team_pass_env_weight=team_pass_env_weight,
+                    wr_role_strength=wr_role_strength,
+                    wr_role_target_season=season,wr_role_target_week=week,
                     snap_profiles=snap,injury_presence={},
                     role_share_concentration=role_share_concentration,
                     market_game_totals=market_totals,market_weight=market_weight,
@@ -183,6 +186,24 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                 k=(_norm_name(a["player_name"]),canonical_team(a["recent_team"]),
                    str(a["position"]).upper())
                 lookup.setdefault(k,[]).append(a)
+            if role_allocation_rows is not None and wr_role_strength:
+                from ai2_nfl_pbp_drives import engine_team
+                for team in (away,home):
+                    k=f"__WR_ROLE_ALLOCATION__|{engine_team(team)}"
+                    diag=stat_draws.get(k)
+                    if not isinstance(diag,dict):
+                        raise ValueError("Missing WR role target-share research diagnostics")
+                    role_allocation_rows.append({
+                        "season":int(season),"week":int(week),
+                        "game":f"{away}@{home}","team":team,
+                        "status":diag["status"],
+                        "actual_transferred_targets_pg":diag["actual_transferred_targets_pg"],
+                        "top3_covered":diag["top3_covered"],
+                        "other_budget_before":diag["other_budget_before"],
+                        "other_budget_after":diag["other_budget_after"],
+                        "other_protected_minimum":diag["other_protected_minimum"],
+                        "role_proposals":diag["role_proposals"],
+                    })
             if team_target_rows is not None:
                 for team in (away,home):
                     team_target_rows.append(team_other_row(
