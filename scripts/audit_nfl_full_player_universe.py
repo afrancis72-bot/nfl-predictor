@@ -32,6 +32,7 @@ def run(weekly,schedules,snaps,*,windows=WINDOWS,n_sims=220):
         "other_yard_strength":0.0,
         "wr_role_strength":0.0,
         "common_team_random_streams_in_both_modes":True,
+        "corrected_identical_WAS_WSH_pregame_environment_alias_in_both_modes":True,
         "production_approved":False,
         "one_click_modified":False,
         "independent_holdout":False,
@@ -45,6 +46,7 @@ def run(weekly,schedules,snaps,*,windows=WINDOWS,n_sims=220):
             "Historical DK sample generated from past roles, not actual dated salary files",
             "Only RB/WR/TE extra teammate roles are modeled this phase",
             "Research-only common per-team RNG schedule differs from production",
+            "Both control and candidate normalize historical WAS team environment to internal WSH; historical control differs from uncorrected production for WAS games",
             "Partial DK score excludes fumbles/returns and lacks historical injury availability",
             "220 per-game scenarios; full 10k-sim and future validation required",
         ]
@@ -62,6 +64,7 @@ def run(weekly,schedules,snaps,*,windows=WINDOWS,n_sims=220):
                 wr_role_strength=0.,
                 other_yard_strength=0.,
                 wr_role_team_rng_isolated=True,
+                full_universe_fix_team_aliases=True,
                 wr_role_rows=wr,team_pass_rows=team)
             if failures or scored.empty:
                 raise ValueError(f"{label}/{key} failed {failures[:6]}")
