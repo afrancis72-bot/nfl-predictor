@@ -98,7 +98,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              audit_model_name="neutral",wr_role_rows=None,
              team_target_rows=None,wr_min_targets_pg=3.5,
              team_pass_rows=None,team_component_rows=None,
-             actual_pbp_by_team=None,team_component_engine=None):
+             actual_pbp_by_team=None,team_component_engine=None,
+             team_pass_env_weight=.5):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -148,6 +149,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                 players,draws,stat_draws=simulate_stat_driven_dfs(
                     pool,rates,n_sims=n_sims,seed=season*100+week,
                     allow_role_proxies=False,team_environment=environment,
+                    team_pass_env_weight=team_pass_env_weight,
                     snap_profiles=snap,injury_presence={},
                     role_share_concentration=role_share_concentration,
                     market_game_totals=market_totals,market_weight=market_weight,
