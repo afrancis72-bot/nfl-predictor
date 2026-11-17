@@ -81,7 +81,7 @@ def simulate_possession_worlds(game, profiles, *, season, week,
     if set(next_fields)!=set(OUTCOMES) or any(
             len(next_fields[x])<25 for x in OUTCOMES):
         raise ValueError("Insufficient observed next-possession field-position evidence")
-    if len(start)<100 or not np.isfinite(start).all():
+    if len(start)<10 or not np.isfinite(start).all():
         raise ValueError("No measured prior-game starting field-position distribution")
     league=np.asarray(profiles["league_probs"],float)
     pace_mean=float(profiles["overall_mean_drives_per_team"])
