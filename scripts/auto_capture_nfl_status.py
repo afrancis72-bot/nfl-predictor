@@ -148,6 +148,16 @@ def collect_due_games(*,schedule,now_utc,out_dir,
                     saved=save_named_active_capture(raw,parsed,snap,root/label)
                 else:
                     raise ValueError("Unexpected discovery URL category")
+                # Archive the schedule cross-check alongside the raw source
+                # so future model audits can verify the actual game/kickoff.
+                (Path(saved)/"schedule_crosscheck.json").write_text(json.dumps({
+                    "source":GAMES_SOURCE,
+                    "season":game["season"],"week":game["week"],
+                    "game":game["game"],
+                    "independently_verified_kickoff_utc":game["kickoff_utc"],
+                    "captured_at_utc":now.isoformat(),
+                    "claimed_future_kickoff_override_used":False,
+                },indent=2,sort_keys=True))
                 report["source_archives"].append({
                     "game":game["game"],"season":game["season"],
                     "week":game["week"],"kind":kind,
