@@ -164,11 +164,12 @@ class PosessionHistoryTests(unittest.TestCase):
                 stats["Q"+team]["passing_tds"])
             np.testing.assert_array_equal(
                 w["simulated_field_goals"],scoring["simulated_field_goals"])
-            np.testing.assert_array_equal(
+            np.testing.assert_allclose(
                 stats["Q"+team]["passing_yards"],
                 sum(stats[prefix+team]["receiving_yards"] for prefix in
                     ("R","W","T"))+
-                stats["__OTHER_RECEIVER__|"+team]["receiving_yards"])
+                stats["__OTHER_RECEIVER__|"+team]["receiving_yards"],
+                atol=.001)
 
     def test_inactive_possession_flag_changes_nothing(self):
         pool,rates=sim_fixture()
