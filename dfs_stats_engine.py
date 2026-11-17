@@ -18,6 +18,7 @@ from ai2_nfl_possession_engine import simulate_possession_worlds
 from ai2_nfl_redzone_usage import validated_redzone_lookup, factor_for
 from ai2_nfl_other_yard_reconcile import reconcile_other_yards
 from ai2_nfl_role_target_share import allocate_role_target_share
+from ai2_nfl_full_player_universe import validate_football_only_players
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
 TEAM_ALIASES={"JAC":"JAX","WAS":"WSH","LA":"LAR"}
@@ -270,7 +271,10 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              team_pass_env_weight=.5,
                              wr_role_strength=0.,wr_role_target_season=None,
                              wr_role_target_week=None,
-                             wr_role_team_rng_isolated=False):
+                             wr_role_team_rng_isolated=False,
+                             football_only_players=None,
+                             football_universe_target_season=None,
+                             football_universe_target_week=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -334,10 +338,39 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         context = injury_presence.get((_clean_name(name), _team(team)))
         return float(context["share"]) if context is not None else 0.0
     out_keys={(_clean_name(item['player']),_team(item['team'])) for item in out_players}
+    # The actual DK pool stays separate from the full football simulation:
+    # pregame-only teammates are simulated internally but NEVER exported as
+    # optimizer-selectable players, regardless of their modeled fantasy score.
     x=pool[pool['optimizer_eligible']==True].copy().reset_index(drop=True)
+    original_dk_names=set(zip(x["Name"].map(_clean_name),x["TeamAbbrev"].map(_team)))
     if out_keys:
         x=x[[(_clean_name(row['Name']),_team(row['TeamAbbrev'])) not in out_keys
              for _,row in x.iterrows()]].copy().reset_index(drop=True)
+    x['football_only']=False
+    internal_count=0
+    if football_only_players is not None:
+        extras=validate_football_only_players(football_only_players,x,rates)
+        if not extras.empty:
+            if football_universe_target_season is None or football_universe_target_week is None:
+                raise ValueError("Dated pregame target season and week required for full football universe")
+            season0=int(football_universe_target_season)
+            week0=int(football_universe_target_week)
+            for _,extra in extras.iterrows():
+                date=(int(extra["latest_observed_season"]),int(extra["latest_observed_week"]))
+                if date >= (season0,week0):
+                    raise ValueError("Target-week or future football-only player observation")
+            # Explicit known-OUT players cannot re-enter as historical teammates.
+            extras=extras[[
+                (_clean_name(row["Name"]),_team(row["TeamAbbrev"])) not in
+                {(name,team) for name,team in out_keys}
+                for _,row in extras.iterrows()
+            ]].copy()
+            if not extras.empty:
+                internal_count=len(extras)
+                # Internal eligibility only: final output is ALWAYS filtered to
+                # original salary-selected players.
+                extras['optimizer_eligible']=True
+                x=pd.concat([x,extras],ignore_index=True,sort=False)
     r, baseline_report = _resolve_baselines(x, rates)
     # Unified verified-data path fails closed; legacy callers retain their
     # existing fallback behavior until separately migrated and tested.
@@ -398,6 +431,15 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         'warning':'Not enabled in one-click NFL scoring without independent holdout validation'
     }
     stat_draws['__BASELINE_RESOLUTION__']=baseline_report
+    stat_draws['__FOOTBALL_PLAYER_UNIVERSE__']={
+        'mode':('RESEARCH_FULL_PREGAME_HISTORY' if football_only_players is not None
+                else 'ORIGINAL_DK_PLAYER_POOL'),
+        'historical_football_only_players':int(internal_count),
+        'football_only_players_exported_to_optimizer':0,
+        'verified_game_day_active':False,
+        'status_warning':'Historical player opportunity does not verify game-day active status',
+        'source':'nflverse pregame weekly player roles, no confirmed active roster',
+    }
     stat_draws['__INJURY_META__']={
         'out_players':sorted([f"{t}|{n}" for n,t in out_keys]),
         'out_count':len(out_keys),
@@ -1265,4 +1307,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     x['simulation_engine']='Stat-driven football simulation'
     x['portfolio_relevant']=True
     x['sim_p99_sanity']=np.percentile(out,99,axis=0); x['sim_max_sanity']=out.max(axis=0)
+    if football_only_players is not None:
+        # Filter the modeled-but-not-salary-selectable players AFTER the entire
+        # shared football world (including QB and DST) has been simulated.
+        # The football-only box-score distributions remain in stat_draws for
+        # auditing, but are impossible to select in DraftKings lineup builds.
+        select=~x['football_only'].fillna(False).to_numpy(bool)
+        if not select.any():
+            raise ValueError("Full football universe removed all eligible DK players")
+        stat_draws['__FOOTBALL_PLAYER_UNIVERSE__']['football_only_players_exported_to_optimizer']=int((~select & False).sum())
+        x=x.loc[select].copy().reset_index(drop=True)
+        out=out[:,select]
+        x=x.drop(columns=['football_only'])
     return x,out,stat_draws
