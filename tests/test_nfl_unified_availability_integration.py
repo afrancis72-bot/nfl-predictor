@@ -142,7 +142,7 @@ class UnifiedNFLAvailabilityIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ctx=prepare_unified_nfl_availability(
                 SALARIES,season=2026,week=10,data_dir=tmp,
-                now_utc="2026-11-15T16:00:00Z",
+                now_utc="2026-11-15T12:00:00Z",
                 schedule=schedule(),
                 collector=fake_collector_with(["OFFICIAL_INACTIVES"]))
             self.assertEqual(ctx["report"]["game_snapshot_count"],0)
