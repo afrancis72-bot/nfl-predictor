@@ -23,6 +23,9 @@ from ai2_nfl_official_inactives_capture import (
     fetch_official_html,parse_official_inactive_article,
     make_pregame_snapshot,save_new_capture,verify_snapshot_against_raw_html,
 )
+from ai2_nfl_schedule_capture_guard import (
+    fetch_and_verify_kickoff,GAMES_SOURCE,
+)
 
 
 def main(argv=None):
@@ -59,12 +62,27 @@ def main(argv=None):
         return
     if not args.kickoff_utc:
         p.error("--kickoff-utc is required for pregame capture")
+    verified_kickoff=fetch_and_verify_kickoff(
+        season=args.season,week=args.week,game=args.game,
+        kickoff_utc=args.kickoff_utc)
     snap=make_pregame_snapshot(
-        parsed,kickoff_utc=args.kickoff_utc,captured_at_utc=captured)
+        parsed,kickoff_utc=verified_kickoff,captured_at_utc=captured)
     verify_snapshot_against_raw_html(raw,parsed,snap)
     label=f"{args.season}_wk{args.week}_{args.game.replace('@','_')}_{digest[:12]}_{captured[:19].replace(':','')}"
     dest=Path(args.out_base)/label
     path=save_new_capture(raw,parsed,snap,dest)
+    # This small separate schedule evidence file documents the independent
+    # validation decision. It is not a replacement for the source's full
+    # append-only GitHub Actions artifact.
+    schedule_evidence={
+        "source":GAMES_SOURCE,"verified_kickoff_utc":verified_kickoff,
+        "source_discovery_method":"nflverse published Eastern-time games.csv",
+        "matchup":args.game,"season":args.season,"week":args.week,
+        "manual_kickoff_overriding_schedule":False,
+        "production_approved":False,
+    }
+    (Path(path)/"schedule_crosscheck.json").write_text(
+        json.dumps(schedule_evidence,indent=2,sort_keys=True))
     print(json.dumps({
         "mode":"PREGAME_OUT_ONLY_OFFICIAL_SOURCE_CAPTURE",
         "archive_dir":path,
@@ -72,6 +90,7 @@ def main(argv=None):
         "captured_at_utc":captured,
         "n_explicit_out":len(snap["records"]),
         "n_positive_active":0,
+        "schedule_kickoff_independently_crosschecked":True,
         "source_html_sha256":digest,
         "eligible_to_autopromote_predictive_model":False,
     },indent=2,sort_keys=True))
