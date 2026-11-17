@@ -6,6 +6,9 @@ on:
     paths:
       - 'ai2_nfl_official_inactives_capture.py'
       - 'ai2_nfl_schedule_capture_guard.py'
+      - 'ai2_nfl_official_article_discovery.py'
+      - 'scripts/probe_nfl_article_discovery.py'
+      - 'tests/test_nfl_official_article_discovery.py'
       - 'tests/test_nfl_schedule_capture_guard.py'
       - 'ai2_nfl_pregame_availability.py'
       - 'scripts/capture_nfl_official_inactives.py'
@@ -58,6 +61,7 @@ jobs:
           python -m py_compile ai2_nfl_official_inactives_capture.py scripts/capture_nfl_official_inactives.py ai2_nfl_pregame_availability.py ai2_nfl_schedule_capture_guard.py
           python -m unittest discover -s tests -p 'test_nfl_official_inactives_capture.py' -v
           python -m unittest discover -s tests -p 'test_nfl_schedule_capture_guard.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_official_article_discovery.py' -v
           python -m unittest discover -s tests -p 'test_nfl_pregame_availability.py' -v
           python -m unittest discover -s tests -p 'test_nfl_full_player_universe.py' -v
           python -m unittest discover -s tests -p 'test_nfl_team_pass_prior_ab.py' -v
@@ -75,6 +79,10 @@ jobs:
           print("Real published KC@ATL 2026 W10 kickoff:",kickoff,
                 "(parser smoke only; not pregame evidence)")
           PY
+      - name: Discover currently linked official NFL week 11 articles (no status inference)
+        env:
+          PYTHONPATH: .
+        run: python -u scripts/probe_nfl_article_discovery.py --week 11
       - name: Nonpregame 2026 Week 10 official article FETCH/PARSER smoke
         continue-on-error: true
         env:
