@@ -15,14 +15,33 @@ from collections import OrderedDict
 import re
 from urllib.parse import urljoin,urlparse
 
+import requests
 from bs4 import BeautifulSoup
 
-from ai2_nfl_official_inactives_capture import fetch_official_html, _allowed_url
+from ai2_nfl_official_inactives_capture import _allowed_url, MAX_BYTES
+
+def fetch_official_hub_html(url,*,client=None):
+    parsed=urlparse(url)
+    if (parsed.scheme!="https" or parsed.hostname not in ("www.nfl.com","nfl.com")
+        or parsed.path not in ("/news","/news/","/inactives/","/news/latest")
+        or parsed.query or parsed.fragment or parsed.username or parsed.password):
+        raise ValueError("Only supported official NFL publisher discovery hubs allowed")
+    response=(client or requests).get(url,timeout=15,allow_redirects=False,
+         headers={"User-Agent":"TeamAI2OfficialNewsDiscoveryResearch/1.0",
+                  "Accept":"text/html,application/xhtml+xml"})
+    if response.status_code!=200 or response.url!=url:
+        raise ValueError(f"Official discovery hub unreachable: HTTP {response.status_code}")
+    if not response.headers.get("Content-Type","").lower().startswith("text/html"):
+        raise ValueError("Official discovery hub was not HTML")
+    raw=response.content
+    if not isinstance(raw,bytes) or not (200<len(raw)<=MAX_BYTES):
+        raise ValueError("Missing or excessive NFL discovery HTML")
+    return raw
 
 OFFICIAL_DISCOVERY_HUBS=(
     "https://www.nfl.com/news",
     "https://www.nfl.com/inactives/",
-    "https://www.nfl.com/news/",
+    "https://www.nfl.com/news/latest",
 )
 MAX_LINKS_PER_PAGE=6000
 _SLUG=re.compile(r"^/news/([a-z0-9-]+)$")
@@ -75,7 +94,7 @@ def extract_candidate_links(raw,hub_url,*,week):
 
 
 def discover_official_links(*,week,hubs=OFFICIAL_DISCOVERY_HUBS,
-                            fetcher=fetch_official_html):
+                            fetcher=fetch_official_hub_html):
     """Search official hub links with bounded scope. Empty is meaningful.
 
     Failed source hubs are reported, not silently replaced by search results.
