@@ -16,6 +16,7 @@ from ai2_nfl_game_matchup import validated_game_profile_lookup, get_game_effect
 from ai2_nfl_possession_engine import simulate_possession_worlds
 from ai2_nfl_redzone_usage import validated_redzone_lookup, factor_for
 from ai2_nfl_other_yard_reconcile import reconcile_other_yards
+from ai2_nfl_role_target_share import allocate_role_target_share
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
 
 TEAM_ALIASES={"JAC":"JAX","WAS":"WSH","LA":"LAR"}
@@ -265,7 +266,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              possession_target_week=None,
                              redzone_profiles=None,redzone_strength=0.,
                              redzone_target_season=None,redzone_target_week=None,
-                             team_pass_env_weight=.5):
+                             team_pass_env_weight=.5,
+                             wr_role_strength=0.,wr_role_target_season=None,
+                             wr_role_target_week=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -283,6 +286,11 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         raise ValueError("Team passing-volume evidence weight must be finite in [0,1]")
     team_environment=team_environment or {}
     snap_profiles=snap_profiles or {}
+    if (isinstance(wr_role_strength,bool) or
+        not isinstance(wr_role_strength,(int,float,np.floating)) or
+        not np.isfinite(wr_role_strength) or
+        not 0<=wr_role_strength<=1):
+        raise ValueError("WR role candidate strength must be finite in [0,1]")
     if (not np.isfinite(receiving_td_weight) or
             not 0. <= receiving_td_weight <= 1.):
         raise ValueError("Receiving TD propensity strength must be between 0 and 1")
@@ -778,6 +786,18 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 or np.any(target_rates<0) or np.any(carry_rates<0)
                 or leftover<0 or carry_other<0):
                 raise ValueError(f"Opportunity conservation failed for {team}; refusing simulated lineup output")
+            if wr_role_strength:
+                target_rates,leftover,role_diag=allocate_role_target_share(
+                    target_rates,leftover,skill,r,
+                    team=team,team_environment=env,
+                    target_season=wr_role_target_season,
+                    target_week=wr_role_target_week,
+                    strength=wr_role_strength,
+                    unmodeled_teammate_targets=historical_other_targets)
+                stat_draws[f'__WR_ROLE_ALLOCATION__|{team}']=role_diag
+                if not np.isclose(target_rates.sum()+leftover,post_target_budget,
+                                  rtol=0.,atol=1e-7):
+                    raise ValueError("WR role candidate changed total receiving opportunity")
             stat_draws[f'__OPPORTUNITY__|{team}']={
                 'target_budget_before':pre_target_budget,
                 'target_budget_after':post_target_budget,
