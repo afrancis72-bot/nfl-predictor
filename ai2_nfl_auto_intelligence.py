@@ -174,7 +174,10 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         role_profiles, role_matchup_details = defense_role_profiles(
             history, season, week)
         role_matchup_slate = slate_role_report(
-            salary_rows, history, season, week, role_profiles)
+            salary_rows, history, season, week, role_profiles,
+            official_status_by_id={
+                str(x["ID"]): str(x.get("current_status", "") or "")
+                for x in baseline.to_dict("records")})
     except (KeyError, ValueError, TypeError) as exc:
         role_profiles = pd.DataFrame()
         role_matchup_details = pd.DataFrame()
