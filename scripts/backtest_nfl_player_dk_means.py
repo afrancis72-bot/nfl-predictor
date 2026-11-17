@@ -275,7 +275,6 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                     record["pregame_expected_dropbacks"]=float(model["pregame_expected_dropbacks"])
                     record["pregame_sack_rate"]=float(model["pregame_sack_rate"])
                     record["pregame_expected_plays"]=float(model["expected_plays"])
-                    record["game_team_order"]=str(players[players["TeamAbbrev"]==team]["TeamAbbrev"].iloc[0])
                     team_pass_rows.append(record)
             rate_lookup={
                 (_norm_name(r["player"]),canonical_team(r["team"]),
