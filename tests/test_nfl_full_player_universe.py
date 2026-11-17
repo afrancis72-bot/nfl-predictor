@@ -103,6 +103,11 @@ class FootballUniverseResearchTests(unittest.TestCase):
             self.assertGreater(newstat[name]["receptions"].mean(),0)
         self.assertNotEqual(oldstat["__OTHER_RECEIVER__|AAA"]["targets"].mean(),
                             newstat["__OTHER_RECEIVER__|AAA"]["targets"].mean())
+        for team in ("AAA","BBB"):
+            p="__TEAM_PLAYS__|"+team
+            for name in ("simulated_pass_attempts","simulated_dropbacks",
+                         "simulated_sacks","simulated_plays"):
+                np.testing.assert_array_equal(oldstat[p][name],newstat[p][name])
 
     def test_simulated_team_targets_equal_attempts_with_ghost_receivers(self):
         _,_,stat=self.simulate(football_only_players=self.ghosts,
