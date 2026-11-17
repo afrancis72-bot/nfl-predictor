@@ -21,6 +21,12 @@ import pandas as pd
 from ai2_nfl_matchups import canonical_team
 
 SOURCE = "nflverse-play-by-play-completed-prior-week-fixed-drive"
+
+
+def engine_team(value):
+    """Match the stat simulator's WAS->WSH internal player/team identifier."""
+    team=canonical_team(value)
+    return "WSH" if team=="WAS" else team
 PBP_RELEASE = ("https://github.com/nflverse/nflverse-data/releases/download/"
                "pbp/play_by_play_{season}.parquet")
 PBP_COLUMNS = (
@@ -87,8 +93,8 @@ def pbp_to_drives(pbp):
     f = pbp.copy()
     f = f[f["season_type"].astype(str).eq("REG")].copy()
     f = f[f[["game_id","fixed_drive","posteam","defteam"]].notna().all(axis=1)]
-    f["offense"] = f["posteam"].map(canonical_team)
-    f["defense"] = f["defteam"].map(canonical_team)
+    f["offense"] = f["posteam"].map(engine_team)
+    f["defense"] = f["defteam"].map(engine_team)
     f = f[f["offense"].ne(f["defense"])]
     f["play_id"] = pd.to_numeric(f["play_id"],errors="coerce")
     f = f.dropna(subset=["play_id"])
