@@ -17,7 +17,7 @@ import math
 import numpy as np
 
 from ai2_nfl_matchups import canonical_team
-from ai2_nfl_pbp_drives import OUTCOMES, check_profile_freshness
+from ai2_nfl_pbp_drives import OUTCOMES, check_profile_freshness, engine_team
 
 
 def _probabilities(base, offense, defense, strength, field_factor,
@@ -70,7 +70,7 @@ def simulate_possession_worlds(game, profiles, *, season, week,
     if strength<=0:
         raise ValueError("Zero possession strength must use untouched existing simulator")
     check_profile_freshness(profiles,season,week)
-    teams=[canonical_team(s) for s in str(game).split()[0].split("@")]
+    teams=[engine_team(s) for s in str(game).split()[0].split("@")]
     if len(teams)!=2 or any(not t for t in teams) or teams[0]==teams[1]:
         raise ValueError("Possession model needs complete away@home matchup")
     if not isinstance(n_sims,int) or n_sims<1 or n_sims>100000:
