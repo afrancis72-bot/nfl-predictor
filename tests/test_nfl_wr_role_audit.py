@@ -72,7 +72,7 @@ class ReceiverRoleAudits(unittest.TestCase):
         self.assertEqual(res["actual_targets"],2)
         self.assertEqual(res["predicted_targets"],10)
         self.assertEqual(res["predicted_p90"],12.4)
-        with self.assertRaisesRegex(ValueError,"target game"):
+        with self.assertRaisesRegex(ValueError,"Target-week"):
             bad=pre.copy();bad["latest_observed_week"]=9
             receiver_row(
                 player="First WR",team="AAA",opponent="BBB",
