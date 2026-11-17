@@ -102,6 +102,15 @@ class PosessionHistoryTests(unittest.TestCase):
             with self.subTest(mutation=mutation),self.assertRaises(ValueError):
                 check_profile_freshness(bad,2026,9)
 
+    def test_washington_team_alias_matches_stat_engine(self):
+        from ai2_nfl_pbp_drives import engine_team
+        self.assertEqual(engine_team("WAS"),"WSH")
+        self.assertEqual(engine_team("WSH"),"WSH")
+        worlds=simulate_possession_worlds(
+            "SEA@WAS",self.profile,season=2026,week=9,
+            n_sims=30,seed=19)
+        self.assertEqual(set(worlds),{"SEA","WSH"})
+
     def test_shared_clock_scoring_and_team_play_conservation(self):
         worlds=simulate_possession_worlds(
             "AAA@BBB",self.profile,season=2026,week=9,
