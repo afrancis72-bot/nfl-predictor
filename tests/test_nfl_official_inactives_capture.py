@@ -69,7 +69,7 @@ class OfficialSourceCaptureTests(unittest.TestCase):
             week=10,game="KC@ATL",**kwargs)
 
     def test_exposes_only_two_exact_teams_and_actual_bullet_positions(self):
-        d=self.parse(include_editorial=False)
+        d=self.parse(data=html(include_editorial=False))
         self.assertEqual(list(d["inactive_by_team"]),["KC","ATL"])
         self.assertEqual(len(d["inactive_by_team"]["KC"]),6)
         self.assertEqual(len(d["inactive_by_team"]["ATL"]),5)
