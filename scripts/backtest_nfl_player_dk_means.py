@@ -97,7 +97,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              redzone_strength=0.,stat_audit_rows=None,
              audit_model_name="neutral",wr_role_rows=None,
              team_target_rows=None,wr_min_targets_pg=3.5,
-             team_pass_rows=None):
+             team_pass_rows=None,team_component_rows=None,
+             actual_pbp_by_team=None,team_component_engine=None):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -137,7 +138,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                 failures.append(f"{season} W{week} {away}@{home}: no eligible prior-week QB")
                 continue
             role_ranks=role_groups=None
-            if wr_role_rows is not None or team_target_rows is not None:
+            if (wr_role_rows is not None or team_target_rows is not None
+                or team_component_rows is not None):
                 # Rank WR1/2/3 exclusively from prior-week rate observations
                 # BEFORE looking at the target-game box score.
                 role_ranks,role_groups=pregame_receiver_ranks(
@@ -186,6 +188,20 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                         season=season,week=week,game=f"{away}@{home}",
                         pool=pool,observations=observations,stat_draws=stat_draws,
                         history_ranked=role_groups.get(team,[])))
+            if team_component_rows is not None:
+                from ai2_nfl_drive_pass_accounting import component_row
+                if actual_pbp_by_team is None:
+                    raise ValueError("Component diagnostic requires actual PBP team-game input")
+                for team in (away,home):
+                    key=(int(season),int(week),f"{away}@{home}",team)
+                    if key not in actual_pbp_by_team:
+                        raise ValueError(f"No actual PBP data for {key}")
+                    team_component_rows.append(component_row(
+                        season=season,week=week,game=f"{away}@{home}",
+                        team=team,players=players,stat_draws=stat_draws,
+                        actual=actual_pbp_by_team[key],observations=observations,
+                        pregame_roles=role_groups.get(team,[]),
+                        n_sims=n_sims,engine_name=team_component_engine))
             if team_pass_rows is not None:
                 from ai2_nfl_pass_volume_share_audit import team_pass_attempt_row
                 for team in (away, home):
