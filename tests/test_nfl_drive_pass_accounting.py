@@ -108,10 +108,19 @@ class TestDrivePassAccounting(unittest.TestCase):
         observed=observed_pbp_team_games(pd.DataFrame(sample),drives,game)
         self.assertEqual(observed[(2026,9,"AAA@BBB","AAA")]["actual_plays"],4)
         self.assertEqual(observed[(2026,9,"AAA@BBB","AAA")]["actual_dropbacks"],3)
-        bad=pd.DataFrame(sample)
-        bad.loc[0,"sack"]=1
-        with self.assertRaisesRegex(ValueError,"ambiguous scrimmage flags"):
-            observed_pbp_team_games(bad,drives,game)
+        # nflverse pass_attempt flags include sacks: do not double count.
+        overlapping_sack=pd.DataFrame(sample)
+        overlapping_sack.loc[0,"sack"]=1
+        counted=observed_pbp_team_games(overlapping_sack,drives,game)
+        adjusted=counted[(2026,9,"AAA@BBB","AAA")]
+        self.assertEqual(adjusted["actual_pass_attempts"],1)
+        self.assertEqual(adjusted["actual_sacks"],2)
+        self.assertEqual(adjusted["actual_plays"],4)
+        # Rush+sack remains invalid and must be rejected.
+        contradictory=pd.DataFrame(sample)
+        contradictory.loc[0,"rush_attempt"]=1
+        with self.assertRaisesRegex(ValueError,"ambiguous rush/pass/sack"):
+            observed_pbp_team_games(contradictory,drives,game)
 
     def test_report_metric_rejects_duplicate(self):
         x=self.call()
