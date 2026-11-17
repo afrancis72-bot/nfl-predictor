@@ -29,7 +29,7 @@ ALLOWED_SOURCE_STATUS={
     "NFL_OFFICIAL_INACTIVES":{OUT},
     "NFL_OFFICIAL_GAME_STATUS_REPORT":{OUT,UNKNOWN},
 }
-APPROVED_HOSTS={"www.nfl.com","nfl.com","operations.nfl.com"}
+APPROVED_HOSTS={"www.nfl.com","nfl.com","amp.nfl.com","operations.nfl.com"}
 DATE_KEYS=("kickoff_utc","captured_at_utc")
 PROOF_KEYS=("player","team","status","source_type","source_url","published_at_utc")
 
