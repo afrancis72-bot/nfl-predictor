@@ -41,18 +41,21 @@ def observed_pbp_team_games(pbp, drives, schedules):
     for k in ("season","week","pass_attempt","rush_attempt","sack"):
         f[k]=pd.to_numeric(f[k],errors="coerce").fillna(0.)
     f["team"]=f["posteam"].map(canonical_team)
-    f["pass"]=f["pass_attempt"].gt(0)
+    # nflverse PBP labels ALL QB dropbacks as pass_attempt=1, INCLUDING
+    # sacks. Observed 3,318 pass_attempt+sack overlaps across 2024-26 PBP.
+    # The official passing-attempt box score EXCLUDES sacks. Do not count
+    # the same sack once as a pass attempt and again as a sack.
+    f["pass_flag"]=f["pass_attempt"].gt(0)
     f["rush"]=f["rush_attempt"].gt(0)
     f["sacked"]=f["sack"].gt(0)
-    f=f[f[["pass","rush","sacked"]].any(axis=1)].copy()
-    overlaps=f[f[["pass","rush","sacked"]].sum(axis=1)>1]
+    f=f[f[["pass_flag","rush","sacked"]].any(axis=1)].copy()
+    overlaps=f[f["rush"] & (f["pass_flag"] | f["sacked"])]
     if len(overlaps):
         example_cols=[x for x in ("season","week","game_id","play_id","play_type",
                     "pass_attempt","rush_attempt","sack") if x in overlaps.columns]
-        counts=overlaps.groupby(["pass","rush","sacked"],dropna=False).size().to_dict()
-        raise ValueError(f"PBP ambiguous scrimmage flags: n={len(overlaps)}, "
-                         f"flag combinations={counts}, "
+        raise ValueError(f"PBP ambiguous rush/pass/sack overlaps: n={len(overlaps)}, "
                          f"first examples={overlaps[example_cols].head(8).to_dict('records')}")
+    f["pass"]=f["pass_flag"] & ~f["sacked"]
     if f.duplicated(["season","week","game_id","play_id"]).any():
         raise ValueError("Duplicate PBP game play IDs")
     counts=(f.groupby(["season","week","game_id","team"],sort=True)
