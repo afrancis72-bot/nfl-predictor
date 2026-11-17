@@ -186,3 +186,66 @@ def verify_named_active_raw(raw,parsed,snapshot):
     if expected!=snapshot:
         raise ValueError("Archived explicit ACTIVE list/source metadata was altered")
     return True
+
+
+def save_named_active_capture(raw,parsed,snapshot,out_dir,*,real_network_fetch=True):
+    """Archive independently fetched explicit ACTIVE sentences and raw article.
+
+    Synthetic fixtures must not be archived as an authentic network capture.
+    Raw source is required on every later read of this archive.
+    """
+    if not real_network_fetch:
+        raise ValueError("Synthetic fixture cannot become official ACTIVE proof")
+    verify_named_active_raw(raw,parsed,snapshot)
+    root=Path(out_dir)
+    if root.exists():
+        raise FileExistsError("Refusing overwrite of a pregame ACTIVE source snapshot")
+    root.mkdir(parents=True,exist_ok=False)
+    (root/"official_source.html").write_bytes(raw)
+    (root/"active_player_snapshot.json").write_text(
+        json.dumps(snapshot,sort_keys=True,indent=2,allow_nan=False))
+    (root/"verified_parser.json").write_text(
+        json.dumps(parsed,sort_keys=True,indent=2,allow_nan=False))
+    manifest={
+        "archive_type":"NFL_OFFICIAL_NAMED_ACTIVE_NEWS_CAPTURE",
+        "source_url":parsed["source_url"],
+        "source_html_sha256":parsed["source_html_sha256"],
+        "capture_utc":snapshot["captured_at_utc"],
+        "kickoff_utc":snapshot["kickoff_utc"],
+        "http_capture_was_performed_by_this_program":True,
+        "source_reparsed_and_statuses_matched":True,
+        "only_explicit_active_claims":True,
+        "not_a_complete_game_day_active_roster":True,
+        "production_approved":False,
+    }
+    (root/"manifest.json").write_text(json.dumps(manifest,indent=2,sort_keys=True))
+    return str(root)
+
+
+def load_verified_named_active_capture(root,*,as_of_utc=None):
+    """Reparse raw article bytes; never trust the ACTIVE status JSON alone."""
+    root=Path(root)
+    paths={x:root/x for x in ("official_source.html","active_player_snapshot.json",
+                               "verified_parser.json","manifest.json")}
+    if not all(p.is_file() for p in paths.values()):
+        raise ValueError("Incomplete official named-ACTIVE report archive")
+    raw=paths["official_source.html"].read_bytes()
+    snap=json.loads(paths["active_player_snapshot.json"].read_text())
+    parsed=json.loads(paths["verified_parser.json"].read_text())
+    manifest=json.loads(paths["manifest.json"].read_text())
+    if (manifest.get("archive_type")!="NFL_OFFICIAL_NAMED_ACTIVE_NEWS_CAPTURE"
+        or not manifest.get("http_capture_was_performed_by_this_program")
+        or not manifest.get("source_reparsed_and_statuses_matched")
+        or manifest.get("production_approved") is not False):
+        raise ValueError("Not a trusted research archive of an NFL ACTIVE claim")
+    if (manifest.get("source_url")!=parsed.get("source_url")
+        or manifest.get("capture_utc")!=snap.get("captured_at_utc")
+        or manifest.get("kickoff_utc")!=snap.get("kickoff_utc")
+        or hashlib.sha256(raw).hexdigest()!=manifest.get("source_html_sha256")):
+        raise ValueError("Archived ACTIVE source HTML/metadata digest mismatch")
+    verify_named_active_raw(raw,parsed,snap)
+    if as_of_utc is not None and (
+        _utc(snap["captured_at_utc"],"captured_at_utc")>
+        _utc(as_of_utc,"as_of_utc")):
+        raise ValueError("Future source capture cannot justify earlier pregame forecast")
+    return snap,manifest
