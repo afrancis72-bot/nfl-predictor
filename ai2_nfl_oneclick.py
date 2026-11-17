@@ -48,8 +48,13 @@ def _slate_week(saved_salaries):
         raise ValueError("The salary file does not match a regular-season NFL slate")
     return season, week
 
-def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
+def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
+                             simulation_mode="existing", availability_context=None):
     """Build from the salary file; legacy projections argument is ignored."""
+    if simulation_mode not in {"existing","availability_aware"}:
+        raise ValueError("Unknown NFL simulator. Select existing or availability-aware.")
+    if simulation_mode=="availability_aware" and not isinstance(availability_context,dict):
+        raise ValueError("Availability-aware NFL builds require the verified official-source prebuild check")
     if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed < 2**31:
         raise ValueError("Simulation seed must be an integer from 0 to 2147483647")
     if count not in (15, 20, 50, 150):
@@ -76,6 +81,34 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         if k not in already_out:
             outs.append({"player":z["player"],"team":z["team"]})
             already_out.add(k)
+    # Research-only official game-day source claims are integrated into THIS
+    # same NFL simulator and portfolio builder. The existing scoring path is
+    # unchanged unless the user explicitly enables the availability mode.
+    football_extras=None
+    source_snapshots={}
+    availability_report={
+        "mode":"EXISTING_NFL_GAME_ENGINE",
+        "effective_scorer":"EXISTING_PLAYER_UNIVERSE",
+        "source_coverage":[],
+        "game_snapshot_count":0,
+        "verified_active_players":0,"verified_out_players":0,
+        "football_only_players_added":0,
+        "predictive_accuracy_validated":False,
+    }
+    if simulation_mode=="availability_aware":
+        from ai2_nfl_unified_availability import apply_status_sources_to_pool
+        source_snapshots=availability_context.get("snapshots_by_game",{})
+        pool,football_extras,official_status_out,availability_report=(
+            apply_status_sources_to_pool(
+                pool,raw_rates,context=availability_context,
+                season=season,week=week))
+        present={(str(x["player"]).casefold(),str(x["team"]).upper())
+                 for x in outs}
+        for item in official_status_out:
+            key=(str(item["player"]).casefold(),str(item["team"]).upper())
+            if key not in present:
+                outs.append(item)
+                present.add(key)
     # Player eligibility is evaluated for the current slate. Past human vetoes
     # are audit feedback, not permanent or automatically carried-forward bans.
     # Explicit current-slate exclusions would need to be confirmed separately.
@@ -107,12 +140,35 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
 
     # The game-level simulator already redistributes OUT-player touches and
     # targets. Use unmodified rates with outs to avoid double counting.
+    availability_options=(
+        dict(
+            football_only_players=football_extras,
+            football_universe_target_season=season,
+            football_universe_target_week=week,
+            football_availability_snapshots=source_snapshots,
+            football_availability_as_of_utc=availability_report.get("as_of_utc"),
+        ) if simulation_mode=="availability_aware" else {})
     players, draws, stat_draws = run_verified_stat_simulation(
         pool, raw_rates, n_sims=10000, seed=seed, out_players=outs,
         team_environment=research.get("team_environment"),
         snap_profiles=research.get("snap_profiles"),
         injury_presence=research.get("injury_presence", {}),
-        defense_profiles=defense_profiles, defense_weight=defense_weight)
+        defense_profiles=defense_profiles, defense_weight=defense_weight,
+        **availability_options)
+    if simulation_mode=="availability_aware":
+        simulation_ledger=stat_draws.get("__FOOTBALL_PLAYER_UNIVERSE__") or {}
+        actual_added=int(simulation_ledger.get("historical_football_only_players",0))
+        if actual_added!=int(availability_report["football_only_players_added"]):
+            raise ValueError("Football-only teammate source audit does not match simulated world")
+        availability_report["simulation_internal_teammates"]=actual_added
+        availability_report["simulation_model_label"]=(
+            "EXPERIMENTAL_SOURCE_GATED_FULL_FOOTBALL_UNIVERSE"
+            if actual_added else
+            "EXISTING_SCORING_WITH_CONFIRMED_OUT_FILTER_IF_ANY")
+        availability_report["last_build_seed"]=seed
+        availability_report["source_data_reverified_by_app"]=bool(
+            availability_report.get("game_snapshot_count",0))
+        availability_report["statistical_improvement_proven"]=False
     if draws.shape != (10000, len(players)) or not np.isfinite(draws).all():
         raise ValueError("Incomplete NFL simulation; refusing to export lineups")
     # Required scoring safety check, not an optional diagnostic. A high-mean
@@ -433,6 +489,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
         "qb_selection_audit": qb_audit,
         "qb_selection_diagnostics": qb_selection_diagnostics,
         "counterfactual_holdout": qb_selection_diagnostics.get("independent_scenario_audit",{}),
+        "simulation_mode":simulation_mode,
+        "availability_intelligence":availability_report,
         "summary": summary, "ranked": ranked,
         "csv": export_classic_candidates([x["candidate"] for x in ranked]),
         "audit": audit, "seed": seed, "pregame_report": pregame_report,
@@ -452,5 +510,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20):
             "rates and official injury designations. Depth-chart changes, late "
             "inactives, individual coverage and defensive projections require review. "
             "Historical opponent-position yard adjustments are OFF after "
-            "out-of-sample validation failed to improve the base forecast."),
+            "out-of-sample validation failed to improve the base forecast."+
+            (" Experimental official-source player universe opted in; "
+             "predictive accuracy and P90 improvement NOT YET validated."
+             if simulation_mode=="availability_aware" else "")),
     }
