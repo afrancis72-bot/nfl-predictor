@@ -37,19 +37,28 @@ class NFLBentleyReleaseTests(unittest.TestCase):
                                     "NOT READY FOR ENTRY.*ROLE_SPECIFIC_DEFENSE"):
             assert_nfl_classic_ready_for_entries()
 
-    def test_same_unified_nfl_ui_disables_button_and_stale_results(self):
+    def test_unified_draft_builder_requires_ack_but_cannot_certify(self):
         source=(ROOT/"unified_app.py").read_text()
         self.assertIn('if sport == "NFL":',source)
         self.assertIn('release_gate=nfl_classic_release_status()',source)
-        self.assertIn('disabled=not release_ready',source)
+        self.assertIn('GENERATE {requested_count} REVIEW-ONLY DRAFT LINEUPS',source)
+        self.assertIn('key="nfl_draft_review_ack"',source)
+        self.assertIn('disabled=not draft_acknowledged',source)
+        self.assertIn('elif not st.session_state.get("nfl_draft_review_ack", False)',source)
+        self.assertIn('if release_ready:',source)
         self.assertIn('assert_nfl_classic_ready_for_entries()',source)
-        self.assertIn('if release_ready else None',source)
         self.assertIn('st.session_state.get("ai2_oneclick_result")',source)
-        self.assertIn('with st.expander("Protected approved lineups and previous entries")',source)
+        self.assertIn('with st.expander("Protected approved lineups, draft backups and previous entries")',source)
+        self.assertIn('"portfolio_mode":(',source)
+        self.assertIn('"DRAFT_MANUAL_REVIEW_ONLY"',source)
+        self.assertIn('"bentley_certified":bool(release_ready)',source)
+        self.assertIn('draft_manual_review=not release_ready',source)
+        self.assertIn('Draft 20-lineup portfolio',source)
+        self.assertIn('Approved 20-lineup portfolio',source)
         self.assertIn('if sport == "PGA":',source)
         self.assertIn('if sport == "NBA":',source)
         self.assertIn('if sport == "NASCAR":',source)
-        self.assertIn('NFL CLASSIC — NOT READY FOR ENTRY',source)
+        self.assertIn('NFL CLASSIC — MANUAL-REVIEW DRAFT BUILDER AVAILABLE',source)
         self.assertIn('release_gate["blockers"]',source)
 
     def test_showdown_is_not_accidentally_approved_with_classic(self):

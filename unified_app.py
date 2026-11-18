@@ -171,23 +171,25 @@ else:
         from ai2_nfl_portfolio_diversity import portfolio_overlap_audit
         from ai2_nfl_review import (review_tables, named_csv, named_excel,
                                     roster_id_csv, swap_contest_tiers,
-                                    snapshot_approved, load_approved)
+                                    snapshot_approved, load_approved,
+                                    snapshot_draft, load_draft)
         from ai2_local_storage import save_file as _ai2_save_file
         import pandas as _ai2_pd
 
         release_gate=nfl_classic_release_status()
         release_ready=release_gate["ready_for_entries"]
         if not release_ready:
-            st.error(
-                "NFL CLASSIC — NOT READY FOR ENTRY. New lineup builds and "
-                "approvals are locked until the Bentley acceptance contract "
-                "passes. Earlier approved lineups and backups remain available "
-                "for read-only review below.")
+            st.warning(
+                "NFL CLASSIC — MANUAL-REVIEW DRAFT BUILDER AVAILABLE. "
+                "Bentley certification is NOT PASSED. You can generate and "
+                "download draft lineups, but projections and player availability "
+                "are not proven accurate. Review every player and matchup "
+                "yourself before choosing whether to enter any contest.")
             st.caption(
                 f"Release contract: {release_gate['contract_id']} · "
                 f"{release_gate['checks_passed']}/{release_gate['checks_total']} "
-                "release-grade checks passed. Passing a subset of unit tests "
-                "or obtaining official status articles is NOT sufficient.")
+                "certification checks passed. This is a user-reviewed DRAFT "
+                "workflow, not an entry-ready Bentley recommendation.")
             with st.expander("View ALL required NFL release checks and blockers",expanded=True):
                 st.dataframe(
                     _ai2_pd.DataFrame([{
@@ -241,14 +243,26 @@ else:
                        "Automatically simulates three different seeds and selects "
                        "independent offensive cores with a stricter premium risk filter. "
                        "A real current-week news and ownership feed is still unavailable.")
+        draft_acknowledged = (
+            st.checkbox(
+                "I understand these are unvalidated draft lineups. I will "
+                "personally check injuries, availability, salaries and roster "
+                "choices before using them in DraftKings.",
+                key="nfl_draft_review_ack") if not release_ready else True)
         if st.button(
-            f"BUILD MY {requested_count} LINEUPS",
+            (f"GENERATE {requested_count} REVIEW-ONLY DRAFT LINEUPS"
+             if not release_ready else f"BUILD MY {requested_count} LINEUPS"),
             type="primary",key="nfl_one_build",use_container_width=True,
-            disabled=not release_ready):
+            disabled=not draft_acknowledged):
             try:
-                # Server-side check, not just a disabled button: fail closed
-                # against stale Streamlit browser events or hidden callbacks.
-                assert_nfl_classic_ready_for_entries()
+                # Bentley certification is a separate, unchanged requirement.
+                # An explicit human review acknowledgement permits DRAFTS
+                # only; it does not make any release criterion PASS.
+                if release_ready:
+                    assert_nfl_classic_ready_for_entries()
+                elif not st.session_state.get("nfl_draft_review_ack", False):
+                    raise ValueError(
+                        "Acknowledge manual review before generating draft lineups.")
                 if upload_one is not None:
                     from ai2_nfl_inputs import parse_csv_payload
                     parse_csv_payload(upload_one.getvalue())
@@ -273,7 +287,8 @@ else:
                         sources=[build_oneclick_portfolio(
                             salaries_one,seed=seed,count=50,
                             simulation_mode=nfl_engine_mode,
-                            availability_context=new_source_context)
+                            availability_context=new_source_context,
+                            draft_manual_review=not release_ready)
                             for seed in source_seeds]
                         roles={
                             str(row.get("Player",""))
@@ -313,7 +328,8 @@ else:
                         output_one = build_oneclick_portfolio(
                             salaries_one,seed=int(seed_one),count=int(requested_count),
                             simulation_mode=nfl_engine_mode,
-                            availability_context=new_source_context)
+                            availability_context=new_source_context,
+                            draft_manual_review=not release_ready)
                 # Persist audit bytes independently of Streamlit's temporary
                 # browser download URL. SQLite history can restore the last
                 # generated audit if a UI session or download expires.
@@ -355,6 +371,12 @@ else:
                         "availability_intelligence",{}),
                     "player_universe_accuracy_independently_validated":False,
                     "approved_lineups_untouched":True,
+                    "portfolio_mode":(
+                        "BENTLEY_CERTIFIED" if release_ready
+                        else "DRAFT_MANUAL_REVIEW_ONLY"),
+                    "bentley_certified":bool(release_ready),
+                    "human_review_required":True,
+                    "auto_draftkings_submission":False,
                 }
                 manifest_name=(f"team_ai2_nfl_build_manifest_seed_{int(seed_one)}_"
                                f"{nfl_engine_mode}.json")
@@ -369,6 +391,8 @@ else:
                     st.session_state.pop("ai2_nfl_manifest_storage_warning",None)
                 except (OSError, sqlite3.Error) as exc:
                     st.session_state["ai2_nfl_manifest_storage_warning"]=str(exc)
+                output_one["draft_manual_review_only"] = bool(not release_ready)
+                output_one["bentley_certified"] = bool(release_ready)
                 st.session_state["ai2_oneclick_result"] = output_one
                 st.session_state["ai2_oneclick_seed"] = int(seed_one)
                 st.session_state["ai2_oneclick_count"] = int(requested_count)
@@ -382,12 +406,10 @@ else:
                 st.session_state.pop("ai2_oneclick_review_ranked", None)
                 st.error(f"Build not completed: {exc}")
 
-        # Existing session objects are never silently treated as approved,
-        # entry-ready output after release eligibility has been revoked.
-        # Saved user-approved snapshots remain independently preserved below.
-        output_one = (
-            st.session_state.get("ai2_oneclick_result")
-            if release_ready else None)
+        # The human-review draft stays visible for inspection and export.
+        # It never becomes certified merely because a draft was generated.
+        # Previously user-approved backups remain preserved independently.
+        output_one = st.session_state.get("ai2_oneclick_result")
         visible_payload = (upload_one.getvalue() if upload_one is not None
                            else saved_one[1] if saved_one else None)
         current_digest = (_ai2_sha256(visible_payload).hexdigest()
@@ -400,6 +422,13 @@ else:
             output_one = None
 
         if output_one:
+            if output_one.get("draft_manual_review_only",not release_ready):
+                st.warning(
+                    "DRAFT LINEUPS — NOT BENTLEY-CERTIFIED. Treat these as "
+                    "starting points, not recommendations. Manually review "
+                    "all nine players per lineup, verify game-day status, "
+                    "and change picks as needed in DraftKings or your "
+                    "downloaded review spreadsheet. No automatic entry occurs.")
             manifest_bytes=st.session_state.get("ai2_nfl_build_manifest_bytes")
             if manifest_bytes:
                 st.download_button(
@@ -545,11 +574,14 @@ else:
                                data=named_csv(ranked),
                                file_name=f"team_ai2_nfl_{len(ranked)}_lineups_NAMED.csv",
                                mime="text/csv", key="nfl_named_csv")
-            st.download_button("Download DraftKings roster-ID CSV",
+            st.download_button(
+                ("Download DraftKings roster-ID CSV (UNVERIFIED DRAFT)"
+                 if not release_ready else "Download DraftKings roster-ID CSV"),
                                data=roster_id_csv(ranked),
                                file_name=f"team_ai2_nfl_{len(ranked)}_lineups_DK_ids.csv",
                                mime="text/csv", key="nfl_dk_ids")
-            st.caption("Roster-ID CSV contains player IDs, not an official contest-entry template. Verify the DraftKings import format.")
+            st.caption("Roster-ID CSV contains player IDs, not an official contest-entry template. "
+                       "You must verify DraftKings format, every player and game-day availability.")
 
             st.subheader("Reports & diagnostics")
             st.caption("NFL Classic portfolio risk: maximum 28% individual exposure "
@@ -829,7 +861,7 @@ else:
                 st.caption(matchup_summary.get("yards_only_warning",
                         "No verified opponent-position yardage adjustment was applied."))
                 stat_role = output_one.get("opponent_role_stat_scoring_audit") or {}
-                st.markdown("**Role-specific defensive stat engine (EXPERIMENTAL; entry builds locked)**")
+                st.markdown("**Role-specific defensive evidence (EXPERIMENTAL; manual review required)**")
                 st.caption("Historical opponents' PREgame WR1/WR2/WR3, RB1/RB2, "
                            "QB1 and TE1/TE2 roles versus their OWN usual "
                            "targets, carries, catch rate and per-opportunity "
@@ -1051,30 +1083,67 @@ else:
                         except ValueError as exc:
                             st.error(str(exc))
 
-                if st.button("APPROVE AND SAVE THESE 20 LINEUPS", key="nfl_approve_20"):
+                if st.button(
+                    ("SAVE MY MANUALLY REVIEWED 20-LINEUP DRAFT"
+                     if not release_ready else "APPROVE AND SAVE THESE 20 LINEUPS"),
+                    key="nfl_approve_20"):
                     try:
-                        payload = snapshot_approved(ranked, current_digest, int(seed_one))
-                        _ai2_save_file(DATA_DIR, "NFL", "Approved 20-lineup portfolio",
-                                       "ai2_nfl_approved_20.json", payload)
-                        st.success("Approved lineup rosters and contest tiers saved separately. Future model builds cannot overwrite them.")
+                        if release_ready:
+                            payload = snapshot_approved(ranked, current_digest, int(seed_one))
+                            folder = "Approved 20-lineup portfolio"
+                            filename = "ai2_nfl_approved_20.json"
+                        else:
+                            payload = snapshot_draft(ranked, current_digest, int(seed_one))
+                            folder = "Draft 20-lineup portfolio"
+                            filename = "ai2_nfl_unvalidated_draft_20.json"
+                        _ai2_save_file(DATA_DIR, "NFL", folder, filename, payload)
+                        st.success(
+                            "Saved separately as " + ("an approved portfolio"
+                            if release_ready else "an UNVALIDATED DRAFT") +
+                            ". Previous approved lineups remain untouched.")
                     except (ValueError, OSError, sqlite3.Error) as exc:
                         st.error(f"Could not save approval: {exc}")
 
             if len(ranked)==40:
-                if st.button("APPROVE AND SAVE THESE 40 LINEUPS",
-                             key="nfl_approve_core_40"):
+                if st.button(
+                    ("SAVE MY MANUALLY REVIEWED 40-LINEUP DRAFT"
+                     if not release_ready else "APPROVE AND SAVE THESE 40 LINEUPS"),
+                    key="nfl_approve_core_40"):
                     try:
-                        payload = snapshot_approved(ranked, current_digest, int(seed_one))
-                        _ai2_save_file(DATA_DIR, "NFL", "Approved 40-lineup portfolio",
-                                       "ai2_nfl_approved_40.json", payload)
-                        st.success("Your 4/16/20 selections have been approved and saved "
-                                   "separately from the experimental 50-lineup candidates. "
-                                   "Future builds will not overwrite these approvals.")
+                        if release_ready:
+                            payload = snapshot_approved(ranked, current_digest, int(seed_one))
+                            folder = "Approved 40-lineup portfolio"
+                            filename = "ai2_nfl_approved_40.json"
+                        else:
+                            payload = snapshot_draft(ranked, current_digest, int(seed_one))
+                            folder = "Draft 40-lineup portfolio"
+                            filename = "ai2_nfl_unvalidated_draft_40.json"
+                        _ai2_save_file(DATA_DIR, "NFL", folder, filename, payload)
+                        st.success(
+                            "Saved 40 lineups separately as " +
+                            ("a user-approved portfolio" if release_ready
+                             else "an UNVALIDATED DRAFT") +
+                            ". Protected prior approvals remain unchanged.")
                     except (ValueError,OSError,sqlite3.Error) as exc:
                         st.error(f"Could not save 40-entry approval: {exc}")
 
-        with st.expander("Protected approved lineups and previous entries"):
-            st.caption("The app never silently replaces human-approved lineups. Save a portable backup because Streamlit-hosted local storage may be temporary.")
+        with st.expander("Protected approved lineups, draft backups and previous entries"):
+            st.caption("User-approved portfolios and unvalidated drafts use SEPARATE storage keys. A new draft cannot replace an earlier approval. Save portable backups because Streamlit local storage may be temporary.")
+            draft_file=(get_upload("NFL","Draft 40-lineup portfolio")
+                        or get_upload("NFL","Draft 20-lineup portfolio"))
+            if draft_file:
+                try:
+                    draft=load_draft(draft_file[1])
+                    st.info("Unvalidated NFL draft saved: "+draft["saved_utc"])
+                    draft_overview,_,_=review_tables(draft["lineups"])
+                    st.dataframe(draft_overview,hide_index=True,use_container_width=True)
+                    st.download_button(
+                        "Download saved NFL manual-review draft (JSON)",
+                        data=draft_file[1],
+                        file_name="team_ai2_NFL_MANUAL_REVIEW_DRAFT.json",
+                        mime="application/json",key="nfl_saved_review_draft")
+                except (ValueError,KeyError,TypeError) as exc:
+                    st.warning("Saved NFL draft needs inspection: "+str(exc))
             approved_file = (get_upload("NFL", "Approved 40-lineup portfolio")
                              or get_upload("NFL", "Approved 20-lineup portfolio"))
             if approved_file:

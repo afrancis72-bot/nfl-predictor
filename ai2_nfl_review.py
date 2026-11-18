@@ -158,6 +158,33 @@ def snapshot_approved(ranked, slate_digest, seed):
     }, indent=2).encode("utf-8")
 
 
+def snapshot_draft(ranked, slate_digest, seed):
+    """Save user-reviewable DRAFTS without claiming a Bentley release.
+
+    Drafts are NEVER saved to the storage key for protected user-approved
+    lineups. A later build cannot silently overwrite an actual approval.
+    """
+    packet=json.loads(snapshot_approved(ranked,slate_digest,seed))
+    packet["format"]="ai2-nfl-UNVALIDATED-draft-v1"
+    packet["saved_utc"]=packet.pop("approved_utc")
+    packet["bentley_certified"]=False
+    packet["user_review_required"]=True
+    packet["auto_submit_to_draftkings"]=False
+    packet["source"]="existing football game engine; role-defense strength neutral"
+    return json.dumps(packet,indent=2).encode("utf-8")
+
+
+def load_draft(payload):
+    """Reject 'approved' snapshot confusion while preserving lineup validity."""
+    packet=json.loads(payload)
+    if packet.get("format")!="ai2-nfl-UNVALIDATED-draft-v1" or not packet.get("lineups"):
+        raise ValueError("Not a saved human-review draft")
+    if packet.get("bentley_certified") is not False:
+        raise ValueError("Draft cannot claim Bentley certification")
+    review_tables(packet["lineups"])
+    return packet
+
+
 def load_approved(payload):
     value = json.loads(payload)
     if value.get("format") != "ai2-nfl-approved-v1" or not value.get("lineups"):

@@ -49,8 +49,11 @@ def _slate_week(saved_salaries):
     return season, week
 
 def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
-                             simulation_mode="existing", availability_context=None):
+                             simulation_mode="existing", availability_context=None,
+                             draft_manual_review=False):
     """Build from the salary file; legacy projections argument is ignored."""
+    if not isinstance(draft_manual_review,bool):
+        raise ValueError("Draft manual review flag must be boolean")
     if simulation_mode not in {"existing","availability_aware"}:
         raise ValueError("Unknown NFL simulator. Select existing or availability-aware.")
     if simulation_mode=="availability_aware" and not isinstance(availability_context,dict):
@@ -63,8 +66,16 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         raise ValueError("Upload a DraftKings salary CSV to build lineups")
     season, week = _slate_week(salaries)
     research = collect_automatic_baselines(salaries, season, week)
-    if any("Official NFL injury feed unavailable" in issue for issue in research["blockers"]):
-        raise ValueError("Official game-status data cannot be retrieved; please retry when the source is available")
+    missing_official_status=any(
+        "Official NFL injury feed unavailable" in issue
+        for issue in research["blockers"])
+    if missing_official_status and not draft_manual_review:
+        raise ValueError(
+            "Official game-status data cannot be retrieved; please retry "
+            "when the source is available")
+    # In human-review DRAFT mode, draft-only projections may proceed using
+    # explicit DK salary status and historical role data. Missing official
+    # injuries stay UNKNOWN and require manual injury verification before use.
     if not research.get("pregame_role_evidence"):
         raise ValueError("Pregame consistency evidence unavailable; refusing to build from historical averages alone")
     pool, raw_rates, outs, audit = create_observed_model_pool(research)
@@ -146,11 +157,12 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
     # MAE 6.904 vs 6.911 at strength .25. Keep matchup evidence visible, but
     # reject production activation until a revised signal beats the baseline.
     defense_weight = 0.0
-    # The new role-specific engine changes individual target/carry and
-    # efficiency stat rates rather than awarding unearned fantasy points.
-    # This experimental coefficient is test-only behind the NFL Classic
-    # Bentley UI gate, pending independent paired holdout validation.
-    role_defense_strength = 0.5
+    # Manual-review drafts must not silently enable the EXPERIMENTAL
+    # role-defense strength just because draft generation is available.
+    # We can display measured matchup evidence independently while the
+    # unvalidated scoring coefficient stays neutral (0). Research-specific
+    # validation can explicitly use the experimental adapter elsewhere.
+    role_defense_strength = 0.0
 
     # The game-level simulator already redistributes OUT-player touches and
     # targets. Use unmodified rates with outs to avoid double counting.
@@ -516,6 +528,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         "qb_selection_diagnostics": qb_selection_diagnostics,
         "counterfactual_holdout": qb_selection_diagnostics.get("independent_scenario_audit",{}),
         "simulation_mode":simulation_mode,
+        "draft_manual_review_only":bool(draft_manual_review),
+        "official_injury_status_coverage_incomplete":bool(missing_official_status),
         "statistical_engine_version":str(stat_draws.get("__MODEL_VERSION__","UNKNOWN")),
         "availability_intelligence":availability_report,
         "summary": summary, "ranked": ranked,
@@ -538,13 +552,16 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
             if isinstance(research.get("opponent_role_stat_profiles"),pd.DataFrame)
             else []),
         "research_warning": (
-            "Experimental, uncalibrated own-model forecasts based on observed play "
-            "rates and official injury designations. Depth-chart changes, late "
-            "inactives, individual coverage and defensive projections require review. "
-            "Legacy broad opponent-position yard multiplier remains OFF. "
-            "Role-specific opponent stat adjustments are EXPERIMENTAL only; "
-            "the Bentley release gate blocks new live-entry builds until a "
-            "paired predictive holdout proves improvement."+
+            "DRAFT ONLY: uncalibrated player projections, manual review mandatory. "
+            "Check the official NFL game-status list and every late inactive; "
+            "depth charts, routes and individual coverage may be incomplete. "
+            "No automatic DraftKings submission. "
+            "Legacy opponent-position yard multiplier is OFF. "
+            "Unvalidated role-defense projection adjustments are OFF. "
+            "Bentley certification has NOT passed."+
+            (" Official injury feed could NOT be retrieved; "
+             "all unsourced statuses require manual verification."
+             if missing_official_status else "")+
             (" Experimental official-source player universe opted in; "
              "predictive accuracy and P90 improvement NOT YET validated."
              if simulation_mode=="availability_aware" else "")),
