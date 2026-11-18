@@ -40,8 +40,11 @@ change to PASS after the behavior is integrated in the production
 `build_oneclick_portfolio` path and the relevant evidence is examined.**
 Successful code plumbing without scoring or calibration is NOT PASS.
 
-Known failures at initiation: position-specific defensive history appears in
-reports but `defense_weight=0.0` disables its impact; possession research is
+Known failures at initiation: legacy position-wide `defense_weight=0.0`
+remains disabled after failing its earlier holdout. A NEW conservative
+role-specific defensive per-stat factor path is integrated experimentally
+behind the locked NFL Classic UI, but it is NOT independently validated and
+does NOT satisfy the acceptance gate. Possession research is
 not integrated into the one-click scoring path; the role-based defense and WR
 role candidate experiments have not earned strong independent improvement;
 full live-weekend status coverage and slate-level holdout have not passed;
