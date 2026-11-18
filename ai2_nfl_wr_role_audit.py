@@ -271,6 +271,10 @@ def receiver_role_report(rows,team_rows):
     actual_nonmodeled=t["actual_nonmodeled_rb_wr_te_targets"].sum()
     sim_total=t["simulated_total_allocated_targets_mean"].sum()
     sim_other=t["simulated_other_targets_mean"].sum()
+    known_gap=pd.to_numeric(
+        t["actual_attempts_minus_identified_rb_wr_te_targets"],
+        errors="coerce")
+    valid_gap=known_gap.dropna()
     return {
         "all_matched_wr":_metrics(f),
         "roles":roles,
@@ -280,6 +284,11 @@ def receiver_role_report(rows,team_rows):
         "eligible_wr_per_team_game_mean":round(float(t["eligible_modeled_wr"].mean()),3),
         "teams_with_3_or_more_modeled_wr":int((t["eligible_modeled_wr"]>=3).sum()),
         "actual_team_skill_player_missing_targets":team_has_missing,
+        "team_games_with_complete_qb_attempt_and_rb_wr_te_target_counts":int(len(valid_gap)),
+        "team_games_with_more_identified_targets_than_pass_attempts":int((valid_gap<0).sum()),
+        "mean_actual_pass_attempts_minus_identified_rb_wr_te_targets":(
+            round(float(valid_gap.mean()),3) if len(valid_gap) else None),
+        "attempt_minus_identified_targets_is_not_certified_throwaway_count":True,
         "actual_nonmodeled_rb_wr_te_target_share_pct":(
             round(100*float(actual_nonmodeled/actual_total),2)
             if actual_total>0 and team_has_missing==0 else None),
