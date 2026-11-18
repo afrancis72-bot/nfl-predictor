@@ -104,6 +104,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              football_universe_research=False,
              football_universe_rows=None,
              isolate_team_rng=False):
+    if football_universe_research not in (False,"wr_only","all"):
+        raise ValueError("Research football universe must be disabled, wr_only or all")
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -150,6 +152,9 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             football_extras = (
                 build_football_only_players(pool,rates,season=season,week=week)
                 if football_universe_research else None)
+            if football_universe_research=="wr_only":
+                football_extras=football_extras[
+                    football_extras["Position"].eq("WR")].copy()
             # The defensive role intervention uses only published PRE-kickoff
             # player stat history and PREgame teammate rank. The target week's
             # actual result enters grading only after forecast simulation.
@@ -215,7 +220,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             if football_universe_rows is not None:
                 football_universe_rows.append({
                     "season":season,"week":week,"game":f"{away}@{home}",
-                    "mode":("dated_unverified_football_teammates"
+                    "mode":(f"dated_unverified_{football_universe_research}"
                             if football_universe_research else "original"),
                     "internal_player_count":(
                         int(stat_draws["__FOOTBALL_PLAYER_UNIVERSE__"][
