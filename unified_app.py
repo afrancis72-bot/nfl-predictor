@@ -179,18 +179,10 @@ else:
         release_gate=nfl_classic_release_status()
         release_ready=release_gate["ready_for_entries"]
         if not release_ready:
-            st.warning(
-                "NFL CLASSIC — MANUAL-REVIEW DRAFT BUILDER AVAILABLE. "
-                "Bentley certification is NOT PASSED. You can generate and "
-                "download draft lineups, but projections and player availability "
-                "are not proven accurate. Review every player and matchup "
-                "yourself before choosing whether to enter any contest.")
             st.caption(
-                f"Release contract: {release_gate['contract_id']} · "
-                f"{release_gate['checks_passed']}/{release_gate['checks_total']} "
-                "certification checks passed. This is a user-reviewed DRAFT "
-                "workflow, not an entry-ready Bentley recommendation.")
-            with st.expander("View ALL required NFL release checks and blockers",expanded=True):
+                "NFL Classic · Draft lineup builder with experimental projections. "
+                "Review injuries and player choices before entering.")
+            with st.expander("Optional: Bentley model validation status",expanded=False):
                 st.dataframe(
                     _ai2_pd.DataFrame([{
                         "Required release check":x["criterion"],
@@ -200,8 +192,8 @@ else:
                     } for x in release_gate["blockers"]]),
                     use_container_width=True,hide_index=True)
             st.caption(
-                "NFL Showdown is a separate secondary release, also NOT "
-                "READY. PGA, NBA, and NASCAR are unaffected by this Classic gate.")
+                "Bentley forecasting validation continues separately. "
+                "NFL Showdown has not been cleared for certified recommendations.")
         st.caption("NFL Classic · Upload DraftKings salaries, then select 15, 20, 50, or 150 lineups. No projections upload required.")
         st.caption("NFL prebuild intelligence • repeated carry/target consistency gate before simulation • risk and stack evaluation • human approval required")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
@@ -243,26 +235,15 @@ else:
                        "Automatically simulates three different seeds and selects "
                        "independent offensive cores with a stricter premium risk filter. "
                        "A real current-week news and ownership feed is still unavailable.")
-        draft_acknowledged = (
-            st.checkbox(
-                "I understand these are unvalidated draft lineups. I will "
-                "personally check injuries, availability, salaries and roster "
-                "choices before using them in DraftKings.",
-                key="nfl_draft_review_ack") if not release_ready else True)
         if st.button(
-            (f"GENERATE {requested_count} REVIEW-ONLY DRAFT LINEUPS"
-             if not release_ready else f"BUILD MY {requested_count} LINEUPS"),
-            type="primary",key="nfl_one_build",use_container_width=True,
-            disabled=not draft_acknowledged):
+            f"BUILD MY {requested_count} LINEUPS",
+            type="primary",key="nfl_one_build",use_container_width=True):
             try:
-                # Bentley certification is a separate, unchanged requirement.
-                # An explicit human review acknowledgement permits DRAFTS
-                # only; it does not make any release criterion PASS.
+                # The user can build and review drafts without any forced
+                # acknowledgment. This does not change the nine release
+                # criteria for an independently validated recommendation.
                 if release_ready:
                     assert_nfl_classic_ready_for_entries()
-                elif not st.session_state.get("nfl_draft_review_ack", False):
-                    raise ValueError(
-                        "Acknowledge manual review before generating draft lineups.")
                 if upload_one is not None:
                     from ai2_nfl_inputs import parse_csv_payload
                     parse_csv_payload(upload_one.getvalue())

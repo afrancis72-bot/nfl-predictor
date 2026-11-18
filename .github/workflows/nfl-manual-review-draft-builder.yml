@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feature/nfl-manual-review-draft-builder-20261118
+      - fix/nfl-remove-draft-acknowledgment-20261118
     paths:
       - "unified_app.py"
       - "ai2_nfl_oneclick.py"
@@ -27,7 +28,7 @@ jobs:
       - name: Compile unchanged Bentley lock and new draft workflow
         run: |
           python -m py_compile ai2_nfl_release_gate.py ai2_nfl_review.py ai2_nfl_oneclick.py unified_app.py tests/test_nfl_bentley_release_gate.py tests/test_nfl_manual_review_drafts.py
-      - name: Verify user acknowledgements and separate saved draft portfolio
+      - name: Verify draft builds need no acknowledgement and save separately
         env:
           PYTHONPATH: .:tests
         run: |
@@ -44,11 +45,13 @@ jobs:
           engine=Path("ai2_nfl_oneclick.py").read_text()
           status=nfl_classic_release_status()
           assert status["checks_passed"]==0 and not status["ready_for_entries"]
-          assert 'disabled=not draft_acknowledged' in app
+          assert 'draft_acknowledged' not in app
+          assert 'nfl_draft_review_ack' not in app
+          assert 'f"BUILD MY {requested_count} LINEUPS"' in app
           assert '"BENTLEY_CERTIFIED" if release_ready' in app
           assert '"DRAFT_MANUAL_REVIEW_ONLY"' in app
           assert 'draft_manual_review=not release_ready' in app
           assert 'role_defense_strength = 0.0' in engine
           assert 'defense_weight = 0.0' in engine
-          print("User drafts enabled only with acknowledgement; Bentley NOT certified.")
+          print("NFL draft builds need no forced acknowledgement; Bentley NOT certified.")
           PY
