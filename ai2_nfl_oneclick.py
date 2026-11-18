@@ -146,6 +146,11 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
     # MAE 6.904 vs 6.911 at strength .25. Keep matchup evidence visible, but
     # reject production activation until a revised signal beats the baseline.
     defense_weight = 0.0
+    # The new role-specific engine changes individual target/carry and
+    # efficiency stat rates rather than awarding unearned fantasy points.
+    # This experimental coefficient is test-only behind the NFL Classic
+    # Bentley UI gate, pending independent paired holdout validation.
+    role_defense_strength = 0.5
 
     # The game-level simulator already redistributes OUT-player touches and
     # targets. Use unmodified rates with outs to avoid double counting.
@@ -163,6 +168,11 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         snap_profiles=research.get("snap_profiles"),
         injury_presence=research.get("injury_presence", {}),
         defense_profiles=defense_profiles, defense_weight=defense_weight,
+        role_defense_profiles=research.get("opponent_role_stat_profiles"),
+        role_defense_assignments=research.get("opponent_role_slate"),
+        role_defense_strength=role_defense_strength,
+        role_defense_target_season=season,
+        role_defense_target_week=week,
         **availability_options)
     if simulation_mode=="availability_aware":
         simulation_ledger=stat_draws.get("__FOOTBALL_PLAYER_UNIVERSE__") or {}
@@ -386,6 +396,12 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
     # usage BEFORE facing the defense, not the target game's target ranks.
     # Expose all DK salary rows, including players outside the model pool.
     role_matchup_players = research.get("opponent_role_slate") or []
+    role_defense_ledger = (stat_draws.get("__ROLE_DEFENSE_STAT_CHANNELS__")
+                           or {})
+    role_defense_issue = research.get("opponent_role_stat_issue")
+    if role_defense_issue:
+        role_defense_ledger["source_issue"] = role_defense_issue
+    role_defense_ledger["release_gate"] = "NOT READY FOR ENTRY"
     role_profile_data = research.get("opponent_role_profiles")
     role_detail_data = research.get("opponent_role_details")
     relevant_defenses = {opp for _, opp in offense_for_defense}
@@ -515,12 +531,19 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         "opponent_role_player_report": role_matchup_players,
         "opponent_role_defense_report": role_profile_report,
         "opponent_role_prior_opponents": role_detail_report,
+        "opponent_role_stat_scoring_audit": role_defense_ledger,
+        "opponent_role_stat_profiles": (
+            research.get("opponent_role_stat_profiles").to_dict("records")
+            if isinstance(research.get("opponent_role_stat_profiles"),pd.DataFrame)
+            else []),
         "research_warning": (
             "Experimental, uncalibrated own-model forecasts based on observed play "
             "rates and official injury designations. Depth-chart changes, late "
             "inactives, individual coverage and defensive projections require review. "
-            "Historical opponent-position yard adjustments are OFF after "
-            "out-of-sample validation failed to improve the base forecast."+
+            "Legacy broad opponent-position yard multiplier remains OFF. "
+            "Role-specific opponent stat adjustments are EXPERIMENTAL only; "
+            "the Bentley release gate blocks new live-entry builds until a "
+            "paired predictive holdout proves improvement."+
             (" Experimental official-source player universe opted in; "
              "predictive accuracy and P90 improvement NOT YET validated."
              if simulation_mode=="availability_aware" else "")),
