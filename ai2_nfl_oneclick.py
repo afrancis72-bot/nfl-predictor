@@ -115,11 +115,17 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
                 season=season,week=week))
         present={(str(x["player"]).casefold(),str(x["team"]).upper())
                  for x in outs}
+        newly_identified_out=[]
         for item in official_status_out:
             key=(str(item["player"]).casefold(),str(item["team"]).upper())
             if key not in present:
                 outs.append(item)
                 present.add(key)
+                newly_identified_out.append(item)
+        availability_report["newly_applied_verified_out"]=len(newly_identified_out)
+        availability_report["newly_applied_verified_out_names"]=[
+            str(x["player"])+" ("+str(x["team"])+")"
+            for x in newly_identified_out]
         # A matchup with no eligible simulated DK players is not part of the
         # scoring run; do not smuggle its unrelated article status into the
         # multi-game evidence validator.
