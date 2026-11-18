@@ -425,8 +425,9 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         "A +4.00 reading means four MORE points than those players normally "
         "produced, not four total points. Raw and sample-shrunk values both "
         "shown. Unavailable, unmatched and low-sample players have no boost. "
-        "This is NOT verified depth-chart/coverage, and no adjustment "
-        "is currently applied to simulated scores.")
+        "This is NOT verified depth-chart/coverage. No direct DK residual "
+        "bonus is used; separate source-backed stat-channel role adjustments "
+        "are experimental in the locked simulator and shown in its audit.")
     opposing_summary["component_data_issue"] = research.get("opponent_component_issue")
     opposing_summary["component_note"] = (
         "Observed passing yards/attempt, rushing yards/carry and receiving "
