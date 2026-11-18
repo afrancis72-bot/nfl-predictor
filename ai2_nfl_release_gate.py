@@ -26,8 +26,8 @@ REQUIREMENTS = (
     {
         "id": "ROLE_SPECIFIC_DEFENSE",
         "criterion": "Prior opposing QB/RB1/RB2/WR1/WR2/WR3/TE1/TE2 outcomes vs their own pregame baselines influence relevant stat channels when supported",
-        "status": "DISABLED",
-        "evidence": "Opponent-position and role analysis is collected for reports; defense_weight=0.0, role adjustments not used to score.",
+        "status": "RESEARCH_HOLDOUT_NOT_PASSED",
+        "evidence": "Legacy broad defense_weight=0.0 stays off; source-dated same-role per-stat evidence now reaches the locked scorer. 2025 W9-W12 paired football study: 96 player-games, best .25 factor changed MAE 6.2541 to 6.2236, only 0.49% improvement (<1% training threshold), game-cluster CI includes zero. Zero role-defense strength was selected; 2026 W4-W8 neutral P90 covers only 79.49% of 117 players. Full slate and prospective validation absent.",
         "pass_proof": "Leakage-free effect sizes for targets/carries/yard efficiency/TDs, opponent-quality control, sample shrinkage, and independent holdout gain.",
     },
     {

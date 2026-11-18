@@ -19,6 +19,8 @@ from ai2_nfl_game_market import market_totals_for_slate
 from ai2_nfl_matchup_diagnostics import defensive_allowance
 from ai2_nfl_defensive_efficiency import build_defense_profiles
 from ai2_nfl_defense_components import defense_component_profiles
+from ai2_nfl_role_matchups import slate_role_report
+from ai2_nfl_role_defense_engine import role_channel_profiles, apply_role_defense_to_rates
 from ai2_nfl_game_matchup import team_defense_game_profiles
 from ai2_nfl_pbp_drives import pregame_possession_profiles
 from ai2_nfl_redzone_usage import pregame_redzone_profiles
@@ -96,7 +98,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              possession_strength=0.,redzone_pbp=None,
              redzone_strength=0.,stat_audit_rows=None,
              audit_model_name="neutral",wr_role_rows=None,
-             team_target_rows=None):
+             team_target_rows=None,role_defense_strength=0.):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -109,6 +111,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             defensive_allowance(weekly,season,week),season,week) if defense_weight else {}
         components=(defense_component_profiles(weekly,season,week)
                     if component_strength else None)
+        defensive_roles=(role_channel_profiles(weekly,season,week)[0]
+                         if role_defense_strength else None)
         game_matchups=(team_defense_game_profiles(weekly,season,week)
                        if game_matchup_strength else None)
         possession_prior=(pregame_possession_profiles(
@@ -134,6 +138,26 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             if pool.empty:
                 failures.append(f"{season} W{week} {away}@{home}: no eligible prior-week QB")
                 continue
+            # The defensive role intervention uses only published PRE-kickoff
+            # player stat history and PREgame teammate rank. The target week's
+            # actual result enters grading only after forecast simulation.
+            scoring_rates=rates
+            if role_defense_strength:
+                rank_rows=[]
+                for item in pool.to_dict("records"):
+                    if item["Position"] not in ("QB","RB","WR","TE"):
+                        continue
+                    rank_rows.append({
+                        "ID":item["ID"],"Name":item["Name"],
+                        "TeamAbbrev":item["TeamAbbrev"],
+                        "Position":item["Position"],"Salary":item["Salary"],
+                        "Game Info":f"{away}@{home}","Status":""})
+                rank_report=slate_role_report(
+                    rank_rows,weekly,season,week,pd.DataFrame())
+                scoring_rates,_role_ledger=apply_role_defense_to_rates(
+                    rates,rank_report,defensive_roles,
+                    season=season,week=week,
+                    strength=role_defense_strength)
             role_ranks=role_groups=None
             if wr_role_rows is not None or team_target_rows is not None:
                 # Rank WR1/2/3 exclusively from prior-week rate observations
@@ -142,7 +166,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                     rates,pool,season,week,(away,home))
             try:
                 players,draws,stat_draws=simulate_stat_driven_dfs(
-                    pool,rates,n_sims=n_sims,seed=season*100+week,
+                    pool,scoring_rates,n_sims=n_sims,seed=season*100+week,
                     allow_role_proxies=False,team_environment=environment,
                     snap_profiles=snap,injury_presence={},
                     role_share_concentration=role_share_concentration,

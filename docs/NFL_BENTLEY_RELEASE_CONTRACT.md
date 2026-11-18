@@ -40,8 +40,11 @@ change to PASS after the behavior is integrated in the production
 `build_oneclick_portfolio` path and the relevant evidence is examined.**
 Successful code plumbing without scoring or calibration is NOT PASS.
 
-Known failures at initiation: position-specific defensive history appears in
-reports but `defense_weight=0.0` disables its impact; possession research is
+Known failures at initiation: legacy position-wide `defense_weight=0.0`
+remains disabled after failing its earlier holdout. A NEW conservative
+role-specific defensive per-stat factor path is integrated experimentally
+behind the locked NFL Classic UI, but it is NOT independently validated and
+does NOT satisfy the acceptance gate. Possession research is
 not integrated into the one-click scoring path; the role-based defense and WR
 role candidate experiments have not earned strong independent improvement;
 full live-weekend status coverage and slate-level holdout have not passed;
@@ -75,3 +78,40 @@ while the gate is red.** Research backtests are permitted in automated tests
 and isolated diagnostic code, but no app build/export should be labeled ready
 for actual DraftKings entries before acceptance. No changes to PGA/NBA/NASCAR
 workflow should be made as part of this release lock.
+
+## November 18, 2026: defensive stat-role research checkpoint
+
+- **Integrated in the locked scoring path:** `ai2_nfl_role_defense_engine.py`
+  produces a player-and-opponent-sourced record for QB1, RB1/2, WR1/2/3
+  and TE1/2. It compares previous same-role opponents' real **attempts,
+  targets, carries, catch rates, yards/attempt, yards/target and
+  yards/carry** against the same players' OWN earlier pregame baselines.
+  The resulting bounded, sample-shrunk changes affect real input stat rates,
+  not a blanket DraftKings score. They are visible in the adjustment ledger.
+- **Source safety:** never use current-game outcomes to create its prior,
+  do not adjust questionable/OUT players, reject incorrect seasons/weeks,
+  stale or unsourced roles, duplicates and low defender sample sizes.
+- **Software validation:** 75 targeted regression tests passed on
+  [GitHub Actions run 44360508158](https://github.com/afrancis72-bot/nfl-predictor/actions/runs/44360508158),
+  including the unchanged unified PGA/NASCAR modules and locked NFL UI.
+- **Predictive A/B — DID NOT PASS:** 2025 W9–12, two completed Sunday
+  games/week, 160 scenarios per game, 96 real player-game outcomes:
+  neutral simulated MAE **6.2541**; best tested strength **0.25** achieved
+  **6.2236** MAE (about **0.49%** gain). The predetermined 1% training
+  improvement threshold was NOT met, and its game-cluster bootstrap interval
+  includes zero. Training correctly selected **zero** active role-defensive
+  adjustment. The 2026 W4–8 neutral retrospective (117 player-games)
+  therefore remains **6.9092 MAE** with **79.49% P90 coverage**.
+- **No forward validation, full live slate, or release-grade calibration.**
+  These are completed-game retrospective studies previously touched by other
+  model research; a statistical difference is not established. A new seed
+  cannot make them release-ready. Record observations and preserve the gate.
+- See the dated artifacts:
+  [GitHub 2025/2026 paired backtest result](https://github.com/afrancis72-bot/nfl-predictor/actions/runs/44360508158/artifacts/14454401067).
+
+**Acceptance result: ROLE_SPECIFIC_DEFENSE is still BLOCKED.** The proposed
+coefficient `0.5` is research-only behind the application gate; no consumer
+lineup generator is enabled. Next phase: improve pregame role identification
+against actually available teammates, test the separate volume/efficiency
+channels and the full game-world conservation, and obtain an untouched
+future-week blind score/p90 comparison before granting PASS.

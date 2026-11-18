@@ -1,0 +1,73 @@
+name: Unified NFL defensive role stat engine regression
+on:
+  push:
+    branches:
+      - feature/unified-nfl-role-defense-stat-engine-20261118
+      - feature/unified-ai2-platform
+    paths:
+      - "ai2_nfl_role_defense_engine.py"
+      - "ai2_nfl_auto_intelligence.py"
+      - "ai2_nfl_oneclick.py"
+      - "ai2_nfl_simulation_adapter.py"
+      - "tests/test_nfl_role_defense_stat_engine.py"
+      - "unified_app.py"
+      - ".github/workflows/nfl-role-defense-stat-engine.yml"
+      - "scripts/backtest_nfl_role_defense_stat.py"
+      - "scripts/backtest_nfl_player_dk_means.py"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  role-defense-and-unified:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn streamlit openpyxl
+      - name: Compile engine, app, adapter and defensive research
+        run: python -m py_compile ai2_nfl_role_defense_engine.py ai2_nfl_auto_intelligence.py ai2_nfl_oneclick.py ai2_nfl_simulation_adapter.py unified_app.py
+      - name: Verify pregame defensive stat role evidence and scoring integration
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_role_defense_stat_engine.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_role_matchups.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
+      - name: Ensure Bentley release gate still fails closed
+        env:
+          PYTHONPATH: .:tests
+        run: python -m unittest discover -s tests -p 'test_nfl_bentley_release_gate.py' -v
+      - name: Preserve unified core NFL and other-sports tests
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_oneclick.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_oneclick_smoke.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_pga_unified.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nascar_unified.py' -v
+  retrospective-simulator-ab:
+    needs: role-defense-and-unified
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install source and simulation dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn
+      - name: Freeze 2025 training / 2026 retrospective same-seed football forecast A/B
+        env:
+          PYTHONPATH: .
+        run: python -m scripts.backtest_nfl_role_defense_stat --n-sims 160 --games-per-week 2 --out-dir nfl_role_defense_stat_ab
+      - name: Publish paired player-week actual-versus-prediction audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-nfl-role-defensive-stat-retrospective
+          path: nfl_role_defense_stat_ab/
+          if-no-files-found: warn
