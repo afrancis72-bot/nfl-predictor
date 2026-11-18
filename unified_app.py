@@ -171,7 +171,8 @@ else:
         from ai2_nfl_portfolio_diversity import portfolio_overlap_audit
         from ai2_nfl_review import (review_tables, named_csv, named_excel,
                                     roster_id_csv, swap_contest_tiers,
-                                    snapshot_approved, load_approved)
+                                    snapshot_approved, load_approved,
+                                    snapshot_draft, load_draft)
         from ai2_local_storage import save_file as _ai2_save_file
         import pandas as _ai2_pd
 
@@ -1085,10 +1086,19 @@ else:
                      if not release_ready else "APPROVE AND SAVE THESE 20 LINEUPS"),
                     key="nfl_approve_20"):
                     try:
-                        payload = snapshot_approved(ranked, current_digest, int(seed_one))
-                        _ai2_save_file(DATA_DIR, "NFL", "Approved 20-lineup portfolio",
-                                       "ai2_nfl_approved_20.json", payload)
-                        st.success("Approved lineup rosters and contest tiers saved separately. Future model builds cannot overwrite them.")
+                        if release_ready:
+                            payload = snapshot_approved(ranked, current_digest, int(seed_one))
+                            folder = "Approved 20-lineup portfolio"
+                            filename = "ai2_nfl_approved_20.json"
+                        else:
+                            payload = snapshot_draft(ranked, current_digest, int(seed_one))
+                            folder = "Draft 20-lineup portfolio"
+                            filename = "ai2_nfl_unvalidated_draft_20.json"
+                        _ai2_save_file(DATA_DIR, "NFL", folder, filename, payload)
+                        st.success(
+                            "Saved separately as " + ("an approved portfolio"
+                            if release_ready else "an UNVALIDATED DRAFT") +
+                            ". Previous approved lineups remain untouched.")
                     except (ValueError, OSError, sqlite3.Error) as exc:
                         st.error(f"Could not save approval: {exc}")
 
@@ -1098,17 +1108,40 @@ else:
                      if not release_ready else "APPROVE AND SAVE THESE 40 LINEUPS"),
                     key="nfl_approve_core_40"):
                     try:
-                        payload = snapshot_approved(ranked, current_digest, int(seed_one))
-                        _ai2_save_file(DATA_DIR, "NFL", "Approved 40-lineup portfolio",
-                                       "ai2_nfl_approved_40.json", payload)
-                        st.success("Your 4/16/20 selections have been approved and saved "
-                                   "separately from the experimental 50-lineup candidates. "
-                                   "Future builds will not overwrite these approvals.")
+                        if release_ready:
+                            payload = snapshot_approved(ranked, current_digest, int(seed_one))
+                            folder = "Approved 40-lineup portfolio"
+                            filename = "ai2_nfl_approved_40.json"
+                        else:
+                            payload = snapshot_draft(ranked, current_digest, int(seed_one))
+                            folder = "Draft 40-lineup portfolio"
+                            filename = "ai2_nfl_unvalidated_draft_40.json"
+                        _ai2_save_file(DATA_DIR, "NFL", folder, filename, payload)
+                        st.success(
+                            "Saved 40 lineups separately as " +
+                            ("a user-approved portfolio" if release_ready
+                             else "an UNVALIDATED DRAFT") +
+                            ". Protected prior approvals remain unchanged.")
                     except (ValueError,OSError,sqlite3.Error) as exc:
                         st.error(f"Could not save 40-entry approval: {exc}")
 
-        with st.expander("Protected approved lineups and previous entries"):
-            st.caption("The app never silently replaces human-approved lineups. Save a portable backup because Streamlit-hosted local storage may be temporary.")
+        with st.expander("Protected approved lineups, draft backups and previous entries"):
+            st.caption("User-approved portfolios and unvalidated drafts use SEPARATE storage keys. A new draft cannot replace an earlier approval. Save portable backups because Streamlit local storage may be temporary.")
+            draft_file=(get_upload("NFL","Draft 40-lineup portfolio")
+                        or get_upload("NFL","Draft 20-lineup portfolio"))
+            if draft_file:
+                try:
+                    draft=load_draft(draft_file[1])
+                    st.info("Unvalidated NFL draft saved: "+draft["saved_utc"])
+                    draft_overview,_,_=review_tables(draft["lineups"])
+                    st.dataframe(draft_overview,hide_index=True,use_container_width=True)
+                    st.download_button(
+                        "Download saved NFL manual-review draft (JSON)",
+                        data=draft_file[1],
+                        file_name="team_ai2_NFL_MANUAL_REVIEW_DRAFT.json",
+                        mime="application/json",key="nfl_saved_review_draft")
+                except (ValueError,KeyError,TypeError) as exc:
+                    st.warning("Saved NFL draft needs inspection: "+str(exc))
             approved_file = (get_upload("NFL", "Approved 40-lineup portfolio")
                              or get_upload("NFL", "Approved 20-lineup portfolio"))
             if approved_file:
