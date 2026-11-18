@@ -115,6 +115,41 @@ class RoleDefenseStatEngineTests(unittest.TestCase):
         self.assertNotIn("passing_tds_pg",changes)
         self.assertEqual(float(base.iloc[0].targets_pg),3.0)
 
+    def test_opportunity_and_efficiency_are_separate_ablation_modes(self):
+        p,_=role_channel_profiles(history(),2025,11)
+        base=rate_frame()
+        volume,vledger=apply_role_defense_to_rates(
+            base,current_slate_roles(),p,season=2025,week=11,
+            strength=1.,channel_group="opportunity")
+        efficiency,eledger=apply_role_defense_to_rates(
+            base,current_slate_roles(),p,season=2025,week=11,
+            strength=1.,channel_group="efficiency")
+        both,all_ledger=apply_role_defense_to_rates(
+            base,current_slate_roles(),p,season=2025,week=11,strength=1.)
+        self.assertEqual(volume.iloc[0].targets_pg, both.iloc[0].targets_pg)
+        self.assertEqual(efficiency.iloc[0].targets_pg, base.iloc[0].targets_pg)
+        self.assertNotEqual(volume.iloc[0].targets_pg, base.iloc[0].targets_pg)
+        self.assertTrue(all(k in {"targets","carries","pass_attempts"}
+                            for k in vledger[0]["factor_by_stat_channel"]))
+        self.assertTrue(all(k in {"catch_rate","receive_ypt","rush_ypc","pass_ypa"}
+                            for k in eledger[0]["factor_by_stat_channel"]))
+        self.assertEqual(vledger[0]["channel_group"],"opportunity")
+        self.assertEqual(eledger[0]["channel_group"],"efficiency")
+        self.assertEqual(all_ledger[0]["channel_group"],"all")
+        # For a one-player experiment, the independent channel factors
+        # compose exactly to the existing all-channel calculation.
+        for col in ("targets_pg","receptions_pg","receiving_yards_pg"):
+            v=float(volume.iloc[0][col])
+            e=float(efficiency.iloc[0][col])
+            b=float(base.iloc[0][col])
+            self.assertAlmostEqual(float(both.iloc[0][col]),v*e/b,places=6)
+
+    def test_unknown_ablation_fails_closed(self):
+        with self.assertRaisesRegex(ValueError,"Unknown defensive stat channel"):
+            apply_role_defense_to_rates(
+                rate_frame(),current_slate_roles(),pd.DataFrame(),
+                season=2025,week=11,strength=0.,channel_group="made-up")
+
     def test_out_and_questionable_are_not_promoted_as_active_wr3(self):
         p,_=role_channel_profiles(history(),2025,11)
         for s in ("OUT","IR","QUESTIONABLE","Q","GTD"):
