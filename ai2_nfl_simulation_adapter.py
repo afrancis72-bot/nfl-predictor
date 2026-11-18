@@ -6,6 +6,7 @@ flags, or use sportsbook fields. It is not a complete weekly data pipeline.
 import pandas as pd
 import numpy as np
 from dfs_stats_engine import simulate_stat_driven_dfs
+from ai2_nfl_role_defense_engine import apply_role_defense_to_rates
 
 REQUIRED_POOL = {"ID", "Name", "Position", "TeamAbbrev", "Salary", "game", "proj", "optimizer_eligible"}
 REQUIRED_RATES = {"player", "team", "position", "games_played", "pass_attempts_pg",
@@ -15,6 +16,11 @@ REQUIRED_RATES = {"player", "team", "position", "games_played", "pass_attempts_p
 def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, out_players=None,
                                  team_environment=None, snap_profiles=None, injury_presence=None,
                                  defense_profiles=None, defense_weight=0.,
+                                 role_defense_profiles=None,
+                                 role_defense_assignments=None,
+                                 role_defense_strength=0.,
+                                 role_defense_target_season=None,
+                                 role_defense_target_week=None,
                                  football_only_players=None,
                                  football_universe_target_season=None,
                                  football_universe_target_week=None,
@@ -188,7 +194,18 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
             football_availability_snapshot=football_availability_snapshots,
             football_availability_as_of_utc=football_availability_as_of_utc,
         )
-    return simulate_stat_driven_dfs(active, rates, n_sims=int(n_sims),
+    # Apply role-specific opponent evidence to real stat rate components,
+    # never to a free-floating DraftKings score. This changes the actual
+    # scoring inputs when strength > 0, with a player/source ledger attached.
+    # The consumer NFL release gate remains closed until an independently
+    # tested coefficient and real-slate checks earn production approval.
+    role_rates,role_ledger=apply_role_defense_to_rates(
+        rates,role_defense_assignments,role_defense_profiles,
+        season=role_defense_target_season,
+        week=role_defense_target_week,
+        strength=role_defense_strength)
+    players,scores,stat_draws=simulate_stat_driven_dfs(
+                                    active, role_rates, n_sims=int(n_sims),
                                     seed=int(seed), out_players=out_players,
                                     allow_role_proxies=False, team_environment=team_environment,
                                     snap_profiles=snap_profiles, injury_presence=injury_presence,
@@ -199,3 +216,18 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
                                     # inflating every roster-eligible WR projection.
                                     other_yard_strength=0.70,
                                     **football_options)
+    stat_draws["__ROLE_DEFENSE_STAT_CHANNELS__"]={
+        "mode":("EXPERIMENTAL_APPLIED" if role_ledger
+                else "NEUTRAL_NO_APPLIED_ROLE_EVIDENCE"),
+        "strength":float(role_defense_strength),
+        "player_channel_adjustments":role_ledger,
+        "adjusted_players":len(role_ledger),
+        "target_season":role_defense_target_season,
+        "target_week":role_defense_target_week,
+        "method":"Previous opposing same-role games vs their own pregame "
+                 "targets/carries/conversion/yard-per-opportunity baselines; "
+                 "shrunken effects on source-observed player stat rates",
+        "independent_simulator_accuracy_validated":False,
+        "release_ready":False,
+    }
+    return players,scores,stat_draws
