@@ -117,6 +117,17 @@ class RoleDefenseStatEngineTests(unittest.TestCase):
 
     def test_opportunity_and_efficiency_are_separate_ablation_modes(self):
         p,_=role_channel_profiles(history(),2025,11)
+        # The fixture supplies repeated target volume but may not provide
+        # enough independent efficiency observations for a valid profile.
+        # Add a source-valid, sample-sized WR3 catch-rate effect to isolate
+        # the mechanics without claiming this is real predictive evidence.
+        template=p[(p.defense=="MIA") & (p.role=="WR3") &
+                   (p.channel=="targets")].iloc[0].copy()
+        template["channel"]="catch_rate"
+        template["shrunk_relative_pct"]=-0.08
+        p=p[~((p.defense=="MIA") & (p.role=="WR3") &
+              (p.channel=="catch_rate"))]
+        p=pd.concat([p,pd.DataFrame([template])],ignore_index=True)
         base=rate_frame()
         volume,vledger=apply_role_defense_to_rates(
             base,current_slate_roles(),p,season=2025,week=11,
