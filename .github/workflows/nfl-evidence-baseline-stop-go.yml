@@ -1,0 +1,67 @@
+name: Bentley evidence weighted baseline STOP-GO research
+on:
+  push:
+    branches:
+      - feature/unified-nfl-role-defense-ledger-20261118
+    paths:
+      - "ai2_nfl_evidence_baseline.py"
+      - "scripts/backtest_nfl_evidence_baseline.py"
+      - "scripts/backtest_nfl_player_dk_means.py"
+      - "tests/test_nfl_evidence_baseline.py"
+      - ".github/workflows/nfl-evidence-baseline-stop-go.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  stop-go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install source-only research dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn
+      - name: Compile baseline research and Grade
+        run: python -m py_compile ai2_nfl_evidence_baseline.py scripts/backtest_nfl_evidence_baseline.py scripts/backtest_nfl_player_dk_means.py tests/test_nfl_evidence_baseline.py
+      - name: Fail closed on hindsight, false evidence, missing players and unlock
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_evidence_baseline.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_game_conservation.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_bentley_release_gate.py' -v
+      - name: Full-slate 2025 training and 2026 historical confirmation
+        env:
+          PYTHONPATH: .
+        run: python -u -m scripts.backtest_nfl_evidence_baseline --n-sims 250 --out-dir evidence_baseline_stop_go
+      - name: Persist same-player pregame weights and full study
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-evidence-baseline-stop-go
+          path: evidence_baseline_stop_go/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Stop-go verdict and immutable Bentley lock
+        run: |
+          python - <<'PY'
+          import json
+          x=json.load(open("evidence_baseline_stop_go/results.json"))
+          assert x["production_approved"] is False
+          assert x["classics_release_approved"] is False
+          assert x["independent_unseen_holdout"] is False
+          assert x["p90_calibration_not_improved_or_tested"] is True
+          for k,v in x["windows"].items():
+              print(k,"historic",v["history_only_mae"],
+                    "current simulator",v["simulator_only_mae"])
+              for mode in x["weights_precommitted_in_code"]:
+                  p=v[mode]
+                  print(" ",mode,"MAE",p["candidate_mae"],
+                        "gain against 2025 winner",p["lift_pct"],
+                        "position quality",p["by_position"],
+                        "training stop-go",p["passes_mean_gate"])
+          print("DECISION",x["development_decision"])
+          print("Bentley gate unchanged and locked; predictive research only.")
+          PY
