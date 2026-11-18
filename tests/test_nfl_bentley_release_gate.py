@@ -37,14 +37,15 @@ class NFLBentleyReleaseTests(unittest.TestCase):
                                     "NOT READY FOR ENTRY.*ROLE_SPECIFIC_DEFENSE"):
             assert_nfl_classic_ready_for_entries()
 
-    def test_unified_draft_builder_requires_ack_but_cannot_certify(self):
+    def test_unified_draft_builder_needs_no_ack_but_cannot_certify(self):
         source=(ROOT/"unified_app.py").read_text()
         self.assertIn('if sport == "NFL":',source)
         self.assertIn('release_gate=nfl_classic_release_status()',source)
-        self.assertIn('GENERATE {requested_count} REVIEW-ONLY DRAFT LINEUPS',source)
-        self.assertIn('key="nfl_draft_review_ack"',source)
-        self.assertIn('disabled=not draft_acknowledged',source)
-        self.assertIn('elif not st.session_state.get("nfl_draft_review_ack", False)',source)
+        self.assertIn('f"BUILD MY {requested_count} LINEUPS"',source)
+        self.assertNotIn('nfl_draft_review_ack',source)
+        self.assertNotIn('draft_acknowledged',source)
+        self.assertNotIn('disabled=not release_ready',source)
+        self.assertIn('key="nfl_one_build",use_container_width=True',source)
         self.assertIn('if release_ready:',source)
         self.assertIn('assert_nfl_classic_ready_for_entries()',source)
         self.assertIn('st.session_state.get("ai2_oneclick_result")',source)
@@ -58,7 +59,7 @@ class NFLBentleyReleaseTests(unittest.TestCase):
         self.assertIn('if sport == "PGA":',source)
         self.assertIn('if sport == "NBA":',source)
         self.assertIn('if sport == "NASCAR":',source)
-        self.assertIn('NFL CLASSIC — MANUAL-REVIEW DRAFT BUILDER AVAILABLE',source)
+        self.assertIn('Draft lineup builder with experimental projections',source)
         self.assertIn('release_gate["blockers"]',source)
 
     def test_showdown_is_not_accidentally_approved_with_classic(self):
