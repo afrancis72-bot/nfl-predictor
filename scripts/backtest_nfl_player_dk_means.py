@@ -27,6 +27,7 @@ from ai2_nfl_redzone_usage import pregame_redzone_profiles
 from dfs_stats_engine import simulate_stat_driven_dfs
 from ai2_nfl_full_player_universe import build_football_only_players
 from ai2_nfl_concurrent_targets import pregame_concurrent_target_prior
+from ai2_nfl_cohort_target_forecast import conditional_wr_targets
 from ai2_nfl_opportunity_audit import extract_player_stats
 from ai2_nfl_wr_role_audit import (pregame_receiver_ranks,receiver_row,team_other_row)
 from props_data import fetch_weekly, clean_weekly, make_rates, dk_classic_points
@@ -106,9 +107,12 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              football_universe_rows=None,
              isolate_team_rng=False,
              concurrent_target_research=False,
-             concurrent_target_rows=None):
+             concurrent_target_rows=None,
+             cohort_target_strength=0.,cohort_target_rows=None):
     if not isinstance(concurrent_target_research,bool):
         raise ValueError("Concurrent target research switch must be boolean")
+    if cohort_target_strength and (concurrent_target_research or football_universe_research or role_defense_strength):
+        raise ValueError("Isolate conditional WR target evidence from other experimental rate changes")
     if football_universe_research and concurrent_target_research:
         raise ValueError("Isolate historical universe and concurrent target ablations")
     if football_universe_research not in (False,"wr_only","all"):
@@ -174,6 +178,15 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             # player stat history and PREgame teammate rank. The target week's
             # actual result enters grading only after forecast simulation.
             scoring_rates=rates
+            if cohort_target_strength:
+                scoring_rates,cohort_ledger=conditional_wr_targets(
+                    h,rates,pool,season=season,week=week,
+                    strength=cohort_target_strength,research_proxy=True)
+                if cohort_target_rows is not None:
+                    for row in cohort_ledger:
+                        cohort_target_rows.append({
+                            "season":season,"week":week,
+                            "game":f"{away}@{home}",**row})
             if role_defense_strength:
                 rank_rows=[]
                 for item in pool.to_dict("records"):
