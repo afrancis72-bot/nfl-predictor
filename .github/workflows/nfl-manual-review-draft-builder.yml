@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feature/nfl-manual-review-draft-builder-20261118
+      - fix/nfl-remove-draft-acknowledgment-20261118
     paths:
       - "unified_app.py"
       - "ai2_nfl_oneclick.py"
