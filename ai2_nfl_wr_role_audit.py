@@ -147,6 +147,25 @@ def team_other_row(*, team, opponent,season,week,game,
     modeled_truth=sum(float(z["targets"]) for z in known.to_dict("records")
                       if (_norm_name(z["player_name"]),str(z["position"]).upper()) in modeled_keys)
     actual_nonmodeled=actual_total-modeled_truth
+    # Actual passing attempts are not the same as observed receiving targets.
+    # The difference can contain throwaways/spikes and rarely QB or other
+    # unusual targets; do not label all of it as an official no-target count.
+    passers=observations[
+        (observations["recent_team"].map(canonical_team).eq(team)) &
+        (observations["position"].astype(str).str.upper().eq("QB"))]
+    qb_attempts=pd.to_numeric(
+        passers["attempts"] if "attempts" in passers.columns
+        else pd.Series(dtype=float),errors="coerce")
+    complete_attempts=(not passers.empty and len(qb_attempts)==len(passers)
+                       and qb_attempts.notna().all() and
+                       (qb_attempts>=0).all())
+    observed_pass_attempts=(float(qb_attempts.sum()) if complete_attempts
+                            else None)
+    receiver_coverage_complete=bool(played["targets"].notna().all())
+    attempt_minus_known_targets=(
+        float(observed_pass_attempts-actual_total)
+        if observed_pass_attempts is not None and receiver_coverage_complete
+        else None)
     other_draw=np.asarray(other["targets"],dtype=float)
     if not np.isfinite(other_draw).all() or (other_draw<0).any():
         raise ValueError("Invalid OTHER target distribution")
@@ -174,6 +193,12 @@ def team_other_row(*, team, opponent,season,week,game,
         "historical_top3_wr_not_modeled":int(len(excluded_top)),
         "top3_omitted_roles":",".join(x["role"] for x in excluded_top),
         "actual_team_rb_wr_te_targets_known":actual_total,
+        "actual_qb_pass_attempts_observed":observed_pass_attempts,
+        "actual_attempts_minus_identified_rb_wr_te_targets":attempt_minus_known_targets,
+        "actual_attempt_target_counts_inconsistent":(
+            bool(attempt_minus_known_targets < 0)
+            if attempt_minus_known_targets is not None else None),
+        "pass_attempt_target_difference_is_not_certified_throwaways":True,
         "actual_targets_to_modeled_players":modeled_truth,
         "actual_nonmodeled_rb_wr_te_targets":float(actual_nonmodeled),
         "actual_team_skill_player_rows":int(len(played)),
