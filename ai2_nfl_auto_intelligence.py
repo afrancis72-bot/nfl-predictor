@@ -12,6 +12,7 @@ from ai2_nfl_matchup_diagnostics import defensive_allowance
 from ai2_nfl_opponent_relative import opponent_relative_profiles
 from ai2_nfl_defense_components import defense_component_profiles
 from ai2_nfl_role_matchups import defense_role_profiles, slate_role_report
+from ai2_nfl_role_defense_engine import role_channel_profiles
 from ai2_nfl_input_integrity import player_role_trends
 from ai2_nfl_pregame_consistency import build_pregame_role_evidence
 from ai2_nfl_team_environment import predict_team_environment
@@ -168,6 +169,15 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         component_profiles = pd.DataFrame()
         component_issue = str(exc)
     role_matchup_issue = None
+    role_stat_issue = None
+    role_stat_profiles = pd.DataFrame()
+    try:
+        role_stat_profiles, _ = role_channel_profiles(
+            history, season, week)
+    except (KeyError, ValueError, TypeError, IndexError) as exc:
+        # Explicit non-application: a failed history/role join is NOT proof
+        # of a favorable defensive matchup.
+        role_stat_issue = str(exc)
     try:
         # Position/usage-role matchup history, strictly prior games. Research
         # only: no automatic model boost until independent holdout improves.
@@ -200,6 +210,8 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         "opponent_role_details": role_matchup_details,
         "opponent_role_slate": role_matchup_slate,
         "opponent_role_issue": role_matchup_issue,
+        "opponent_role_stat_profiles": role_stat_profiles,
+        "opponent_role_stat_issue": role_stat_issue,
         "opportunity_changes": opportunity_changes, "role_trends": role_trends,
         "pregame_role_evidence": pregame_role_evidence,
         "team_environment": team_environment,
