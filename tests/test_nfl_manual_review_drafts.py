@@ -10,13 +10,15 @@ from ai2_nfl_release_gate import nfl_classic_release_status
 
 
 def sample_ranked():
-    slots=[("QB",6800),("RB",6200),("RB",5800),
-           ("WR",5500),("WR",5200),("WR",4900),
+    slots=[("QB",7300),("RB",6900),("RB",6500),
+           ("WR",6200),("WR",5800),("WR",5300),
            ("TE",4200),("WR",4600),("DST",2800)]
     players=[
         {"ID":str(i+1),"Name":f"Sample {position} {i}",
-         "Position":position,"TeamAbbrev":("AAA" if i%2 else "BBB"),
-         "Salary":salary,"proj":10.,"opponent":"BBB"}
+         "Position":position,
+         "TeamAbbrev":("AAA" if i in (0,8) or i%2 else "BBB"),
+         "Salary":salary,"proj":10.,
+         "opponent":("BBB" if i in (0,8) or i%2 else "AAA")}
         for i,(position,salary) in enumerate(slots)]
     salary=sum(p["Salary"] for p in players)
     return [{"candidate":{"players":players,"salary":salary},
