@@ -83,7 +83,9 @@ class ReceiverRoleAudits(unittest.TestCase):
 
     def test_team_OTHER_not_implicitly_equated_with_real_nonmodeled_targets(self):
         draw={
+            "__TEAM_PLAYS__|AAA":{"pregame_pass_attempts":29.},
             "__OPPORTUNITY__|AAA":{
+                "target_budget_after":31.9,
                 "other_target_allocation_budget_pg":6.,
                 "unmodeled_teammate_target_budget_pg":4.,
                 "out_context_method":"PREGAME_ABSENCE_CONDITIONED"},
@@ -115,6 +117,8 @@ class ReceiverRoleAudits(unittest.TestCase):
         self.assertFalse(r["actual_attempt_target_counts_inconsistent"])
         self.assertTrue(r["pass_attempt_target_difference_is_not_certified_throwaways"])
         self.assertAlmostEqual(r["simulated_other_targets_mean"],8)
+        self.assertAlmostEqual(r["pregame_target_weight_overhang_ratio"],1.1)
+        self.assertTrue(r["role_rates_are_diluted_if_overhang"])
         self.assertGreater(r["simulated_other_target_fraction"],.20)
         report=receiver_role_report([{
             "season":2026,"week":9,"game":"AAA@BBB",
@@ -124,6 +128,7 @@ class ReceiverRoleAudits(unittest.TestCase):
             "predicted_p10":5,"predicted_p90":15,
         }],[r])
         self.assertEqual(report["historical_top3_wr_missing_model_spots"],1)
+        self.assertEqual(report["team_games_receiver_target_weight_over_105pct_of_pass_budget"],1)
         self.assertTrue(report["actual_and_sim_other_shares_not_directly_equivalent"])
         self.assertFalse(report["production_approved"])
 
