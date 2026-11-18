@@ -1,0 +1,54 @@
+name: Actual NFL defense versus WR1 WR2 WR3 TE RB QB yardage
+on:
+  push:
+    branches:
+      - feature/unified-nfl-role-defense-ledger-20261118
+    paths:
+      - "ai2_nfl_defense_yardage_report.py"
+      - "scripts/report_nfl_defense_yards.py"
+      - "tests/test_nfl_defense_yardage_report.py"
+      - ".github/workflows/nfl-defensive-yardage-factual-report.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  current-defense-yard-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install open nflverse data dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn
+      - name: Test opponent identity and consistent yardage measurements
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m py_compile ai2_nfl_defense_yardage_report.py scripts/report_nfl_defense_yards.py tests/test_nfl_defense_yardage_report.py
+          python -m unittest discover -s tests -p 'test_nfl_defense_yardage_report.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_bentley_release_gate.py' -v
+      - name: Compare actual 2026 defenses vs opposing players own previous-game yardage
+        env:
+          PYTHONPATH: .
+        run: python -u -m scripts.report_nfl_defense_yards --season 2026 --week 12 --out-dir defense_role_yards_2026
+      - name: Save all 32 defense role matrix and every source player-game
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: actual-2026-defensive-yards-by-opponent-role
+          path: defense_role_yards_2026/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Confirm descriptive report cannot unlock app
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path("defense_role_yards_2026/source_and_limits.json").read_text())
+          assert p["production_matchup_multiplier_applied"] is False
+          assert p["target_week_excluded"] == 12
+          assert p["n_player_games"] > 50
+          print("Defensive matchups described, no fantasy forecast adjusted")
+          PY
