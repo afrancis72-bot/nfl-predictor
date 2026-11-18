@@ -17,6 +17,7 @@ from ai2_nfl_game_matchup import validated_game_profile_lookup, get_game_effect
 from ai2_nfl_possession_engine import simulate_possession_worlds
 from ai2_nfl_redzone_usage import validated_redzone_lookup, factor_for
 from ai2_nfl_other_yard_reconcile import reconcile_other_yards
+from ai2_nfl_game_conservation import audit_team_game_conservation
 from ai2_nfl_role_target_share import allocate_role_target_share
 from ai2_nfl_full_player_universe import validate_football_only_players
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
@@ -1279,6 +1280,15 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             processed.add(team)
         if wr_role_team_rng_isolated:
             rng=original_game_rng
+
+    # Independent read-only team/world accounting over exactly the stat draws
+    # used to create DraftKings scores. This does not repair bad draws or
+    # manufacture player targets; it fails closed with a specific invariant.
+    # It also records the unresolved OTHER-versus-no-target ambiguity.
+    for audited_team in teams:
+        if f'__TEAM_PLAYS__|{audited_team}' in stat_draws:
+            stat_draws[f'__TEAM_CONSERVATION__|{audited_team}'] = (
+                audit_team_game_conservation(stat_draws, x, audited_team))
 
     # Verify that skill-player non-touchdown points were actually generated.
     # A previous broken deployment returned only 0/6/12 scores while passing
