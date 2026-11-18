@@ -26,6 +26,7 @@ from ai2_nfl_pbp_drives import pregame_possession_profiles
 from ai2_nfl_redzone_usage import pregame_redzone_profiles
 from dfs_stats_engine import simulate_stat_driven_dfs
 from ai2_nfl_full_player_universe import build_football_only_players
+from ai2_nfl_concurrent_targets import pregame_concurrent_target_prior
 from ai2_nfl_opportunity_audit import extract_player_stats
 from ai2_nfl_wr_role_audit import (pregame_receiver_ranks,receiver_row,team_other_row)
 from props_data import fetch_weekly, clean_weekly, make_rates, dk_classic_points
@@ -103,7 +104,13 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              role_defense_channel_group="all",
              football_universe_research=False,
              football_universe_rows=None,
-             isolate_team_rng=False):
+             isolate_team_rng=False,
+             concurrent_target_research=False,
+             concurrent_target_rows=None):
+    if not isinstance(concurrent_target_research,bool):
+        raise ValueError("Concurrent target research switch must be boolean")
+    if football_universe_research and concurrent_target_research:
+        raise ValueError("Isolate historical universe and concurrent target ablations")
     if football_universe_research not in (False,"wr_only","all"):
         raise ValueError("Research football universe must be disabled, wr_only or all")
     h=clean_weekly(weekly)
@@ -155,6 +162,14 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             if football_universe_research=="wr_only":
                 football_extras=football_extras[
                     football_extras["Position"].eq("WR")].copy()
+            # Each opponent's prior team-games furnish contemporaneous
+            # receiver share evidence. The target week's outcome is excluded.
+            concurrent_profiles=(
+                {
+                    t:pregame_concurrent_target_prior(
+                        h,team=t,roster=pool,season=season,week=week)
+                    for t in (away,home)
+                } if concurrent_target_research else None)
             # The defensive role intervention uses only published PRE-kickoff
             # player stat history and PREgame teammate rank. The target week's
             # actual result enters grading only after forecast simulation.
@@ -191,6 +206,7 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                     football_universe_target_week=(
                         week if football_universe_research else None),
                     wr_role_team_rng_isolated=isolate_team_rng,
+                    concurrent_target_profiles=concurrent_profiles,
                     allow_role_proxies=False,team_environment=environment,
                     snap_profiles=snap,injury_presence={},
                     role_share_concentration=role_share_concentration,
@@ -217,6 +233,23 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             except (KeyError,ValueError,TypeError,IndexError) as e:
                 failures.append(f"{season} W{week} {away}@{home}: {str(e)[:150]}")
                 continue
+            if concurrent_target_rows is not None:
+                for t in (away,home):
+                    p=(stat_draws.get(f"__CONCURRENT_TARGET_SPLIT__|{t}")
+                       if concurrent_target_research else None)
+                    prior=(concurrent_profiles or {}).get(t)
+                    concurrent_target_rows.append({
+                        "season":season,"week":week,"game":f"{away}@{home}",
+                        "team":t,"research_candidate":concurrent_target_research,
+                        "prior_games":prior["observed_games"] if prior else 0,
+                        "model_active":bool(p and p.get("production_enabled") is False
+                                            and "modeled_target_weight_pg" in p),
+                        "modeled_share":prior["modeled_share"] if prior else None,
+                        "unmodeled_share":prior["unmodeled_share"] if prior else None,
+                        "no_identified_target_share":(
+                            prior["no_identified_target_share"] if prior else None),
+                        "research_only":True,
+                    })
             if football_universe_rows is not None:
                 football_universe_rows.append({
                     "season":season,"week":week,"game":f"{away}@{home}",
