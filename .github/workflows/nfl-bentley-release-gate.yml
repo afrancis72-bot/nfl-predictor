@@ -1,0 +1,48 @@
+name: NFL Bentley release lock and unchanged multi-sport regression
+on:
+  push:
+    branches:
+      - fix/unified-nfl-bentley-release-gate-20261117
+      - feature/unified-ai2-platform
+    paths:
+      - "ai2_nfl_release_gate.py"
+      - "unified_app.py"
+      - "docs/NFL_BENTLEY_RELEASE_CONTRACT.md"
+      - "tests/test_nfl_bentley_release_gate.py"
+      - ".github/workflows/nfl-bentley-release-gate.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  classic-locked-until-certified:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn streamlit openpyxl
+      - name: Compile the actual unified app and gate
+        run: |
+          python -m py_compile ai2_nfl_release_gate.py unified_app.py ai2_nfl_oneclick.py
+      - name: Require every unpassed real-world feature to lock new user lineups
+        env:
+          PYTHONPATH: .:tests
+        run: python -m unittest discover -s tests -p 'test_nfl_bentley_release_gate.py' -v
+      - name: Maintain research scoring regression without unlocking production entries
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_unified_availability_integration.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_oneclick.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_oneclick_smoke.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nfl_simulation_adapter.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nfl_team_pace_scoring.py' -v
+      - name: Verify unaffected PGA and NASCAR unified components
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_ai2_pga_unified.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nascar_unified.py' -v
