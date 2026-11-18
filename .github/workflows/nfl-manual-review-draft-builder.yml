@@ -34,7 +34,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_nfl_manual_review_drafts.py' -v
           python -m unittest discover -s tests -p 'test_nfl_bentley_release_gate.py' -v
           python -m unittest discover -s tests -p 'test_nfl_oneclick.py' -v
-          python -m unittest discover -s tests -p 'test_nfl_game_conservation.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_oneclick_smoke.py' -v
       - name: Confirm draft preview does not turn Bentley certified
         run: |
           python - <<'PY'
