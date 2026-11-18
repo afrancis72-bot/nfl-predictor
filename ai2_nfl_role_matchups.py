@@ -236,6 +236,8 @@ def slate_role_report(salary_rows, history, season, week, profiles, *, official_
             by_name[key].append(r)
     eligibility = []
     by_team_pos = defaultdict(list)
+    uncertain_team_pos = defaultdict(list)
+    uncertain_statuses = {"Q", "QUESTIONABLE", "GTD", "GAME TIME DECISION", "UNKNOWN"}
     for item in salary_rows:
         pos = str(item.get("Position", "")).upper().replace("D/ST","DST")
         if pos not in ROLE_LIMIT:
@@ -276,11 +278,22 @@ def slate_role_report(salary_rows, history, season, week, profiles, *, official_
             "Role evidence": "",
         }
         eligibility.append(row)
-        if status not in INVALID_STATUS and rate is not None and team and opponent:
+        # A questionable teammate may change who will actually be WR1/WR2/WR3.
+        # Never silently rank the others as if he were definitely available.
+        if status in uncertain_statuses and team:
+            uncertain_team_pos[(team,pos)].append(name)
+        if status not in INVALID_STATUS and status not in uncertain_statuses and rate is not None and team and opponent:
             by_team_pos[(team,pos)].append(row)
     lookup = {(str(z["defense"]),str(z["role"])):z
               for z in profiles.to_dict("records")}
     for (team,pos), candidates in by_team_pos.items():
+        if uncertain_team_pos.get((team,pos)):
+            names=", ".join(sorted(uncertain_team_pos[(team,pos)]))
+            for row in candidates:
+                row["Role evidence"]=(
+                    f"Unresolved teammate availability ({names}); "
+                    "cannot certify current within-team usage rank")
+            continue
         candidates.sort(key=lambda z: (-z["Previous role usage"],_name(z["Player"])))
         for rank,row in enumerate(candidates,1):
             if rank>ROLE_LIMIT[pos]:
