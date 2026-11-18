@@ -25,6 +25,7 @@ from ai2_nfl_game_matchup import team_defense_game_profiles
 from ai2_nfl_pbp_drives import pregame_possession_profiles
 from ai2_nfl_redzone_usage import pregame_redzone_profiles
 from dfs_stats_engine import simulate_stat_driven_dfs
+from ai2_nfl_full_player_universe import build_football_only_players
 from ai2_nfl_opportunity_audit import extract_player_stats
 from ai2_nfl_wr_role_audit import (pregame_receiver_ranks,receiver_row,team_other_row)
 from props_data import fetch_weekly, clean_weekly, make_rates, dk_classic_points
@@ -99,7 +100,10 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              redzone_strength=0.,stat_audit_rows=None,
              audit_model_name="neutral",wr_role_rows=None,
              team_target_rows=None,role_defense_strength=0.,
-             role_defense_channel_group="all"):
+             role_defense_channel_group="all",
+             football_universe_research=False,
+             football_universe_rows=None,
+             isolate_team_rng=False):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -139,6 +143,13 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             if pool.empty:
                 failures.append(f"{season} W{week} {away}@{home}: no eligible prior-week QB")
                 continue
+            # A salary/optimizer-eligible pool is not the full offensive team.
+            # This ablation includes recently observed but unlisted teammates
+            # as INTERNAL football participants, never DK optimizer selections.
+            # Status is not independently certified for retrospective games.
+            football_extras = (
+                build_football_only_players(pool,rates,season=season,week=week)
+                if football_universe_research else None)
             # The defensive role intervention uses only published PRE-kickoff
             # player stat history and PREgame teammate rank. The target week's
             # actual result enters grading only after forecast simulation.
@@ -169,6 +180,12 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             try:
                 players,draws,stat_draws=simulate_stat_driven_dfs(
                     pool,scoring_rates,n_sims=n_sims,seed=season*100+week,
+                    football_only_players=football_extras,
+                    football_universe_target_season=(
+                        season if football_universe_research else None),
+                    football_universe_target_week=(
+                        week if football_universe_research else None),
+                    wr_role_team_rng_isolated=isolate_team_rng,
                     allow_role_proxies=False,team_environment=environment,
                     snap_profiles=snap,injury_presence={},
                     role_share_concentration=role_share_concentration,
@@ -195,6 +212,20 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             except (KeyError,ValueError,TypeError,IndexError) as e:
                 failures.append(f"{season} W{week} {away}@{home}: {str(e)[:150]}")
                 continue
+            if football_universe_rows is not None:
+                football_universe_rows.append({
+                    "season":season,"week":week,"game":f"{away}@{home}",
+                    "mode":("dated_unverified_football_teammates"
+                            if football_universe_research else "original"),
+                    "internal_player_count":(
+                        int(stat_draws["__FOOTBALL_PLAYER_UNIVERSE__"][
+                            "historical_football_only_players"])),
+                    "internal_wr_count":(
+                        int(football_extras["Position"].eq("WR").sum())
+                        if football_extras is not None else 0),
+                    "confirmed_live_active":False,
+                    "research_only":True,
+                })
             observations=h[(h["season"].eq(season))&
                            (h["week"].eq(week))&
                            h["recent_team"].map(canonical_team).isin((away,home))].copy()
