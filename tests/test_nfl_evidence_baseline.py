@@ -57,7 +57,8 @@ class EvidenceBaselineTests(unittest.TestCase):
             self.assertEqual(len(x),2)
             self.assertTrue(x.blended_mean_partial_dk.notna().all())
         f=evidence_blend(self.forecast,self.evidence,"equal")
-        self.assertAlmostEqual(f.iloc[0].blended_mean_partial_dk,22.5)
+        self.assertAlmostEqual(f.loc[f.player.eq("Test WR1"),
+                                      "blended_mean_partial_dk"].iloc[0],22.5)
         with self.assertRaisesRegex(ValueError,"Unknown precommitted"):
             evidence_blend(self.forecast,self.evidence,"overfit_future")
 
@@ -66,9 +67,12 @@ class EvidenceBaselineTests(unittest.TestCase):
         fake=self.forecast.copy()
         fake["actual_partial_dk"]=[999.,-1000.]
         b=evidence_blend(fake,self.evidence,"guardrail")
-        np.testing.assert_array_equal(
-            a.blended_mean_partial_dk,b.blended_mean_partial_dk)
-        np.testing.assert_array_equal(a.historical_weight,b.historical_weight)
+        pd.testing.assert_series_equal(
+            a.set_index("player")["blended_mean_partial_dk"].sort_index(),
+            b.set_index("player")["blended_mean_partial_dk"].sort_index())
+        pd.testing.assert_series_equal(
+            a.set_index("player")["historical_weight"].sort_index(),
+            b.set_index("player")["historical_weight"].sort_index())
 
     def test_no_future_player_stats_and_no_hindsight_roster(self):
         invalid=self.evidence.copy()
@@ -97,8 +101,9 @@ class EvidenceBaselineTests(unittest.TestCase):
     def test_no_estimated_p90_created_from_mean_blend(self):
         f=evidence_blend(self.forecast,self.evidence,"guardrail")
         self.assertFalse(any(c.startswith("blended_p90") for c in f.columns))
-        np.testing.assert_allclose(
-            f["simulated_p90_dk"],self.forecast["simulated_p90_dk"])
+        p90=f.set_index("player")["simulated_p90_dk"]
+        orig=self.forecast.set_index("player")["simulated_p90_dk"]
+        pd.testing.assert_series_equal(p90.sort_index(),orig.sort_index())
 
     def test_paired_grade_and_hard_stop(self):
         f=evidence_blend(self.forecast,self.evidence,"equal")
