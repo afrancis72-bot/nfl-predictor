@@ -106,6 +106,16 @@ def audit_team_game_conservation(stat_draws, roster, team):
     other_carries = arr(other_rush, "carries", discrete=True)
     other_rush_td = arr(other_rush, "rushing_tds", discrete=True)
 
+    unidentified=stat_draws.get(f"__UNIDENTIFIED_TARGET_ATTEMPTS__|{team}")
+    if unidentified is not None:
+        if not isinstance(unidentified,dict):
+            raise ValueError(f"Conservation malformed no-identified-target record {team}")
+        no_identified_slots=arr(unidentified,"attempts",discrete=True)
+        for field in ("receiving_targets","receptions","receiving_tds"):
+            if np.any(arr(unidentified,field,discrete=True)!=0):
+                raise ValueError(f"Conservation unidentified passes awarded {field}")
+    else:
+        no_identified_slots=np.zeros(n,dtype=float)
     modeled_slots = vector_sum(receivers, "targets", discrete=True)
     modeled_catches = vector_sum(receivers, "receptions", discrete=True)
     modeled_yards = vector_sum(receivers, "receiving_yards")
@@ -117,7 +127,7 @@ def audit_team_game_conservation(stat_draws, roster, team):
     equal("dropbacks", dropbacks, attempts + sacks)
     equal("QB attempts", attempts, qb_attempts)
     equal("pass attempt slots, not certified targets",
-          attempts, modeled_slots + other_attempt_slots)
+          attempts, modeled_slots + other_attempt_slots + no_identified_slots)
     equal("completed passes", qb_completions, modeled_catches + other_catches)
     equal("passing yards", qb_yards, modeled_yards + other_yards, approx=True)
     equal("passing TDs", qb_pass_tds, modeled_rec_td + other_rec_td)
@@ -149,13 +159,23 @@ def audit_team_game_conservation(stat_draws, roster, team):
         "conserved_pass_attempt_slots": True,
         "mean_team_pass_attempts": round(float(attempts.mean()), 4),
         "mean_modeled_player_attempt_slots": round(float(modeled_slots.mean()), 4),
-        "mean_other_or_no_target_attempt_slots": round(float(other_attempt_slots.mean()), 4),
+        "mean_other_or_no_target_attempt_slots":round(
+            float((other_attempt_slots+no_identified_slots).mean()),4),
+        "mean_unmodeled_receiver_attempt_slots":round(
+            float(other_attempt_slots.mean()),4) if unidentified is not None else None,
+        "mean_no_identified_target_attempt_slots":round(
+            float(no_identified_slots.mean()),4) if unidentified is not None else None,
         "mean_team_rushes": round(float(rushes.mean()), 4),
         "mean_team_offensive_tds": round(float(all_tds.mean()), 4),
-        "unmodeled_receiver_targets_separately_identified": False,
-        "no_target_passes_separately_identified": False,
-        "audit_warning": ("OTHER represents unknown receivers plus no-target pass attempts; "
-                          "it must not be compared directly with actual nonmodeled targets"),
+        "unmodeled_receiver_targets_separately_identified":bool(unidentified is not None),
+        "no_target_passes_separately_identified":False,
+        "modeled_no_identified_target_attempts_separately":bool(unidentified is not None),
+        "audit_warning": (
+            "Research split distinguishes unmodeled receivers from passes lacking "
+            "identified RB/WR/TE target; latter are not certified throwaways"
+            if unidentified is not None else
+            "OTHER represents unknown receivers plus no-target pass attempts; "
+            "it must not be compared directly with actual nonmodeled targets"),
         "research_only": True,
         "predictive_accuracy_validated": False,
     }
