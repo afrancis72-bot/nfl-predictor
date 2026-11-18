@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/nfl-real-wr-target-check.yml"
       - "ai2_nfl_wr_role_audit.py"
+      - "tests/test_nfl_wr_role_audit.py"
       - "scripts/audit_nfl_wr_target_roles.py"
   workflow_dispatch:
 permissions:
@@ -49,6 +50,12 @@ jobs:
               print("Skipped simulator games",window["skipped_simulator_game_count"])
               print("Historical top-three WR omitted",window["historical_top3_wr_missing_model_spots"])
               print("Teams with three modeled WR",window["teams_with_3_or_more_modeled_wr"])
+              print("Team-games with complete attempts and known skill targets",
+                    window["team_games_with_complete_qb_attempt_and_rb_wr_te_target_counts"])
+              print("Mean observed attempts minus identified skill targets",
+                    window["mean_actual_pass_attempts_minus_identified_rb_wr_te_targets"])
+              print("Inconsistent observed attempt/target team-games",
+                    window["team_games_with_more_identified_targets_than_pass_attempts"])
               for role,metrics in window["roles"].items():
                   print("Role:",role,"metrics:",metrics)
               print("OTHER bucket NOT equivalent to real receiver targets;",
