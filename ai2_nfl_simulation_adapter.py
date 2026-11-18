@@ -216,6 +216,13 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
                                     # inflating every roster-eligible WR projection.
                                     other_yard_strength=0.70,
                                     **football_options)
+    # Legacy adapter tests use a sentinel non-dictionary for the scorer's
+    # third result. Preserve that pass-through ONLY for neutral simulations;
+    # an active defensive adjustment must have a real inspectable stat ledger.
+    if not isinstance(stat_draws,dict):
+        if role_defense_strength:
+            raise ValueError("Active role defense needs a complete stat audit ledger")
+        return players,scores,stat_draws
     stat_draws["__ROLE_DEFENSE_STAT_CHANNELS__"]={
         "mode":("EXPERIMENTAL_APPLIED" if role_ledger
                 else "NEUTRAL_NO_APPLIED_ROLE_EVIDENCE"),
