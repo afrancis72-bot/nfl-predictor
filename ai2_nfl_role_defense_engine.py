@@ -261,7 +261,9 @@ def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
                                  for i in range(1,n+1)}:
             continue
         status=str(row.get("Slate status","")).upper().strip()
-        if status in INVALID_STATUS:
+        if status in INVALID_STATUS or status in {"Q","QUESTIONABLE","GTD","UNKNOWN"}:
+            # Unresolved availability may change the current target hierarchy.
+            # Do not extrapolate a historic WR3 into a verified current role.
             continue
         if int(row.get("Player history games",0) or 0)<3:
             continue
