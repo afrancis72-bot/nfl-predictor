@@ -52,6 +52,13 @@ def conditional_wr_targets(history, rates, pool, *, season, week,
     if season<2020 or not 1<=week<=22:
         raise ValueError("Invalid target NFL season/week")
     result=rates.copy()
+    # Even an anchor-only player's target-week rate would leak results.
+    # Validate every candidate, not only rows eventually adjusted.
+    rate_season=pd.to_numeric(result["latest_observed_season"],errors="coerce")
+    rate_week=pd.to_numeric(result["latest_observed_week"],errors="coerce")
+    if (((rate_season>season) |
+         ((rate_season==season)&(rate_week>=week))).fillna(False)).any():
+        raise ValueError("Target-week or future usage leaked into WR cohort rates")
     ledger=[]
     if strength==0:
         return result,ledger
@@ -100,7 +107,13 @@ def conditional_wr_targets(history, rates, pool, *, season, week,
             possible=[p for p in anchors if p["_role_cohort_key"]!=name]
             if not possible or name not in by_player:
                 continue
-            anchor=possible[0]["_role_cohort_key"]
+            anchor_row=possible[0]
+            # Historical pool membership is not active status evidence.
+            # At least refuse stale anchors even in retrospective proxy mode.
+            if (int(anchor_row["latest_observed_season"])!=season or
+                week-int(anchor_row["latest_observed_week"])>3):
+                continue
+            anchor=anchor_row["_role_cohort_key"]
             # Only observed contemporaneous rows; missing means
             # "not in weekly WR box score", not automatically "injured OUT".
             rows=by_player[name]
