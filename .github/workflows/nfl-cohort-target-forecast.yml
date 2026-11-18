@@ -1,0 +1,65 @@
+name: NFL Bentley teammate-conditioned WR forecast research
+on:
+  push:
+    branches:
+      - feature/unified-nfl-role-defense-ledger-20261118
+    paths:
+      - "ai2_nfl_cohort_target_forecast.py"
+      - "scripts/backtest_nfl_player_dk_means.py"
+      - "scripts/backtest_nfl_cohort_targets.py"
+      - "tests/test_nfl_cohort_target_forecast.py"
+      - ".github/workflows/nfl-cohort-target-forecast.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  role-cohort-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install nflverse research dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn
+      - name: Compile every changed Python file
+        run: python -m py_compile ai2_nfl_cohort_target_forecast.py scripts/backtest_nfl_player_dk_means.py scripts/backtest_nfl_cohort_targets.py tests/test_nfl_cohort_target_forecast.py
+      - name: Run co-observation, football conservation and Bentley safety tests
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_cohort_target_forecast.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_game_conservation.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_bentley_release_gate.py' -v
+      - name: Run complete Sunday 2025/2026 paired WR and fantasy forecasts
+        env:
+          PYTHONPATH: .
+        run: python -u -m scripts.backtest_nfl_cohort_targets --n-sims 180 --games-per-week 0 --strength 0.5 --out-dir cohort_wr_full_sunday
+      - name: Archive all paired player, role, source ledger and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-role-cohort-target-retrospective
+          path: cohort_wr_full_sunday/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Check research never became production release
+        run: |
+          python - <<'PY'
+          import json
+          o=json.load(open("cohort_wr_full_sunday/cohort_target_results.json"))
+          assert o["production_approved"] is False
+          assert o["independent_holdout"] is False
+          assert o["same_player_game_cohort"] is True
+          for k,v in o["windows"].items():
+              assert v["paired_dk"]["n"]>0
+              assert v["release_approved"] is False
+              print(k,"n",v["paired_dk"]["n"],
+                    "changed forecasts",v["changed_player_forecasts"],
+                    "DK MAE change",v["paired_dk"]["matchup_mae_improvement_pct"])
+              for role,m in v["role_target_metrics"].items():
+                  print(role,"N",m["n"],"target MAE lift",m.get("target_mae_lift_pct"))
+          print("No Bentley Classic release or active production change")
+          PY
