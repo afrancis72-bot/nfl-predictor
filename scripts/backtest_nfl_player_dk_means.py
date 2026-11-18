@@ -98,7 +98,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              possession_strength=0.,redzone_pbp=None,
              redzone_strength=0.,stat_audit_rows=None,
              audit_model_name="neutral",wr_role_rows=None,
-             team_target_rows=None,role_defense_strength=0.):
+             team_target_rows=None,role_defense_strength=0.,
+             role_defense_channel_group="all"):
     h=clean_weekly(weekly)
     results=[]
     failures=[]
@@ -157,7 +158,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                 scoring_rates,_role_ledger=apply_role_defense_to_rates(
                     rates,rank_report,defensive_roles,
                     season=season,week=week,
-                    strength=role_defense_strength)
+                    strength=role_defense_strength,
+                    channel_group=role_defense_channel_group)
             role_ranks=role_groups=None
             if wr_role_rows is not None or team_target_rows is not None:
                 # Rank WR1/2/3 exclusively from prior-week rate observations
