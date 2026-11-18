@@ -287,7 +287,8 @@ else:
                         sources=[build_oneclick_portfolio(
                             salaries_one,seed=seed,count=50,
                             simulation_mode=nfl_engine_mode,
-                            availability_context=new_source_context)
+                            availability_context=new_source_context,
+                            draft_manual_review=not release_ready)
                             for seed in source_seeds]
                         roles={
                             str(row.get("Player",""))
@@ -327,7 +328,8 @@ else:
                         output_one = build_oneclick_portfolio(
                             salaries_one,seed=int(seed_one),count=int(requested_count),
                             simulation_mode=nfl_engine_mode,
-                            availability_context=new_source_context)
+                            availability_context=new_source_context,
+                            draft_manual_review=not release_ready)
                 # Persist audit bytes independently of Streamlit's temporary
                 # browser download URL. SQLite history can restore the last
                 # generated audit if a UI session or download expires.
