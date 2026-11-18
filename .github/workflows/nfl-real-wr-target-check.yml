@@ -1,0 +1,65 @@
+name: Bentley actual NFL WR targets vs pregame forecasts
+on:
+  push:
+    branches:
+      - feature/unified-nfl-role-defense-ledger-20261118
+    paths:
+      - ".github/workflows/nfl-real-wr-target-check.yml"
+      - "ai2_nfl_wr_role_audit.py"
+      - "scripts/audit_nfl_wr_target_roles.py"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  full-sunday-wr-target-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install read-only research dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn
+      - name: Verify no-lookahead roles and OTHER accounting
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_game_conservation.py' -v
+      - name: Replay real completed Sunday games with pregame-only WR labels
+        env:
+          PYTHONPATH: .
+        run: python -u scripts/audit_nfl_wr_target_roles.py --n-sims 300 --out-dir historical_wr_target_check
+      - name: Print measurable bias, MAE, missing WR3 and target-bucket caveats
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("historical_wr_target_check/wr_role_target_audit.json")
+          report=json.loads(p.read_text())
+          assert report["independent_holdout"] is False
+          assert report["production_approved"] is False
+          for name,window in report["windows"].items():
+              print("\n",name)
+              print("WR player rows",window["ranked_wr_target_rows"])
+              print("Team games",window["sample_team_games"])
+              print("Skipped simulator games",window["skipped_simulator_game_count"])
+              print("Historical top-three WR omitted",window["historical_top3_wr_missing_model_spots"])
+              print("Teams with three modeled WR",window["teams_with_3_or_more_modeled_wr"])
+              for role,metrics in window["roles"].items():
+                  print("Role:",role,"metrics:",metrics)
+              print("OTHER bucket NOT equivalent to real receiver targets;",
+                    window["actual_and_sim_other_shares_not_directly_equivalent"])
+          print("\nRESEARCH DIAGNOSTIC ONLY: no lineup release, no blind holdout")
+          PY
+      - name: Archive pregame-vs-actual WR and team target budgets
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pregame-vs-actual-wr-targets-research
+          path: historical_wr_target_check/
+          if-no-files-found: warn
+          retention-days: 30
