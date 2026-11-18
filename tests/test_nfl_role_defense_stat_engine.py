@@ -104,6 +104,15 @@ class RoleDefenseStatEngineTests(unittest.TestCase):
                            float(base.iloc[0].targets_pg))
         self.assertGreater(float(changed.iloc[0].receptions_pg),0.)
         self.assertNotIn("dk_fantasy_point_bonus",changed.columns)
+        # Audit proof must expose actual pregame stat inputs that changed.
+        changes=ledger[0]["stat_rate_changes"]
+        self.assertIn("targets_pg",changes)
+        for field,record in changes.items():
+            self.assertAlmostEqual(record["before"],float(base.iloc[0][field]),places=5)
+            self.assertAlmostEqual(record["after"],float(changed.iloc[0][field]),places=5)
+            self.assertAlmostEqual(record["delta"],
+                                   record["after"]-record["before"],places=5)
+        self.assertNotIn("passing_tds_pg",changes)
         self.assertEqual(float(base.iloc[0].targets_pg),3.0)
 
     def test_out_and_questionable_are_not_promoted_as_active_wr3(self):
