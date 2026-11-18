@@ -108,7 +108,13 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              isolate_team_rng=False,
              concurrent_target_research=False,
              concurrent_target_rows=None,
-             cohort_target_strength=0.,cohort_target_rows=None):
+             cohort_target_strength=0.,cohort_target_rows=None,
+             snap_role_blend_weight=.35,snap_participation_rows=None):
+    if not (isinstance(snap_role_blend_weight,(int,float)) and
+            not isinstance(snap_role_blend_weight,bool) and
+            np.isfinite(snap_role_blend_weight) and
+            0 <= snap_role_blend_weight <=1):
+        raise ValueError("Snap participation blend must be [0,1]")
     if not isinstance(concurrent_target_research,bool):
         raise ValueError("Concurrent target research switch must be boolean")
     if cohort_target_strength and (concurrent_target_research or football_universe_research or role_defense_strength):
@@ -123,7 +129,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
     for week in weeks:
         rates=make_rates(weekly,season,week)
         environment=predict_team_environment(weekly,season,week)
-        snap=predict_snap_roles(weekly,snaps,season,week,team_environment=environment)
+        snap=predict_snap_roles(weekly,snaps,season,week,team_environment=environment,
+                                weight=snap_role_blend_weight)
         market_totals=market_totals_for_slate(schedules,season,week) if market_weight else {}
         defensive=build_defense_profiles(
             defensive_allowance(weekly,season,week),season,week) if defense_weight else {}
@@ -156,6 +163,31 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             if pool.empty:
                 failures.append(f"{season} W{week} {away}@{home}: no eligible prior-week QB")
                 continue
+            if snap_participation_rows is not None:
+                # Source-tagged historical PFR participation. An absent snap
+                # row is UNCERTAIN, not OUT; this is not live active evidence.
+                for player in pool.to_dict("records"):
+                    pos=str(player["Position"]).upper()
+                    if pos not in ("QB","RB","WR","TE"):
+                        continue
+                    key=(_norm_name(player["Name"]),
+                         canonical_team(player["TeamAbbrev"]),pos)
+                    prior=snap.get(key)
+                    snap_participation_rows.append({
+                        "season":season,"week":week,
+                        "game":f"{away}@{home}","team":key[1],
+                        "player":player["Name"],"position":pos,
+                        "has_4plus_matched_pregame_snap_games":bool(prior),
+                        "observed_snap_games":prior["snap_games"] if prior else 0,
+                        "recent_snap_pct":prior["recent_snap_pct"] if prior else None,
+                        "expected_targets_from_snap":(
+                            prior["expected_targets"] if prior else None),
+                        "last_observed_snap_week":(
+                            prior["last_observed_week"] if prior else None),
+                        "blend_weight":float(snap_role_blend_weight),
+                        "snap_status_is_not_verified_active":True,
+                        "routes_verified":False,
+                    })
             # A salary/optimizer-eligible pool is not the full offensive team.
             # This ablation includes recently observed but unlisted teammates
             # as INTERNAL football participants, never DK optimizer selections.
