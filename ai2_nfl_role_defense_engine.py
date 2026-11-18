@@ -46,6 +46,15 @@ COLUMNS = ("defense","role","position","channel","observations",
            "shrunk_relative_pct","source","target_season","target_week")
 MAX_ABS_RESIDUAL = .75
 MAX_ABS_EFFECT = .18
+# Research ablations: distinguish opportunity volume from conversion efficiency.
+# "all" preserves the existing locked scoring behavior.
+OPPORTUNITY_CHANNELS = frozenset({"targets", "carries", "pass_attempts"})
+EFFICIENCY_CHANNELS = frozenset({"catch_rate", "receive_ypt", "rush_ypc", "pass_ypa"})
+CHANNEL_GROUPS = {
+    "all": OPPORTUNITY_CHANNELS | EFFICIENCY_CHANNELS,
+    "opportunity": OPPORTUNITY_CHANNELS,
+    "efficiency": EFFICIENCY_CHANNELS,
+}
 
 
 def _numeric(row, key):
@@ -227,7 +236,7 @@ def validated_role_lookup(profiles, *, season, week, strength):
 
 
 def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
-                                strength):
+                                strength,channel_group="all"):
     """Apply validated PREgame role/opponent effects to real player stat rates.
 
     Relative target/carry changes affect both opportunities and aggregate
@@ -237,6 +246,9 @@ def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
 
     Returns a fresh DataFrame and an inspectable individual-player ledger.
     """
+    if channel_group not in CHANNEL_GROUPS:
+        raise ValueError("Unknown defensive stat channel group")
+    allowed_channels=CHANNEL_GROUPS[channel_group]
     factors=validated_role_lookup(profiles,season=season,week=week,
                                    strength=strength)
     if not isinstance(rates,pd.DataFrame):
@@ -305,6 +317,8 @@ def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
                       np.isfinite(revised.at[i,col])}
         applied={}
         for channel in CHANNELS[position]:
+            if channel not in allowed_channels:
+                continue
             factor=factors.get((opponent,role,channel),1.)
             if abs(factor-1.)<1e-12:
                 continue
@@ -339,6 +353,7 @@ def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
                 continue
             ledger.append({
                 "stat_rate_changes":changes,
+                "channel_group":channel_group,
                 "player":name,"team":team,"position":position,
                 "opponent":opponent,"pregame_role":role,
                 "factor_by_stat_channel":applied,
