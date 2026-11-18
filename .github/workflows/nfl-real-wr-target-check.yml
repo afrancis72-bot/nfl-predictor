@@ -56,6 +56,11 @@ jobs:
                     window["mean_actual_pass_attempts_minus_identified_rb_wr_te_targets"])
               print("Inconsistent observed attempt/target team-games",
                     window["team_games_with_more_identified_targets_than_pass_attempts"])
+              print("Mean modeled receiver target-weight / team pass budget",
+                    window["mean_pregame_target_weight_overhang_ratio"])
+              print("Team-games with >105% pregame target weights",
+                    window["team_games_receiver_target_weight_over_105pct_of_pass_budget"],
+                    "of",window["sample_team_games"])
               for role,metrics in window["roles"].items():
                   print("Role:",role,"metrics:",metrics)
               print("OTHER bucket NOT equivalent to real receiver targets;",
