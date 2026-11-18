@@ -1,0 +1,58 @@
+name: NFL Bentley pregame snap participation signal validation
+on:
+  push:
+    branches:
+      - feature/unified-nfl-role-defense-ledger-20261118
+    paths:
+      - "scripts/backtest_nfl_player_dk_means.py"
+      - "scripts/backtest_nfl_snap_blend.py"
+      - "tests/test_nfl_participation_blend_audit.py"
+      - ".github/workflows/nfl-snap-participation-blend.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snap-signal-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install NFL research dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn
+      - name: Compile participant coverage and evaluator
+        run: python -m py_compile scripts/backtest_nfl_player_dk_means.py scripts/backtest_nfl_snap_blend.py tests/test_nfl_participation_blend_audit.py
+      - name: Verify no target-week leakage and unchanged safety gates
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_participation_blend_audit.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_game_conservation.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_bentley_release_gate.py' -v
+      - name: 2025 train and 2026 retrospective same-cohort WR targets and DK outcomes
+        env:
+          PYTHONPATH: .
+        run: python -u -m scripts.backtest_nfl_snap_blend --n-sims 180 --games-per-week 2 --out-dir participation_snap_study
+      - name: Archive candidate-by-candidate player and participation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pregame-snap-participation-research
+          path: participation_snap_study/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Confirm no research variant unlocked lineups
+        run: |
+          python - <<'PY'
+          import json
+          j=json.load(open("participation_snap_study/snap_participation_results.json"))
+          assert not j["production_approved"]
+          assert j["forward_holdout_unused"]
+          print("Selected",j["selected_weight_from_2025_only"],"not released")
+          print("Snap evidence on 2026 WR sample:",
+                j["retrospective_2026"]["WR_snap_evidence_coverage_pct"])
+          print("WR1/WR2 paired results",j["retrospective_2026"]["WR_targets"])
+          print("DK paired results",j["retrospective_2026"]["dk"])
+          PY
