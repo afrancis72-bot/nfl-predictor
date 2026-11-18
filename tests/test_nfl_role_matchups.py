@@ -130,6 +130,31 @@ class RoleOpponentMatchupTests(unittest.TestCase):
         self.assertEqual(by_name["Alpha"]["Slate status"],"OUT")
         self.assertEqual(by_name["Beta"]["Role"],"WR1")
 
+    def test_questionable_teammate_prevents_uncertain_wr_promotion(self):
+        h=example()
+        p,_=defense_role_profiles(h,2025,5,min_observations=1)
+        slate=[
+            {"ID":"1","Name":"Alpha","Position":"WR","TeamAbbrev":"AAA",
+             "Salary":"8000","Status":"Q","Game Info":"AAA@MIA 1:00PM ET"},
+            {"ID":"2","Name":"Beta","Position":"WR","TeamAbbrev":"AAA",
+             "Salary":"6000","Status":"","Game Info":"AAA@MIA 1:00PM ET"},
+            {"ID":"3","Name":"Gamma","Position":"WR","TeamAbbrev":"AAA",
+             "Salary":"4800","Status":"","Game Info":"AAA@MIA 1:00PM ET"},
+        ]
+        rows=slate_role_report(slate,h,2025,5,p)
+        by_name={r["Player"]:r for r in rows}
+        for name in ("Alpha","Beta","Gamma"):
+            self.assertEqual(by_name[name]["Role"],"")
+        self.assertIn("Unresolved teammate availability",
+                      by_name["Beta"]["Role evidence"])
+        self.assertIsNone(by_name["Beta"]["Defense versus role (shrunk DK)"])
+        # Once officially OUT, role promotion is safe as a pregame proxy.
+        rows=slate_role_report(slate,h,2025,5,p,
+                               official_status_by_id={"1":"OUT"})
+        by_name={r["Player"]:r for r in rows}
+        self.assertEqual(by_name["Beta"]["Role"],"WR1")
+        self.assertEqual(by_name["Gamma"]["Role"],"WR2")
+
     def test_last_season_only_is_not_current_wr1_evidence(self):
         h=example()
         rows=slate_role_report([
