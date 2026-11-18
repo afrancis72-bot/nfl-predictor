@@ -18,6 +18,7 @@ from ai2_nfl_possession_engine import simulate_possession_worlds
 from ai2_nfl_redzone_usage import validated_redzone_lookup, factor_for
 from ai2_nfl_other_yard_reconcile import reconcile_other_yards
 from ai2_nfl_game_conservation import audit_team_game_conservation
+from ai2_nfl_concurrent_targets import allocate_concurrent_target_budget
 from ai2_nfl_role_target_share import allocate_role_target_share
 from ai2_nfl_full_player_universe import validate_football_only_players
 from ai2_nfl_snap_roles import apply_snap_roles_to_rates
@@ -277,7 +278,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              football_universe_target_season=None,
                              football_universe_target_week=None,
                              football_availability_snapshot=None,
-                             football_availability_as_of_utc=None):
+                             football_availability_as_of_utc=None,
+                             concurrent_target_profiles=None):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -294,6 +296,11 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
         not 0 <= team_pass_env_weight <= 1):
         raise ValueError("Team passing-volume evidence weight must be finite in [0,1]")
     team_environment=team_environment or {}
+    if concurrent_target_profiles is not None and (
+            not isinstance(concurrent_target_profiles,dict)):
+        raise ValueError("Concurrent receiving evidence must be a team-keyed dictionary")
+    if concurrent_target_profiles is not None and wr_role_strength:
+        raise ValueError("Two experimental WR allocation methods cannot be stacked")
     snap_profiles=snap_profiles or {}
     if not isinstance(wr_role_team_rng_isolated,bool):
         raise ValueError("Research team RNG isolation flag must be boolean")
@@ -865,6 +872,41 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 if not np.isclose(target_rates.sum()+leftover,post_target_budget,
                                   rtol=0.,atol=1e-7):
                     raise ValueError("WR role candidate changed total receiving opportunity")
+            # Retrospective experiment only: actual SAME-GAME team targets
+            # calibrate the modeled-vs-unmodeled-vs-unidentified attempt split.
+            # No live availability is asserted. Default scorer is untouched.
+            no_identified_target_weight=0.
+            concurrent_target_enabled=False
+            if concurrent_target_profiles is not None:
+                profile=concurrent_target_profiles.get(team)
+                if profile is not None:
+                    if (profile.get("team")!=team or
+                        (int(profile.get("last_observed_season",0)),
+                         int(profile.get("last_observed_week",0))) >=
+                        (int(profile.get("target_season",0)),
+                         int(profile.get("target_week",0)))):
+                        raise ValueError("Concurrent target source is not dated pregame")
+                    if missing_t>0:
+                        raise ValueError("Concurrent study cannot double-count OUT player target redistribution")
+                    target_rates,leftover,no_identified_target_weight=(
+                        allocate_concurrent_target_budget(target_rates,pass_pg,profile))
+                    concurrent_target_enabled=True
+                    post_target_budget=float(target_rates.sum()+leftover+
+                                             no_identified_target_weight)
+                    stat_draws[f'__CONCURRENT_TARGET_SPLIT__|{team}']={
+                        **profile,
+                        "modeled_target_weight_pg":float(target_rates.sum()),
+                        "unmodeled_receiver_target_weight_pg":float(leftover),
+                        "unidentified_attempt_weight_pg":float(no_identified_target_weight),
+                        "pregame_pass_attempt_budget_pg":float(pass_pg),
+                        "historical_active_status_not_verified":True,
+                        "production_enabled":False,
+                    }
+                else:
+                    stat_draws[f'__CONCURRENT_TARGET_SPLIT__|{team}']={
+                        "status":"INSUFFICIENT_CONCURRENT_PREGAME_TEAM_GAMES",
+                        "production_enabled":False,
+                    }
             stat_draws[f'__OPPORTUNITY__|{team}']={
                 'target_budget_before':pre_target_budget,
                 'target_budget_after':post_target_budget,
@@ -886,9 +928,16 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'unmodeled_teammate_target_budget_pg':float(historical_other_targets),
                 'unmodeled_teammate_carry_budget_pg':float(historical_other_carries),
                 'other_target_allocation_budget_pg':float(leftover),
+                'no_identified_target_attempt_budget_pg':float(no_identified_target_weight),
+                'research_concurrent_target_enabled':concurrent_target_enabled,
                 'other_carry_allocation_budget_pg':float(carry_other)}
 
-            tprob=np.append(np.maximum(target_rates,0),leftover); tprob=tprob/tprob.sum()
+            if concurrent_target_enabled:
+                tprob=np.append(np.maximum(target_rates,0),
+                                [leftover,no_identified_target_weight])
+            else:
+                tprob=np.append(np.maximum(target_rates,0),leftover)
+            tprob=tprob/tprob.sum()
             targ=_multinomial_rows(rng,attempts,tprob,concentration=role_share_concentration)
             # Carry allocation includes QB and an unmodeled bucket.
             qb_carry=_safe(qr.get('carries_pg') if qr is not None else np.nan,3.0)
@@ -914,7 +963,9 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 team_rec_yd+=recyd; team_comp+=recs
 
             # Explicit accounting-only OTHER receiver bucket.
-            oth_t=targ[:,-1]
+            oth_t=(targ[:,-2] if concurrent_target_enabled else targ[:,-1])
+            unidentified_attempts=(targ[:,-1] if concurrent_target_enabled
+                                   else np.zeros(ns,dtype=np.int32))
             team_catch_rate=float(np.clip(comp_pg/max(pass_pg,1),.35,.82))
             oth_c=rng.binomial(oth_t,team_catch_rate)
             oth_y=np.where(oth_c>0,rng.gamma(np.maximum(oth_c,1)*2.0,4.5),0.)
@@ -1204,6 +1255,15 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                                 np.maximum(0.,rng.normal(oth_carries*oth_ypc,
                                 np.sqrt(np.maximum(oth_carries,1))*1.8,ns)),0.)
 
+            if concurrent_target_enabled:
+                stat_draws[f"__UNIDENTIFIED_TARGET_ATTEMPTS__|{team}"]={
+                    "attempts":unidentified_attempts,
+                    "receiving_targets":np.zeros(ns,dtype=np.int32),
+                    "receptions":np.zeros(ns,dtype=np.int32),
+                    "receiving_tds":np.zeros(ns,dtype=np.int32),
+                    "note":"No identified RB/WR/TE target in historical weekly data; not certified throwaways",
+                    "research_only":True,
+                }
             stat_draws[f"__OTHER_RECEIVER__|{team}"]={
                 'targets':oth_t,'receptions':oth_c,'receiving_yards':oth_y,'receiving_tds':oth_rec_td}
             stat_draws[f"__OTHER_RUSHER__|{team}"]={
