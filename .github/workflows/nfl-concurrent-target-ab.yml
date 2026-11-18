@@ -1,0 +1,66 @@
+name: NFL Bentley concurrent team-game target allocation research
+on:
+  push:
+    branches:
+      - feature/unified-nfl-role-defense-ledger-20261118
+    paths:
+      - "ai2_nfl_concurrent_targets.py"
+      - "ai2_nfl_game_conservation.py"
+      - "dfs_stats_engine.py"
+      - "scripts/backtest_nfl_player_dk_means.py"
+      - "scripts/backtest_nfl_concurrent_targets.py"
+      - "tests/test_nfl_concurrent_targets.py"
+      - ".github/workflows/nfl-concurrent-target-ab.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install read-only simulation dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn
+      - name: Compile model and source-aware test scripts
+        run: |
+          python -m py_compile ai2_nfl_concurrent_targets.py dfs_stats_engine.py ai2_nfl_game_conservation.py scripts/backtest_nfl_player_dk_means.py scripts/backtest_nfl_concurrent_targets.py tests/test_nfl_concurrent_targets.py
+      - name: Test future leak protection, target reconciliation and normal engine unchanged
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_concurrent_targets.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_game_conservation.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nfl_team_pace_scoring.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_bentley_release_gate.py' -v
+      - name: Paired NFL Sundays (research retrospective, not blind)
+        env:
+          PYTHONPATH: .
+        run: python -u -m scripts.backtest_nfl_concurrent_targets --n-sims 160 --games-per-week 2 --out-dir research_concurrent_targets
+      - name: Save player and role forecasts including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: concurrent-team-target-research
+          path: research_concurrent_targets/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Enforce non-release metadata
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open("research_concurrent_targets/validation.json"))
+          assert p["production_approved"] is False
+          assert p["true_prospective"] is False
+          for label,x in p["windows"].items():
+              print(label,x["paired_dk"]["n"],
+                    "WR1",x["by_wr_role_targets"]["WR1"],
+                    "WR2",x["by_wr_role_targets"]["WR2"],
+                    "no profile",x["no_profile_team_games"])
+              assert x["result_is_prospective_release_evidence"] is False
+          print("Bentley LIVE lineup gate remains locked.")
+          PY

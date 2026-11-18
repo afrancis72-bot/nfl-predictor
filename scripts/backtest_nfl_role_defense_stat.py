@@ -26,12 +26,16 @@ STRENGTHS=(0.,.25,.5,1.)
 
 
 def run_comparison(history,schedules,snaps,*,n_sims=320,
-                   games_per_week=2,train_weeks=TRAIN,test_weeks=TEST):
+                   games_per_week=2,train_weeks=TRAIN,test_weeks=TEST,
+                   channel_group="all"):
+    if channel_group not in {"all","opportunity","efficiency"}:
+        raise ValueError("Unknown defensive stat channel group")
     def run(season,weeks,s):
         rows,errors=evaluate(
             history,schedules,snaps,season,weeks,
             games_per_week=games_per_week,n_sims=n_sims,
-            role_defense_strength=s,component_strength=0.,
+            role_defense_strength=s,
+            role_defense_channel_group=channel_group,component_strength=0.,
             defense_weight=0.,game_matchup_strength=0.,
             possession_strength=0.)
         if rows.empty:
@@ -86,6 +90,7 @@ def run_comparison(history,schedules,snaps,*,n_sims=320,
     }
     return {
         "name":"Leakage-free defense-versus-pregame-role per-stat multiplier A/B",
+        "channel_group":channel_group,
         "historical_training":"2025 weeks "+",".join(map(str,train_weeks)),
         "retrospective_test":"2026 weeks "+",".join(map(str,test_weeks)),
         "completed_sunday_games_per_week":games_per_week,
@@ -115,6 +120,8 @@ def main(argv=None):
     parser.add_argument("--n-sims",type=int,default=320)
     parser.add_argument("--games-per-week",type=int,default=2)
     parser.add_argument("--out-dir",default="nfl_role_defense_stat_ab")
+    parser.add_argument("--channel-group",choices=("all","opportunity","efficiency"),
+                        default="all",help="Defensive adjustment channels to test")
     args=parser.parse_args(argv)
     if not 100<=args.n_sims<=10000:
         parser.error("n-sims must be 100..10000")
@@ -125,12 +132,14 @@ def main(argv=None):
     snaps=fetch_snap_counts([2025,2026])
     result,paired=run_comparison(
         weekly,schedules,snaps,n_sims=args.n_sims,
-        games_per_week=args.games_per_week)
+        games_per_week=args.games_per_week,
+        channel_group=args.channel_group)
     dest=Path(args.out_dir);dest.mkdir(parents=True,exist_ok=True)
     (dest/"results.json").write_text(json.dumps(result,indent=2,
                                    allow_nan=False),encoding="utf-8")
     paired.to_csv(dest/"paired_player_game_scores.csv",index=False)
     print(json.dumps({
+        "channel_group":args.channel_group,
         "2025_training_selected_strength":
             result["chosen_strength_trained_only_on_2025"],
         "2026_retrospective":result["2026_test"],

@@ -25,6 +25,9 @@ from ai2_nfl_game_matchup import team_defense_game_profiles
 from ai2_nfl_pbp_drives import pregame_possession_profiles
 from ai2_nfl_redzone_usage import pregame_redzone_profiles
 from dfs_stats_engine import simulate_stat_driven_dfs
+from ai2_nfl_full_player_universe import build_football_only_players
+from ai2_nfl_concurrent_targets import pregame_concurrent_target_prior
+from ai2_nfl_cohort_target_forecast import conditional_wr_targets
 from ai2_nfl_opportunity_audit import extract_player_stats
 from ai2_nfl_wr_role_audit import (pregame_receiver_ranks,receiver_row,team_other_row)
 from props_data import fetch_weekly, clean_weekly, make_rates, dk_classic_points
@@ -98,14 +101,37 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              possession_strength=0.,redzone_pbp=None,
              redzone_strength=0.,stat_audit_rows=None,
              audit_model_name="neutral",wr_role_rows=None,
-             team_target_rows=None,role_defense_strength=0.):
+             team_target_rows=None,role_defense_strength=0.,
+             role_defense_channel_group="all",
+             football_universe_research=False,
+             football_universe_rows=None,
+             isolate_team_rng=False,
+             concurrent_target_research=False,
+             concurrent_target_rows=None,
+             cohort_target_strength=0.,cohort_target_rows=None,
+             snap_role_blend_weight=.35,snap_participation_rows=None,
+             pregame_evidence_rows=None):
+    if not (isinstance(snap_role_blend_weight,(int,float)) and
+            not isinstance(snap_role_blend_weight,bool) and
+            np.isfinite(snap_role_blend_weight) and
+            0 <= snap_role_blend_weight <=1):
+        raise ValueError("Snap participation blend must be [0,1]")
+    if not isinstance(concurrent_target_research,bool):
+        raise ValueError("Concurrent target research switch must be boolean")
+    if cohort_target_strength and (concurrent_target_research or football_universe_research or role_defense_strength):
+        raise ValueError("Isolate conditional WR target evidence from other experimental rate changes")
+    if football_universe_research and concurrent_target_research:
+        raise ValueError("Isolate historical universe and concurrent target ablations")
+    if football_universe_research not in (False,"wr_only","all"):
+        raise ValueError("Research football universe must be disabled, wr_only or all")
     h=clean_weekly(weekly)
     results=[]
     failures=[]
     for week in weeks:
         rates=make_rates(weekly,season,week)
         environment=predict_team_environment(weekly,season,week)
-        snap=predict_snap_roles(weekly,snaps,season,week,team_environment=environment)
+        snap=predict_snap_roles(weekly,snaps,season,week,team_environment=environment,
+                                weight=snap_role_blend_weight)
         market_totals=market_totals_for_slate(schedules,season,week) if market_weight else {}
         defensive=build_defense_profiles(
             defensive_allowance(weekly,season,week),season,week) if defense_weight else {}
@@ -138,10 +164,62 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             if pool.empty:
                 failures.append(f"{season} W{week} {away}@{home}: no eligible prior-week QB")
                 continue
+            if snap_participation_rows is not None:
+                # Source-tagged historical PFR participation. An absent snap
+                # row is UNCERTAIN, not OUT; this is not live active evidence.
+                for player in pool.to_dict("records"):
+                    pos=str(player["Position"]).upper()
+                    if pos not in ("QB","RB","WR","TE"):
+                        continue
+                    key=(_norm_name(player["Name"]),
+                         canonical_team(player["TeamAbbrev"]),pos)
+                    prior=snap.get(key)
+                    snap_participation_rows.append({
+                        "season":season,"week":week,
+                        "game":f"{away}@{home}","team":key[1],
+                        "player":player["Name"],"position":pos,
+                        "has_4plus_matched_pregame_snap_games":bool(prior),
+                        "observed_snap_games":prior["snap_games"] if prior else 0,
+                        "recent_snap_pct":prior["recent_snap_pct"] if prior else None,
+                        "expected_targets_from_snap":(
+                            prior["expected_targets"] if prior else None),
+                        "last_observed_snap_week":(
+                            prior["last_observed_week"] if prior else None),
+                        "blend_weight":float(snap_role_blend_weight),
+                        "snap_status_is_not_verified_active":True,
+                        "routes_verified":False,
+                    })
+            # A salary/optimizer-eligible pool is not the full offensive team.
+            # This ablation includes recently observed but unlisted teammates
+            # as INTERNAL football participants, never DK optimizer selections.
+            # Status is not independently certified for retrospective games.
+            football_extras = (
+                build_football_only_players(pool,rates,season=season,week=week)
+                if football_universe_research else None)
+            if football_universe_research=="wr_only":
+                football_extras=football_extras[
+                    football_extras["Position"].eq("WR")].copy()
+            # Each opponent's prior team-games furnish contemporaneous
+            # receiver share evidence. The target week's outcome is excluded.
+            concurrent_profiles=(
+                {
+                    t:pregame_concurrent_target_prior(
+                        h,team=t,roster=pool,season=season,week=week)
+                    for t in (away,home)
+                } if concurrent_target_research else None)
             # The defensive role intervention uses only published PRE-kickoff
             # player stat history and PREgame teammate rank. The target week's
             # actual result enters grading only after forecast simulation.
             scoring_rates=rates
+            if cohort_target_strength:
+                scoring_rates,cohort_ledger=conditional_wr_targets(
+                    h,rates,pool,season=season,week=week,
+                    strength=cohort_target_strength,research_proxy=True)
+                if cohort_target_rows is not None:
+                    for row in cohort_ledger:
+                        cohort_target_rows.append({
+                            "season":season,"week":week,
+                            "game":f"{away}@{home}",**row})
             if role_defense_strength:
                 rank_rows=[]
                 for item in pool.to_dict("records"):
@@ -157,7 +235,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                 scoring_rates,_role_ledger=apply_role_defense_to_rates(
                     rates,rank_report,defensive_roles,
                     season=season,week=week,
-                    strength=role_defense_strength)
+                    strength=role_defense_strength,
+                    channel_group=role_defense_channel_group)
             role_ranks=role_groups=None
             if wr_role_rows is not None or team_target_rows is not None:
                 # Rank WR1/2/3 exclusively from prior-week rate observations
@@ -167,6 +246,13 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             try:
                 players,draws,stat_draws=simulate_stat_driven_dfs(
                     pool,scoring_rates,n_sims=n_sims,seed=season*100+week,
+                    football_only_players=football_extras,
+                    football_universe_target_season=(
+                        season if football_universe_research else None),
+                    football_universe_target_week=(
+                        week if football_universe_research else None),
+                    wr_role_team_rng_isolated=isolate_team_rng,
+                    concurrent_target_profiles=concurrent_profiles,
                     allow_role_proxies=False,team_environment=environment,
                     snap_profiles=snap,injury_presence={},
                     role_share_concentration=role_share_concentration,
@@ -193,6 +279,37 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
             except (KeyError,ValueError,TypeError,IndexError) as e:
                 failures.append(f"{season} W{week} {away}@{home}: {str(e)[:150]}")
                 continue
+            if concurrent_target_rows is not None:
+                for t in (away,home):
+                    p=(stat_draws.get(f"__CONCURRENT_TARGET_SPLIT__|{t}")
+                       if concurrent_target_research else None)
+                    prior=(concurrent_profiles or {}).get(t)
+                    concurrent_target_rows.append({
+                        "season":season,"week":week,"game":f"{away}@{home}",
+                        "team":t,"research_candidate":concurrent_target_research,
+                        "prior_games":prior["observed_games"] if prior else 0,
+                        "model_active":bool(p and p.get("production_enabled") is False
+                                            and "modeled_target_weight_pg" in p),
+                        "modeled_share":prior["modeled_share"] if prior else None,
+                        "unmodeled_share":prior["unmodeled_share"] if prior else None,
+                        "no_identified_target_share":(
+                            prior["no_identified_target_share"] if prior else None),
+                        "research_only":True,
+                    })
+            if football_universe_rows is not None:
+                football_universe_rows.append({
+                    "season":season,"week":week,"game":f"{away}@{home}",
+                    "mode":(f"dated_unverified_{football_universe_research}"
+                            if football_universe_research else "original"),
+                    "internal_player_count":(
+                        int(stat_draws["__FOOTBALL_PLAYER_UNIVERSE__"][
+                            "historical_football_only_players"])),
+                    "internal_wr_count":(
+                        int(football_extras["Position"].eq("WR").sum())
+                        if football_extras is not None else 0),
+                    "confirmed_live_active":False,
+                    "research_only":True,
+                })
             observations=h[(h["season"].eq(season))&
                            (h["week"].eq(week))&
                            h["recent_team"].map(canonical_team).isin((away,home))].copy()
@@ -259,6 +376,37 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                         season=season,week=week,observed=observed[0],
                         prior=pre,simulated_stats=stat_draws.get(player_name),
                         n_sims=n_sims,model=audit_model_name))
+                if pregame_evidence_rows is not None:
+                    # ALL fields derive from prior nflverse rates and PFR snaps.
+                    # User status is unknown without the separately frozen
+                    # official current-week evidence; don't invent ACTIVE.
+                    s=snap.get((_norm_name(p["Name"]),
+                                canonical_team(p["TeamAbbrev"]),
+                                str(p["Position"]).upper()),{})
+                    last_season=int(pre.get("latest_observed_season",0))
+                    last_week=int(pre.get("latest_observed_week",0))
+                    if last_season>season or (
+                            last_season==season and last_week>=week):
+                        raise ValueError("Future player-history date in evidence audit")
+                    if s and (int(s["last_observed_season"])>season or
+                        (int(s["last_observed_season"])==season and
+                         int(s["last_observed_week"])>=week)):
+                        raise ValueError("Future offensive snaps in evidence audit")
+                    pregame_evidence_rows.append({
+                        "season":season,"week":week,"game":f"{away}@{home}",
+                        "player":p["Name"],"team":p["TeamAbbrev"],
+                        "position":p["Position"],
+                        "prior_player_games":int(pre.get("games_played",0)),
+                        "last_player_season":last_season,
+                        "last_player_week":last_week,
+                        "has_four_plus_snap_games":bool(s),
+                        "snap_games":int(s.get("snap_games",0)) if s else 0,
+                        "snap_last_observed_week":(
+                            int(s["last_observed_week"]) if s else None),
+                        "routes_verified":False,
+                        "game_day_active_verified":False,
+                        "source":"nflverse dated player rates and PFR offensive snaps",
+                    })
                 results.append({
                     "season":season,"week":week,"player":p["Name"],
                     "team":p["TeamAbbrev"],"position":p["Position"],

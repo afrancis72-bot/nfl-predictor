@@ -125,8 +125,15 @@ def team_other_row(*, team, opponent,season,week,game,
     label=engine_team(team)  # The simulator uses WSH internally; schedules may say WAS.
     diag=stat_draws.get(f"__OPPORTUNITY__|{label}")
     other=stat_draws.get(f"__OTHER_RECEIVER__|{label}")
-    if not isinstance(diag,dict) or not isinstance(other,dict):
+    team_plays=stat_draws.get(f"__TEAM_PLAYS__|{label}")
+    if (not isinstance(diag,dict) or not isinstance(other,dict)
+        or not isinstance(team_plays,dict)):
         raise ValueError(f"Missing simulation target conservation for {label}")
+    passes=_finite(team_plays.get("pregame_pass_attempts"))
+    target_budget=_finite(diag.get("target_budget_after"))
+    if passes is None or passes<=0 or target_budget is None or target_budget<=0:
+        raise ValueError(f"Missing pregame passing budget reconciliation for {label}")
+    budget_ratio=target_budget/passes
     model_skill=pool[
         (pool["TeamAbbrev"].eq(team)) &
         (pool["Position"].isin(("RB","WR","TE")))
@@ -147,6 +154,25 @@ def team_other_row(*, team, opponent,season,week,game,
     modeled_truth=sum(float(z["targets"]) for z in known.to_dict("records")
                       if (_norm_name(z["player_name"]),str(z["position"]).upper()) in modeled_keys)
     actual_nonmodeled=actual_total-modeled_truth
+    # Actual passing attempts are not the same as observed receiving targets.
+    # The difference can contain throwaways/spikes and rarely QB or other
+    # unusual targets; do not label all of it as an official no-target count.
+    passers=observations[
+        (observations["recent_team"].map(canonical_team).eq(team)) &
+        (observations["position"].astype(str).str.upper().eq("QB"))]
+    qb_attempts=pd.to_numeric(
+        passers["attempts"] if "attempts" in passers.columns
+        else pd.Series(dtype=float),errors="coerce")
+    complete_attempts=(not passers.empty and len(qb_attempts)==len(passers)
+                       and qb_attempts.notna().all() and
+                       (qb_attempts>=0).all())
+    observed_pass_attempts=(float(qb_attempts.sum()) if complete_attempts
+                            else None)
+    receiver_coverage_complete=bool(played["targets"].notna().all())
+    attempt_minus_known_targets=(
+        float(observed_pass_attempts-actual_total)
+        if observed_pass_attempts is not None and receiver_coverage_complete
+        else None)
     other_draw=np.asarray(other["targets"],dtype=float)
     if not np.isfinite(other_draw).all() or (other_draw<0).any():
         raise ValueError("Invalid OTHER target distribution")
@@ -174,6 +200,12 @@ def team_other_row(*, team, opponent,season,week,game,
         "historical_top3_wr_not_modeled":int(len(excluded_top)),
         "top3_omitted_roles":",".join(x["role"] for x in excluded_top),
         "actual_team_rb_wr_te_targets_known":actual_total,
+        "actual_qb_pass_attempts_observed":observed_pass_attempts,
+        "actual_attempts_minus_identified_rb_wr_te_targets":attempt_minus_known_targets,
+        "actual_attempt_target_counts_inconsistent":(
+            bool(attempt_minus_known_targets < 0)
+            if attempt_minus_known_targets is not None else None),
+        "pass_attempt_target_difference_is_not_certified_throwaways":True,
         "actual_targets_to_modeled_players":modeled_truth,
         "actual_nonmodeled_rb_wr_te_targets":float(actual_nonmodeled),
         "actual_team_skill_player_rows":int(len(played)),
@@ -181,6 +213,10 @@ def team_other_row(*, team, opponent,season,week,game,
         "actual_nonmodeled_target_fraction":(
             float(actual_nonmodeled/actual_total) if actual_total>0 else None),
         "simulated_other_targets_mean":float(other_draw.mean()),
+        "pregame_pass_attempts_budget":float(passes),
+        "pregame_player_plus_other_target_weight_sum":float(target_budget),
+        "pregame_target_weight_overhang_ratio":round(float(budget_ratio),6),
+        "role_rates_are_diluted_if_overhang":bool(budget_ratio>1.05),
         "simulated_total_allocated_targets_mean":float(total.mean()),
         "simulated_other_target_fraction":float(
             other_draw.sum()/total.sum()),
@@ -246,15 +282,32 @@ def receiver_role_report(rows,team_rows):
     actual_nonmodeled=t["actual_nonmodeled_rb_wr_te_targets"].sum()
     sim_total=t["simulated_total_allocated_targets_mean"].sum()
     sim_other=t["simulated_other_targets_mean"].sum()
+    budget_ratio=pd.to_numeric(t["pregame_target_weight_overhang_ratio"],errors="coerce")
+    if budget_ratio.isna().any() or not np.isfinite(budget_ratio).all():
+        raise ValueError("Missing pregame team pass/receiver weight accounting")
+    known_gap=pd.to_numeric(
+        t["actual_attempts_minus_identified_rb_wr_te_targets"],
+        errors="coerce")
+    valid_gap=known_gap.dropna()
     return {
         "all_matched_wr":_metrics(f),
         "roles":roles,
         "sample_team_games":int(len(t)),
+        "mean_pregame_target_weight_overhang_ratio":round(float(budget_ratio.mean()),4),
+        "team_games_receiver_target_weight_over_105pct_of_pass_budget":int(
+            budget_ratio.gt(1.05).sum()),
+        "pct_team_games_receiver_target_weight_over_105pct_of_pass_budget":round(
+            float(100*budget_ratio.gt(1.05).mean()),2),
         "rank3_omitted_team_games":int((t["historical_top3_wr_not_modeled"]>0).sum()),
         "historical_top3_wr_missing_model_spots":int(t["historical_top3_wr_not_modeled"].sum()),
         "eligible_wr_per_team_game_mean":round(float(t["eligible_modeled_wr"].mean()),3),
         "teams_with_3_or_more_modeled_wr":int((t["eligible_modeled_wr"]>=3).sum()),
         "actual_team_skill_player_missing_targets":team_has_missing,
+        "team_games_with_complete_qb_attempt_and_rb_wr_te_target_counts":int(len(valid_gap)),
+        "team_games_with_more_identified_targets_than_pass_attempts":int((valid_gap<0).sum()),
+        "mean_actual_pass_attempts_minus_identified_rb_wr_te_targets":(
+            round(float(valid_gap.mean()),3) if len(valid_gap) else None),
+        "attempt_minus_identified_targets_is_not_certified_throwaway_count":True,
         "actual_nonmodeled_rb_wr_te_target_share_pct":(
             round(100*float(actual_nonmodeled/actual_total),2)
             if actual_total>0 and team_has_missing==0 else None),

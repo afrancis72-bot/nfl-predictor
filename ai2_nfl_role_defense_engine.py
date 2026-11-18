@@ -46,6 +46,15 @@ COLUMNS = ("defense","role","position","channel","observations",
            "shrunk_relative_pct","source","target_season","target_week")
 MAX_ABS_RESIDUAL = .75
 MAX_ABS_EFFECT = .18
+# Research ablations: distinguish opportunity volume from conversion efficiency.
+# "all" preserves the existing locked scoring behavior.
+OPPORTUNITY_CHANNELS = frozenset({"targets", "carries", "pass_attempts"})
+EFFICIENCY_CHANNELS = frozenset({"catch_rate", "receive_ypt", "rush_ypc", "pass_ypa"})
+CHANNEL_GROUPS = {
+    "all": OPPORTUNITY_CHANNELS | EFFICIENCY_CHANNELS,
+    "opportunity": OPPORTUNITY_CHANNELS,
+    "efficiency": EFFICIENCY_CHANNELS,
+}
 
 
 def _numeric(row, key):
@@ -227,7 +236,7 @@ def validated_role_lookup(profiles, *, season, week, strength):
 
 
 def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
-                                strength):
+                                strength,channel_group="all"):
     """Apply validated PREgame role/opponent effects to real player stat rates.
 
     Relative target/carry changes affect both opportunities and aggregate
@@ -237,6 +246,9 @@ def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
 
     Returns a fresh DataFrame and an inspectable individual-player ledger.
     """
+    if channel_group not in CHANNEL_GROUPS:
+        raise ValueError("Unknown defensive stat channel group")
+    allowed_channels=CHANNEL_GROUPS[channel_group]
     factors=validated_role_lookup(profiles,season=season,week=week,
                                    strength=strength)
     if not isinstance(rates,pd.DataFrame):
@@ -296,8 +308,17 @@ def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
         if key not in indexed or not opponent or position!=role[:2]:
             continue
         i=indexed[key]
+        # Freeze actual pregame input rates for an auditable before/after
+        # comparison. A multiplier ledger alone cannot prove which stat
+        # channels were modified on the scoring path.
+        before_rates={col:float(revised.at[i,col]) for col in stat_fields
+                      if col in revised.columns and
+                      pd.notna(revised.at[i,col]) and
+                      np.isfinite(revised.at[i,col])}
         applied={}
         for channel in CHANNELS[position]:
+            if channel not in allowed_channels:
+                continue
             factor=factors.get((opponent,role,channel),1.)
             if abs(factor-1.)<1e-12:
                 continue
@@ -321,7 +342,18 @@ def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
                 if pd.notna(old) and np.isfinite(old) and old>=0:
                     revised.at[i,col]=float(old)*factor
         if applied:
+            changes={}
+            for col,old in sorted(before_rates.items()):
+                new=float(revised.at[i,col])
+                if np.isfinite(new) and not np.isclose(old,new,rtol=1e-12,atol=1e-12):
+                    changes[col]={"before":round(old,6),
+                                  "after":round(new,6),
+                                  "delta":round(new-old,6)}
+            if not changes:
+                continue
             ledger.append({
+                "stat_rate_changes":changes,
+                "channel_group":channel_group,
                 "player":name,"team":team,"position":position,
                 "opponent":opponent,"pregame_role":role,
                 "factor_by_stat_channel":applied,
