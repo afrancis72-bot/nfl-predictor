@@ -1,0 +1,67 @@
+name: NFL Bentley historical WR-football universe paired A/B
+on:
+  push:
+    branches:
+      - feature/unified-nfl-role-defense-ledger-20261118
+    paths:
+      - "scripts/backtest_nfl_player_dk_means.py"
+      - "scripts/backtest_nfl_football_universe.py"
+      - "tests/test_nfl_full_player_universe.py"
+      - ".github/workflows/nfl-football-universe-ab.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  full-football-roster-study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install read-only nflverse and simulation dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn
+      - name: Compile research model and paired evaluator
+        run: python -m py_compile scripts/backtest_nfl_player_dk_means.py scripts/backtest_nfl_football_universe.py ai2_nfl_full_player_universe.py ai2_nfl_game_conservation.py
+      - name: Verify ghosts never become selectable and worlds still reconcile
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_full_player_universe.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_game_conservation.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_wr_role_audit.py' -v
+      - name: Real historical matchup A/B with pregame frozen teammate rates
+        env:
+          PYTHONPATH: .
+        run: |
+          python -u -m scripts.backtest_nfl_football_universe \
+            --n-sims 180 --games-per-week 2 --out-dir research_football_universe
+      - name: Archive paired WR targets and all compared player DK outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-football-universe-retrospective
+          path: research_football_universe/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Document research results without enabling NFL lineup creation
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open("research_football_universe/report.json"))
+          assert p["model_changes_production"] is False
+          assert p["prospective"] is False
+          assert p["status_proven_active"] is False
+          for period,variants in p["windows"].items():
+              for variant,out in variants.items():
+                  print(period,variant,
+                        "matched",out["paired_dk"]["n"],
+                        "added WR/game",out["mean_included_nondk_receivers"],
+                        "WR1 bias",out["wr_role_target_metrics"]["WR1"].get("candidate",{}).get("sim_bias_targets"),
+                        "WR2 bias",out["wr_role_target_metrics"]["WR2"].get("candidate",{}).get("sim_bias_targets"),
+                        "DK accuracy lift",out["paired_dk"]["matchup_mae_improvement_pct"])
+                  assert out["paired_dk"]["n"] > 0
+                  assert out["research_release_approved"] is False
+          print("RESEARCH ONLY - Bentley entry gate stays LOCKED")
+          PY
