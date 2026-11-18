@@ -109,7 +109,8 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
              concurrent_target_research=False,
              concurrent_target_rows=None,
              cohort_target_strength=0.,cohort_target_rows=None,
-             snap_role_blend_weight=.35,snap_participation_rows=None):
+             snap_role_blend_weight=.35,snap_participation_rows=None,
+             pregame_evidence_rows=None):
     if not (isinstance(snap_role_blend_weight,(int,float)) and
             not isinstance(snap_role_blend_weight,bool) and
             np.isfinite(snap_role_blend_weight) and
@@ -375,6 +376,37 @@ def evaluate(weekly,schedules,snaps,season,weeks,*,games_per_week=2,n_sims=320,
                         season=season,week=week,observed=observed[0],
                         prior=pre,simulated_stats=stat_draws.get(player_name),
                         n_sims=n_sims,model=audit_model_name))
+                if pregame_evidence_rows is not None:
+                    # ALL fields derive from prior nflverse rates and PFR snaps.
+                    # User status is unknown without the separately frozen
+                    # official current-week evidence; don't invent ACTIVE.
+                    s=snap.get((_norm_name(p["Name"]),
+                                canonical_team(p["TeamAbbrev"]),
+                                str(p["Position"]).upper()),{})
+                    last_season=int(pre.get("latest_observed_season",0))
+                    last_week=int(pre.get("latest_observed_week",0))
+                    if last_season>season or (
+                            last_season==season and last_week>=week):
+                        raise ValueError("Future player-history date in evidence audit")
+                    if s and (int(s["last_observed_season"])>season or
+                        (int(s["last_observed_season"])==season and
+                         int(s["last_observed_week"])>=week)):
+                        raise ValueError("Future offensive snaps in evidence audit")
+                    pregame_evidence_rows.append({
+                        "season":season,"week":week,"game":f"{away}@{home}",
+                        "player":p["Name"],"team":p["TeamAbbrev"],
+                        "position":p["Position"],
+                        "prior_player_games":int(pre.get("games_played",0)),
+                        "last_player_season":last_season,
+                        "last_player_week":last_week,
+                        "has_four_plus_snap_games":bool(s),
+                        "snap_games":int(s.get("snap_games",0)) if s else 0,
+                        "snap_last_observed_week":(
+                            int(s["last_observed_week"]) if s else None),
+                        "routes_verified":False,
+                        "game_day_active_verified":False,
+                        "source":"nflverse dated player rates and PFR offensive snaps",
+                    })
                 results.append({
                     "season":season,"week":week,"player":p["Name"],
                     "team":p["TeamAbbrev"],"position":p["Position"],
