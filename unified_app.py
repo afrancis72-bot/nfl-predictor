@@ -828,6 +828,37 @@ else:
                         "Hypotheses only — not a calibrated fantasy-point adjustment."))
                 st.caption(matchup_summary.get("yards_only_warning",
                         "No verified opponent-position yardage adjustment was applied."))
+                stat_role = output_one.get("opponent_role_stat_scoring_audit") or {}
+                st.markdown("**Role-specific defensive stat engine (EXPERIMENTAL; entry builds locked)**")
+                st.caption("Historical opponents' PREgame WR1/WR2/WR3, RB1/RB2, "
+                           "QB1 and TE1/TE2 roles versus their OWN usual "
+                           "targets, carries, catch rate and per-opportunity "
+                           "yardage. Sourced, shrunk input STAT adjustments, "
+                           "not a fantasy-point bonus.")
+                st.caption(
+                    f"Scoring-path status: {stat_role.get('mode','NOT VERIFIED')} · "
+                    f"Strength: {stat_role.get('strength',0)} · "
+                    f"Players with applied role evidence: "
+                    f"{stat_role.get('adjusted_players',0)}. "
+                    "This has NOT passed independent predictive validation.")
+                if stat_role.get("source_issue"):
+                    st.warning("Role stat history unavailable: " +
+                               str(stat_role["source_issue"]))
+                changed=stat_role.get("player_channel_adjustments") or []
+                if changed:
+                    st.dataframe(_ai2_pd.DataFrame(changed),hide_index=True,
+                                 use_container_width=True)
+                stats_profiles=output_one.get("opponent_role_stat_profiles") or []
+                if stats_profiles:
+                    with st.expander("Underlying defense x role x stat evidence"):
+                        st.dataframe(_ai2_pd.DataFrame(stats_profiles),
+                                     hide_index=True,use_container_width=True)
+                        st.download_button(
+                            "Download role-specific stat factors CSV",
+                            data=_ai2_pd.DataFrame(stats_profiles).to_csv(
+                                index=False).encode("utf-8-sig"),
+                            file_name="ai2_nfl_role_stat_defense_factors.csv",
+                            mime="text/csv",key="nfl_role_stat_factor_csv")
                 if matchup_summary.get("relative_evidence_note"):
                     st.info(matchup_summary["relative_evidence_note"])
                 if matchup_summary.get("relative_evidence_issue"):
