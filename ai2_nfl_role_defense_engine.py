@@ -296,6 +296,13 @@ def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
         if key not in indexed or not opponent or position!=role[:2]:
             continue
         i=indexed[key]
+        # Freeze actual pregame input rates for an auditable before/after
+        # comparison. A multiplier ledger alone cannot prove which stat
+        # channels were modified on the scoring path.
+        before_rates={col:float(revised.at[i,col]) for col in stat_fields
+                      if col in revised.columns and
+                      pd.notna(revised.at[i,col]) and
+                      np.isfinite(revised.at[i,col])}
         applied={}
         for channel in CHANNELS[position]:
             factor=factors.get((opponent,role,channel),1.)
@@ -321,7 +328,17 @@ def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
                 if pd.notna(old) and np.isfinite(old) and old>=0:
                     revised.at[i,col]=float(old)*factor
         if applied:
+            changes={}
+            for col,old in sorted(before_rates.items()):
+                new=float(revised.at[i,col])
+                if np.isfinite(new) and not np.isclose(old,new,rtol=1e-12,atol=1e-12):
+                    changes[col]={"before":round(old,6),
+                                  "after":round(new,6),
+                                  "delta":round(new-old,6)}
+            if not changes:
+                continue
             ledger.append({
+                "stat_rate_changes":changes,
                 "player":name,"team":team,"position":position,
                 "opponent":opponent,"pregame_role":role,
                 "factor_by_stat_channel":applied,
