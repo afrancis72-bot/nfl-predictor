@@ -164,6 +164,8 @@ else:
     if sport == "NFL":
         from hashlib import sha256 as _ai2_sha256
         from ai2_nfl_oneclick import build_oneclick_portfolio
+        from ai2_nfl_availability_auto import (
+            select_nfl_engine_from_sources,report_nfl_availability_effect)
         from ai2_nfl_release_gate import (
             nfl_classic_release_status,
             assert_nfl_classic_ready_for_entries,
@@ -212,24 +214,15 @@ else:
                                    max_value=2147483647, value=42, step=1,
                                    key="nfl_one_seed")
         requested_count = st.selectbox("Number of lineups", [15, 20, 40, 50, 150], index=1, key="nfl_one_count")
-        nfl_engine_selection = st.radio(
-            "NFL simulation engine",
-            ["Existing game engine (default)",
-             "Availability-aware game engine (experimental)"],
-            index=0, horizontal=True, key="ai2_nfl_engine_choice")
-        nfl_engine_mode = (
-            "availability_aware" if nfl_engine_selection.startswith("Availability")
-            else "existing")
-        if nfl_engine_mode=="availability_aware":
-            st.caption(
-                "Opt-in: the same Classic lineup optimizer, with official NFL.com "
-                "pregame OUT/explicitly ACTIVE articles only when the original "
-                "source is retrieved and verified. Unlisted players remain UNKNOWN. "
-                "No article or source archive means no new player-universe intelligence. "
-                "Predictive improvement is not validated.")
-        else:
-            st.caption("Existing NFL engine. Experimental football-only teammates "
-                       "and game-day article collector are OFF for this build.")
+        # One button / one engine. Official game-day data are automatically
+        # added only when independently verified for THIS slate.
+        # With no additional evidence the original engine runs unchanged.
+        nfl_engine_mode=st.session_state.get(
+            "ai2_oneclick_engine_mode","existing")
+        st.caption(
+            "The NFL engine automatically checks verified game-day availability "
+            "when building. If no relevant additional status is found, the "
+            "original lineup calculations are used. No mode selection needed.")
         if requested_count == 40:
             st.caption("40-entry contest plan: four $3, sixteen $0.50, twenty $0.10. "
                        "Automatically simulates three different seeds and selects "
@@ -252,14 +245,30 @@ else:
                 if not salaries_one:
                     raise ValueError("Upload your DraftKings salary CSV first.")
                 with st.spinner(f"Checking NFL injuries and generating {requested_count} review-ready entries..."):
-                    new_source_context=None
-                    if nfl_engine_mode=="availability_aware":
-                        from ai2_nfl_oneclick import _slate_week
-                        from ai2_nfl_unified_availability import prepare_unified_nfl_availability
-                        year,slate_week=_slate_week(salaries_one)
+                    # Only one official game-day source pass for all seeds.
+                    # A missing game-day article means EXISTING scoring, not
+                    # a second mislabeled engine doing identical work.
+                    from ai2_nfl_oneclick import _slate_week
+                    from ai2_nfl_unified_availability import prepare_unified_nfl_availability
+                    year,slate_week=_slate_week(salaries_one)
+                    try:
                         new_source_context=prepare_unified_nfl_availability(
                             salaries_one,season=year,week=slate_week,
                             data_dir=DATA_DIR)
+                    except (OSError,ValueError,TimeoutError) as source_exc:
+                        new_source_context={
+                            "snapshots_by_game":{},
+                            "report":{
+                                "game_snapshot_count":0,
+                                "source_coverage":[],
+                                "source_urls":[],
+                                "errors":["Automated additional status check unavailable: "
+                                          +str(source_exc)[:200]],
+                                "as_of_utc":datetime.now(timezone.utc).isoformat(),
+                            },
+                        }
+                    nfl_engine_mode,auto_reason=select_nfl_engine_from_sources(
+                        new_source_context)
                     if int(requested_count) == 40:
                         from ai2_nfl_core_diversifier import diversify_40_from_stat_simulation
                         source_seeds = list(dict.fromkeys((int(seed_one),47,89)))
@@ -311,6 +320,22 @@ else:
                             simulation_mode=nfl_engine_mode,
                             availability_context=new_source_context,
                             draft_manual_review=not release_ready)
+                # Explicitly describe which current-slate source facts
+                # actually changed player availability / internal receivers.
+                # No changes means no separate engine advantage to claim.
+                source_result=dict(output_one.get(
+                    "availability_intelligence") or {})
+                if nfl_engine_mode=="existing":
+                    checked=new_source_context.get("report") or {}
+                    for field in ("as_of_utc","game_snapshot_count",
+                                  "source_coverage","source_urls","errors",
+                                  "collector_result"):
+                        if field in checked:
+                            source_result[field]=checked[field]
+                source_result.update(report_nfl_availability_effect(
+                    source_result,nfl_engine_mode))
+                source_result["auto_selection_reason"]=auto_reason
+                output_one["availability_intelligence"]=source_result
                 # Persist audit bytes independently of Streamlit's temporary
                 # browser download URL. SQLite history can restore the last
                 # generated audit if a UI session or download expires.
@@ -426,9 +451,12 @@ else:
             st.subheader("NFL engine and intelligence used for THIS build")
             status_report=output_one.get("availability_intelligence") or {}
             st.write("**Engine:** "+
-                     ("Availability-aware (experimental)" if output_one.get(
-                         "simulation_mode")=="availability_aware"
-                      else "Existing NFL game engine"))
+                     ("Existing game engine + verified game-day statuses"
+                      if output_one.get("simulation_mode")=="availability_aware"
+                      else "Existing NFL game engine (no new game-day evidence)"))
+            st.info(status_report.get(
+                "engine_input_effect_explanation",
+                "No extra source effect report for this historic build."))
             if output_one.get("simulation_mode")=="availability_aware":
                 st.write("**Verified official NFL.com active claims:** "+
                          str(status_report.get("verified_active_players",0))+
@@ -459,10 +487,15 @@ else:
                         for issue in status_report["errors"][:20]:
                             st.write(str(issue))
             else:
-                st.caption("New official game-day article collector: OFF. "
-                           "Experimental expanded football player universe: OFF. "
-                           "Existing NFL official injury reports and prior-game "
-                           "opportunity intelligence remain in use.")
+                st.caption(
+                    "Automatic additional official status check completed "
+                    "without new verified game-day player information. "
+                    "The existing injury report and historical opportunity "
+                    "information remain in use.")
+                if status_report.get("errors"):
+                    with st.expander("Unavailable or rejected game-day sources"):
+                        for issue in status_report["errors"][:20]:
+                            st.write(str(issue))
             ranked = st.session_state.get("ai2_oneclick_review_ranked") or output_one["ranked"]
             if len(ranked)==40:
                 cover=output_one.get("core_diversification_diagnostics") or {}
