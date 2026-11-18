@@ -26,8 +26,8 @@ REQUIREMENTS = (
     {
         "id": "ROLE_SPECIFIC_DEFENSE",
         "criterion": "Prior opposing QB/RB1/RB2/WR1/WR2/WR3/TE1/TE2 outcomes vs their own pregame baselines influence relevant stat channels when supported",
-        "status": "DISABLED",
-        "evidence": "Opponent-position and role analysis is collected for reports; defense_weight=0.0, role adjustments not used to score.",
+        "status": "EXPERIMENTAL_UNVALIDATED",
+        "evidence": "Legacy broad defense_weight=0.0 remains correctly disabled. A source-dated WR1/WR2/WR3/RB1/RB2/TE1/TE2/QB1 per-stat input-rate engine is now wired to the locked simulation path, but real-slate and independent holdout gains are NOT established.",
         "pass_proof": "Leakage-free effect sizes for targets/carries/yard efficiency/TDs, opponent-quality control, sample shrinkage, and independent holdout gain.",
     },
     {
