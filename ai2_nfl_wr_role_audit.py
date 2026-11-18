@@ -125,8 +125,15 @@ def team_other_row(*, team, opponent,season,week,game,
     label=engine_team(team)  # The simulator uses WSH internally; schedules may say WAS.
     diag=stat_draws.get(f"__OPPORTUNITY__|{label}")
     other=stat_draws.get(f"__OTHER_RECEIVER__|{label}")
-    if not isinstance(diag,dict) or not isinstance(other,dict):
+    team_plays=stat_draws.get(f"__TEAM_PLAYS__|{label}")
+    if (not isinstance(diag,dict) or not isinstance(other,dict)
+        or not isinstance(team_plays,dict)):
         raise ValueError(f"Missing simulation target conservation for {label}")
+    passes=_finite(team_plays.get("pregame_pass_attempts"))
+    target_budget=_finite(diag.get("target_budget_after"))
+    if passes is None or passes<=0 or target_budget is None or target_budget<=0:
+        raise ValueError(f"Missing pregame passing budget reconciliation for {label}")
+    budget_ratio=target_budget/passes
     model_skill=pool[
         (pool["TeamAbbrev"].eq(team)) &
         (pool["Position"].isin(("RB","WR","TE")))
@@ -206,6 +213,10 @@ def team_other_row(*, team, opponent,season,week,game,
         "actual_nonmodeled_target_fraction":(
             float(actual_nonmodeled/actual_total) if actual_total>0 else None),
         "simulated_other_targets_mean":float(other_draw.mean()),
+        "pregame_pass_attempts_budget":float(passes),
+        "pregame_player_plus_other_target_weight_sum":float(target_budget),
+        "pregame_target_weight_overhang_ratio":round(float(budget_ratio),6),
+        "role_rates_are_diluted_if_overhang":bool(budget_ratio>1.05),
         "simulated_total_allocated_targets_mean":float(total.mean()),
         "simulated_other_target_fraction":float(
             other_draw.sum()/total.sum()),
@@ -271,6 +282,9 @@ def receiver_role_report(rows,team_rows):
     actual_nonmodeled=t["actual_nonmodeled_rb_wr_te_targets"].sum()
     sim_total=t["simulated_total_allocated_targets_mean"].sum()
     sim_other=t["simulated_other_targets_mean"].sum()
+    budget_ratio=pd.to_numeric(t["pregame_target_weight_overhang_ratio"],errors="coerce")
+    if budget_ratio.isna().any() or not np.isfinite(budget_ratio).all():
+        raise ValueError("Missing pregame team pass/receiver weight accounting")
     known_gap=pd.to_numeric(
         t["actual_attempts_minus_identified_rb_wr_te_targets"],
         errors="coerce")
@@ -279,6 +293,11 @@ def receiver_role_report(rows,team_rows):
         "all_matched_wr":_metrics(f),
         "roles":roles,
         "sample_team_games":int(len(t)),
+        "mean_pregame_target_weight_overhang_ratio":round(float(budget_ratio.mean()),4),
+        "team_games_receiver_target_weight_over_105pct_of_pass_budget":int(
+            budget_ratio.gt(1.05).sum()),
+        "pct_team_games_receiver_target_weight_over_105pct_of_pass_budget":round(
+            float(100*budget_ratio.gt(1.05).mean()),2),
         "rank3_omitted_team_games":int((t["historical_top3_wr_not_modeled"]>0).sum()),
         "historical_top3_wr_missing_model_spots":int(t["historical_top3_wr_not_modeled"].sum()),
         "eligible_wr_per_team_game_mean":round(float(t["eligible_modeled_wr"].mean()),3),
