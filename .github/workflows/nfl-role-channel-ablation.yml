@@ -1,0 +1,62 @@
+name: NFL Bentley role-defense channel ablations (research)
+on:
+  push:
+    branches:
+      - feature/unified-nfl-role-defense-ledger-20261118
+    paths:
+      - "ai2_nfl_role_defense_engine.py"
+      - "ai2_nfl_role_matchups.py"
+      - "tests/test_nfl_role_defense_stat_engine.py"
+      - "tests/test_nfl_role_matchups.py"
+      - "scripts/backtest_nfl_player_dk_means.py"
+      - "scripts/backtest_nfl_role_defense_stat.py"
+      - ".github/workflows/nfl-role-channel-ablation.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  software-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn streamlit
+      - name: Compile affected sources
+        run: python -m py_compile ai2_nfl_role_defense_engine.py ai2_nfl_role_matchups.py scripts/backtest_nfl_player_dk_means.py scripts/backtest_nfl_role_defense_stat.py
+      - name: Unit test role assignments, real stat-rate changes, and Bentley lock
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nfl_role_matchups.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_role_defense_stat_engine.py' -v
+          python -m unittest discover -s tests -p 'test_nfl_bentley_release_gate.py' -v
+  historical-ablation:
+    needs: software-regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [opportunity, efficiency, all]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install research dependencies
+        run: python -m pip install --disable-pip-version-check numpy pandas scipy requests beautifulsoup4 pyarrow fsspec scikit-learn
+      - name: Historical paired retrospective (NOT prospective release proof)
+        env:
+          PYTHONPATH: .
+        run: python -m scripts.backtest_nfl_role_defense_stat --channel-group ${{ matrix.group }} --n-sims 160 --games-per-week 2 --out-dir research_${{ matrix.group }}
+      - name: Archive forecast comparisons
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: role-defense-${{ matrix.group }}-retrospective
+          path: research_${{ matrix.group }}/
+          if-no-files-found: warn
