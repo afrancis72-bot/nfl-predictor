@@ -245,6 +245,21 @@ def apply_role_defense_to_rates(rates,slate_roles,profiles,*,season,week,
     ledger=[]
     if not factors:
         return revised,ledger
+    # pandas 2.x+ enforces int64 assignment types: source rates may contain
+    # integer carries/targets but a role adjustment must be fractional.
+    stat_fields={field for channels in CHANNELS.values()
+                 for channel in channels for field in {
+                    "targets":("targets_pg","receptions_pg","receiving_yards_pg","receiving_tds_pg"),
+                    "carries":("carries_pg","rushing_yards_pg","rushing_tds_pg"),
+                    "pass_attempts":("pass_attempts_pg","completions_pg","pass_yards_pg",
+                                     "passing_tds_pg","interceptions_pg"),
+                    "catch_rate":("receptions_pg",),
+                    "receive_ypt":("receiving_yards_pg",),
+                    "rush_ypc":("rushing_yards_pg",),
+                    "pass_ypa":("pass_yards_pg",),
+                 }[channel]}
+    for field in stat_fields.intersection(revised.columns):
+        revised[field]=pd.to_numeric(revised[field],errors="coerce").astype(float)
     if not isinstance(slate_roles,list):
         raise ValueError("Source-backed slate player role report is required")
     indexed={}
