@@ -84,11 +84,11 @@ def run_study(history, schedules, snaps, *, n_sims=180,
                         "predicted_p90_neutral":"predicted_p90",
                     })),
                     "candidate":_metrics(rows.rename(columns={
-                        "actual_targets_"+mode:"actual_targets",
-                        "predicted_targets_"+mode:"predicted_targets",
-                        "prior_targets_pg_"+mode:"prior_targets_pg",
-                        "predicted_p10_"+mode:"predicted_p10",
-                        "predicted_p90_"+mode:"predicted_p90",
+                        "actual_targets_possession":"actual_targets",
+                        "predicted_targets_possession":"predicted_targets",
+                        "prior_targets_pg_possession":"prior_targets_pg",
+                        "predicted_p10_possession":"predicted_p10",
+                        "predicted_p90_possession":"predicted_p90",
                     })),
                 }
             info=pd.DataFrame(universe)
