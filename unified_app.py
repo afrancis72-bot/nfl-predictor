@@ -164,6 +164,10 @@ else:
     if sport == "NFL":
         from hashlib import sha256 as _ai2_sha256
         from ai2_nfl_oneclick import build_oneclick_portfolio
+        from ai2_nfl_release_gate import (
+            nfl_classic_release_status,
+            assert_nfl_classic_ready_for_entries,
+        )
         from ai2_nfl_portfolio_diversity import portfolio_overlap_audit
         from ai2_nfl_review import (review_tables, named_csv, named_excel,
                                     roster_id_csv, swap_contest_tiers,
@@ -171,6 +175,31 @@ else:
         from ai2_local_storage import save_file as _ai2_save_file
         import pandas as _ai2_pd
 
+        release_gate=nfl_classic_release_status()
+        release_ready=release_gate["ready_for_entries"]
+        if not release_ready:
+            st.error(
+                "NFL CLASSIC — NOT READY FOR ENTRY. New lineup builds and "
+                "approvals are locked until the Bentley acceptance contract "
+                "passes. Earlier approved lineups and backups remain available "
+                "for read-only review below.")
+            st.caption(
+                f"Release contract: {release_gate['contract_id']} · "
+                f"{release_gate['checks_passed']}/{release_gate['checks_total']} "
+                "release-grade checks passed. Passing a subset of unit tests "
+                "or obtaining official status articles is NOT sufficient.")
+            with st.expander("View ALL required NFL release checks and blockers",expanded=True):
+                st.dataframe(
+                    _ai2_pd.DataFrame([{
+                        "Required release check":x["criterion"],
+                        "Current status":x["status"],
+                        "Why it is blocked":x["evidence"],
+                        "Evidence required to clear":x["pass_proof"],
+                    } for x in release_gate["blockers"]]),
+                    use_container_width=True,hide_index=True)
+            st.caption(
+                "NFL Showdown is a separate secondary release, also NOT "
+                "READY. PGA, NBA, and NASCAR are unaffected by this Classic gate.")
         st.caption("NFL Classic · Upload DraftKings salaries, then select 15, 20, 50, or 150 lineups. No projections upload required.")
         st.caption("NFL prebuild intelligence • repeated carry/target consistency gate before simulation • risk and stack evaluation • human approval required")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
@@ -212,9 +241,14 @@ else:
                        "Automatically simulates three different seeds and selects "
                        "independent offensive cores with a stricter premium risk filter. "
                        "A real current-week news and ownership feed is still unavailable.")
-        if st.button(f"BUILD MY {requested_count} LINEUPS", type="primary",
-                     key="nfl_one_build", use_container_width=True):
+        if st.button(
+            f"BUILD MY {requested_count} LINEUPS",
+            type="primary",key="nfl_one_build",use_container_width=True,
+            disabled=not release_ready):
             try:
+                # Server-side check, not just a disabled button: fail closed
+                # against stale Streamlit browser events or hidden callbacks.
+                assert_nfl_classic_ready_for_entries()
                 if upload_one is not None:
                     from ai2_nfl_inputs import parse_csv_payload
                     parse_csv_payload(upload_one.getvalue())
@@ -348,7 +382,12 @@ else:
                 st.session_state.pop("ai2_oneclick_review_ranked", None)
                 st.error(f"Build not completed: {exc}")
 
-        output_one = st.session_state.get("ai2_oneclick_result")
+        # Existing session objects are never silently treated as approved,
+        # entry-ready output after release eligibility has been revoked.
+        # Saved user-approved snapshots remain independently preserved below.
+        output_one = (
+            st.session_state.get("ai2_oneclick_result")
+            if release_ready else None)
         visible_payload = (upload_one.getvalue() if upload_one is not None
                            else saved_one[1] if saved_one else None)
         current_digest = (_ai2_sha256(visible_payload).hexdigest()
