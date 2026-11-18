@@ -48,6 +48,38 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(engine.call_args.kwargs["defense_profiles"], profiles)
         self.assertEqual(engine.call_args.kwargs["defense_weight"], .25)
 
+    def test_role_specific_prior_changes_stat_engine_inputs_not_points(self):
+        from ai2_nfl_role_defense_engine import SOURCE
+        p = pd.DataFrame([{
+            "defense":"AAA","role":"RB1","position":"RB",
+            "channel":"carries","observations":8,"defense_games":6,
+            "opportunities":90.,"raw_relative_pct":.20,
+            "shrunk_relative_pct":.10,"source":SOURCE,
+            "target_season":2026,"target_week":11,
+        }])
+        ranks=[{
+            "Player":"Example RB","Team":"BBB","Opponent":"AAA",
+            "Position":"RB","Role":"RB1","Slate status":"",
+            "Player history games":6,
+            "Role evidence":"Pregame within-team usage rank; not official lineup or coverage",
+        }]
+        originals = rates()
+        with patch("ai2_nfl_simulation_adapter.simulate_stat_driven_dfs",
+                   return_value=("players","points",{})) as engine:
+            _pl,_sc,ledger=run_verified_stat_simulation(
+                pool(), originals, role_defense_profiles=p,
+                role_defense_assignments=ranks, role_defense_strength=1.,
+                role_defense_target_season=2026,
+                role_defense_target_week=11)
+        adjusted=engine.call_args.args[1]
+        self.assertAlmostEqual(
+            float(adjusted.loc[adjusted.player=="Example RB","carries_pg"].iloc[0]),
+            13.2)
+        self.assertAlmostEqual(float(originals.iloc[1].carries_pg),12.)
+        self.assertEqual(ledger["__ROLE_DEFENSE_STAT_CHANNELS__"]["adjusted_players"],1)
+        self.assertFalse(ledger["__ROLE_DEFENSE_STAT_CHANNELS__"][
+            "independent_simulator_accuracy_validated"])
+
     def test_unsourced_defensive_adjustment_rejected(self):
         fake = {("AAA", "RB"): {
             "source": "made up factor", "sample": 100, "factor": 1.25}}
