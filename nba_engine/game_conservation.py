@@ -93,6 +93,56 @@ def observed_complete_team_games(logs: pd.DataFrame, when: date):
     return good.reset_index(drop=True)
 
 
+def calibrate_team_scoring_baselines(projections:pd.DataFrame,
+                                     logs:pd.DataFrame,when:date):
+    """Adjust ONLY point scoring baselines to plausible complete-team totals.
+
+    The current minute-capped player's independent historic points-per-minute
+    rate is just an opportunity WEIGHT, not a free-standing team score.
+    Deterministically reconcile every active player's expected PTS to the
+    team's recent full-score environment before random simulations; this
+    keeps prop baseline outputs aligned with the actual scoring model.
+    No bookmaker total is read or used.
+    """
+    games=observed_complete_team_games(logs,when)
+    x=projections.copy(deep=True)
+    if "historical_unconstrained_points" not in x:
+        x["historical_unconstrained_points"]=x["pts"].astype(float)
+    audit=[]
+    for team,rows in x.groupby("team",sort=True):
+        opps=set(rows["opponent"].astype(str))
+        if len(opps)!=1:
+            raise ValueError(f"{team}: multiple opponent score environments")
+        opponent=next(iter(opps))
+        offense=games.loc[games["team"]==team].tail(18)
+        defense=games.loc[games["opponent"]==opponent].tail(18)
+        if len(offense)<5 or len(defense)<5:
+            raise ValueError(
+                f"{team} vs {opponent}: insufficient complete historical "
+                "team game scores for a baseline")
+        expected=.70*float(offense["pts"].mean())+.30*float(defense["pts"].mean())
+        modeled=float(rows["pts"].sum())
+        residual=max(0.,240.-float(rows["minutes"].sum()))
+        bench=(residual/240.)*expected
+        if not np.isfinite([modeled,bench,expected]).all() or modeled<=0:
+            raise ValueError(f"{team}: no plausible active team scoring shares")
+        scale=expected/(modeled+bench)
+        x.loc[rows.index,"pts"]=rows["pts"].to_numpy(dtype=float)*scale
+        for market,parts in MARKETS.items():
+            x.loc[rows.index,market]=x.loc[rows.index,list(parts)].sum(axis=1)
+        audit.append({
+            "team":team,"opponent":opponent,
+            "expected_team_points_from_complete_history":round(expected,2),
+            "unconstrained_player_baseline_points":round(modeled,2),
+            "constrained_player_baseline_points":round(
+                float(x.loc[rows.index,"pts"].sum()),2),
+            "reserve_bench_points":round(bench*scale,2),
+            "points_scaling_factor":round(float(scale),4),
+            "uses_sportsbook_total":False,
+        })
+    return x.reset_index(drop=True),pd.DataFrame(audit)
+
+
 def _sample_team_scores(games,team,opponent,n,shared,rng):
     """Sample whole team points from offense AND the opponent's allowed totals."""
     recent=games.loc[games["team"]==team].tail(18)
