@@ -23,7 +23,8 @@ from nba_engine.predictor import (
 )
 from nba_engine.props_sim import expected_net_roi
 from nba_engine.game_conservation import (
-    normalize_team_minutes, simulate_conserved_nba_games)
+    normalize_team_minutes, calibrate_team_scoring_baselines,
+    simulate_conserved_nba_games)
 from nba_engine.injury_report import (
     fetch_current_official_injuries, injury_exclusions,
     match_excluded_ids, normalize_person)
@@ -167,6 +168,8 @@ if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_widt
                     history,teams_map,target,min_minutes=8,
                     excluded=excluded_ids)
                 projections,minute_audit=normalize_team_minutes(projections)
+                projections,baseline_audit=calibrate_team_scoring_baselines(
+                    projections,history,target)
                 projections["availability_status"]=[
                     uncertain.get((str(r.team),normalize_person(r.player)),
                                   "Not listed (active unverified)")
@@ -178,6 +181,7 @@ if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_widt
                 "original":projections, "projections":projections,
                 "samples":samples, "teams_map":teams_map, "seed":run_seed,
                 "game_audit":game_audit, "minute_audit":minute_audit,
+                "baseline_audit":baseline_audit,
                 "injury_status":official_status, "injury_meta":official_meta,
                 "official_excluded_ids":excluded_ids,
                 "official_out_not_in_history":unmatched_out,
@@ -260,9 +264,13 @@ if run is not None and run["run_key"] == run_key:
                         f"{model_total-market_total:+.1f} points. "
                         "Market prices were NOT used to construct scenarios.")
         if minute_table is not None and not minute_table.empty:
-            with st.expander("Team minutes conservation detail"):
+            with st.expander("Team minutes conservation and source baseline detail"):
                 st.dataframe(
                     minute_table,hide_index=True,use_container_width=True)
+                score_bases=run.get("baseline_audit")
+                if score_bases is not None and not score_bases.empty:
+                    st.dataframe(
+                        score_bases,hide_index=True,use_container_width=True)
         st.caption(
             "Team points come from real previous full-team games and the "
             "opponent's defensive allowance, not the sportsbook line. "
@@ -824,6 +832,8 @@ if run is not None and run["run_key"] == run_key:
                         excluded=sorted(set(omit+already_out)),
                         minute_overrides=overrides)
                     new_proj,new_minutes=normalize_team_minutes(new_proj)
+                    new_proj,new_baselines=calibrate_team_scoring_baselines(
+                        new_proj,history,target)
                     official=run.get("injury_status")
                     pending={}
                     if official is not None:
@@ -839,6 +849,7 @@ if run is not None and run["run_key"] == run_key:
                 run["samples"] = new_samples
                 run["game_audit"]=new_games
                 run["minute_audit"]=new_minutes
+                run["baseline_audit"]=new_baselines
                 st.success(
                     "Re-simulated with team point/minute conservation and "
                     "the original verified injury exclusions. Review the "
