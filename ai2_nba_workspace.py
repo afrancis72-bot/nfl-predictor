@@ -787,7 +787,10 @@ if run is not None and run["run_key"] == run_key:
 
     with adjustments_tab:
         st.subheader("Manual availability and playing time")
-        st.write("Exclude confirmed OUT players. Adjust minutes for players whose roles change. No unsupported automatic injury redistribution is performed.")
+        st.write(
+            "Official OUT/Doubtful players are already excluded. You can "
+            "additionally exclude questionable players or adjust minutes. "
+            "Every re-simulation conserves team scoring and minutes.")
         original = run["original"]
         edit = original[["player_id","player","team","minutes"]].copy()
         edit["Exclude"] = False
@@ -801,12 +804,31 @@ if run is not None and run["run_key"] == run_key:
                 omit = edited.loc[edited["Exclude"],"player_id"].astype(str).tolist()
                 overrides = {str(r.player_id):float(r.minutes) for r in edited.itertuples(index=False)}
                 with st.spinner("Rebuilding player distributions with approved playing time assumptions…"):
-                    new_proj = build_projections(history,run["teams_map"],target,min_minutes=12,
-                                                 excluded=omit,minute_overrides=overrides)
-                    new_samples = simulate_stat_lines(new_proj,history,trials=trials,seed=int(run["seed"]))
+                    already_out=list(run.get("official_excluded_ids") or [])
+                    new_proj = build_projections(
+                        history,run["teams_map"],target,min_minutes=8,
+                        excluded=sorted(set(omit+already_out)),
+                        minute_overrides=overrides)
+                    new_proj,new_minutes=normalize_team_minutes(new_proj)
+                    official=run.get("injury_status")
+                    pending={}
+                    if official is not None:
+                        _,pending=injury_exclusions(official,run["teams_map"])
+                    new_proj["availability_status"]=[
+                        pending.get((str(r.team),normalize_person(r.player)),
+                                    "Not listed (active unverified)")
+                        for r in new_proj.itertuples(index=False)]
+                    new_samples,new_games=simulate_conserved_nba_games(
+                        new_proj,history,when=target,
+                        trials=trials,seed=int(run["seed"]))
                 run["projections"] = new_proj
                 run["samples"] = new_samples
-                st.success("Updated projections and simulations. Review the other tabs before considering bets.")
+                run["game_audit"]=new_games
+                run["minute_audit"]=new_minutes
+                st.success(
+                    "Re-simulated with team point/minute conservation and "
+                    "the original verified injury exclusions. Review the "
+                    "other tabs before considering any props.")
             except Exception as exc:
                 st.error(f"Adjustment could not be applied: {exc}")
 elif run is not None:
