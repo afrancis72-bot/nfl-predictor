@@ -138,7 +138,8 @@ st.caption(
     "Sportsbook totals or odds are never used to fit our predictions.")
 
 market_key = f"{target}-{schedule_key}"  # Current bookmaker lines are independent of RNG seed.
-run_key = f"{market_key}-{trials}-{seed_mode}-{selected_seed}"
+NBA_GAME_MODEL_VERSION="nba-conserved-team-scores-v1-20261120"
+run_key = f"{market_key}-{trials}-{seed_mode}-{selected_seed}-{NBA_GAME_MODEL_VERSION}"
 if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_width=True):
     if len(teams_map) != len(set(teams_map.values())) and len(teams_map) != 2:
         st.error("Please select a valid slate with one opponent per team.")
@@ -245,6 +246,19 @@ if run is not None and run["run_key"] == run_key:
                     "game":"Matchup",
                     "mean_team_points":"Independent simulated combined points"}),
                 hide_index=True,use_container_width=True)
+            if len(combined)==1:
+                model_total=float(combined["mean_team_points"].iloc[0])
+                st.metric("Simulated combined game total",
+                          f"{model_total:.1f} points")
+                market_total=float(st.number_input(
+                    "Optional sportsbook game total (comparison only)",
+                    min_value=0.,max_value=450.,step=.5,
+                    value=0.,key=f"nba_book_total_compare_{run_key}"))
+                if market_total>0:
+                    st.write(
+                        f"Independent model minus listed market total: "
+                        f"{model_total-market_total:+.1f} points. "
+                        "Market prices were NOT used to construct scenarios.")
         if minute_table is not None and not minute_table.empty:
             with st.expander("Team minutes conservation detail"):
                 st.dataframe(
