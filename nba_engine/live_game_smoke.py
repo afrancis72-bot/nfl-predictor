@@ -12,7 +12,8 @@ from nba_engine.injury_report import (
     parse_official_injury_pdf,injury_exclusions,match_excluded_ids)
 from nba_engine.predictor import build_projections
 from nba_engine.game_conservation import (
-    normalize_team_minutes,simulate_conserved_nba_games)
+    normalize_team_minutes,calibrate_team_scoring_baselines,
+    simulate_conserved_nba_games)
 
 
 def main():
@@ -47,8 +48,10 @@ def main():
     p=build_projections(
         logs,teams,when,min_minutes=8,excluded=ids)
     p,minute_audit=normalize_team_minutes(p)
+    p,baseline_audit=calibrate_team_scoring_baselines(p,logs,when)
     draws,score_audit=simulate_conserved_nba_games(
         p,logs,when=when,trials=10000,seed=42)
+    print("BASELINE POINT CONSERVATION\n",baseline_audit.to_string(index=False))
     print("MINUTES\n",minute_audit.to_string(index=False))
     print("TEAM SCORE\n",score_audit.to_string(index=False))
     print("COMBINED MEAN",score_audit.mean_team_points.sum())
@@ -56,6 +59,9 @@ def main():
                                       regex=True,case=False)).any()
     assert minute_audit.projected_minutes_after.max()<=240.000001
     assert score_audit.team_score_conservation_passed.all()
+    assert not baseline_audit.uses_sportsbook_total.any()
+    assert (baseline_audit.constrained_player_baseline_points<=
+            baseline_audit.expected_team_points_from_complete_history+0.10).all()
     assert score_audit.mean_team_points.sum()<300
     assert len(draws)>50
     print("PASS: actual-source NBA game and injury constraints used.")
