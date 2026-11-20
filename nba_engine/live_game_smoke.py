@@ -3,13 +3,15 @@
 This is real official NBA injury-source and real public player-game logs.
 Not a retrospective proof of predictive accuracy or profit.
 """
-from datetime import date
+from datetime import date,datetime
+from zoneinfo import ZoneInfo
 from io import BytesIO
 import requests
 
 from nba_engine.data_sources import load_public_logs
 from nba_engine.injury_report import (
-    parse_official_injury_pdf,injury_exclusions,match_excluded_ids)
+    parse_official_injury_pdf,fetch_current_official_injuries,
+    injury_exclusions,match_excluded_ids)
 from nba_engine.predictor import build_projections
 from nba_engine.game_conservation import (
     normalize_team_minutes,calibrate_team_scoring_baselines,
@@ -31,6 +33,11 @@ def main():
                 print("PDF LINE",pageno,repr(line[:240]))
     status=parse_official_injury_pdf(
         response.content,target_games={"IND@CLE"},document_date=when)
+    now=datetime(2026,11,20,14,17,tzinfo=ZoneInfo("America/New_York"))
+    realtime,status_meta=fetch_current_official_injuries(
+        when,target_games={"IND@CLE"},now=now)
+    assert set(realtime.player_key)==set(status.player_key)
+    assert status_meta["source_url"]==url
     print("OFFICIAL injury names",status[
         ["team","player","status"]].to_string(index=False))
     assert (status.team.eq("IND")&
