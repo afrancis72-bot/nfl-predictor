@@ -106,6 +106,12 @@ def parse_official_injury_pdf(blob, *, target_games, document_date):
                 if ("," not in label and i>=2 and
                         pieces[i-2].rstrip().endswith(",")):
                     label=pieces[i-2]+" "+label
+                # Players such as Udeh Jr., Ernest may be laid out as
+                # ["Udeh", "Jr.,Ernest", "Out"]. Preserve full surname.
+                if (i>=2 and re.match(
+                        r"^(?:Jr\.?|Sr\.?|II|III|IV|V),",label,re.I)
+                        and "," not in pieces[i-2]):
+                    label=pieces[i-2]+" "+label
                 if "," not in label:
                     continue
                 if current_game is None or current_team is None:
