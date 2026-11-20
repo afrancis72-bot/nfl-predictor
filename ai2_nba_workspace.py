@@ -22,6 +22,11 @@ from nba_engine.predictor import (
     summarize_simulated_projections, build_prefilled_prop_worksheet,
 )
 from nba_engine.props_sim import expected_net_roi
+from nba_engine.game_conservation import (
+    normalize_team_minutes, simulate_conserved_nba_games)
+from nba_engine.injury_report import (
+    fetch_current_official_injuries, injury_exclusions,
+    match_excluded_ids, normalize_person)
 from nba_engine.odds_feed import BOOKMAKERS, load_current_props, normalize_csv_lines
 
 
@@ -73,10 +78,13 @@ with st.expander("Model transparency and source limitations"):
         "player-game logs: community-maintained NBA box-score-derived CSVs hosted on GitHub. "
         "The latest publicly available snapshot may lag the real NBA results. "
         "No sportsbook lines, odds, or injury statuses are invented. "
-        "Projections use observed player minutes, historical per-minute rates, "
-        "a capped opponent scoring proxy, and empirical joint-stat resampling. "
-        "The simulation correlation factors and reported probabilities are research estimates "
-        "**not yet calibrated** through a full historical betting-market backtest."
+        "Official NBA injury report is checked BEFORE modeling, removing "
+        "explicitly OUT/Doubtful players. Unknown is not certified active. "
+        "Actual prior full-team game scores provide team-level outcomes, "
+        "and player scoring must reconcile to those totals in each scenario. "
+        "Player rotation minutes are limited to 240 per team. "
+        "This is NOT a possession-by-possession or independently validated "
+        "sportsbook betting model. Bookmaker totals NEVER fit projections."
     )
     st.markdown("[Player stats provenance](https://github.com/xtheredshirtx/fanduel-player-data/tree/main/NBA/csv) · [ESPN](https://www.espn.com/nba/schedule)")
 
@@ -123,7 +131,11 @@ else:
     schedule_key = "-".join(sorted(teams_map))
     st.caption("Selected: " + ", ".join(selected["matchup"]))
 
-st.info("Injury availability is NOT automatically confirmed. Check official reports before evaluating bets; exclude OUT players and adjust teammates' minutes when their roles change.")
+st.caption(
+    "Automatic pregame check: official NBA injury reports. "
+    "Explicitly OUT/Doubtful players are removed before simulation; "
+    "questionable players remain uncertain, not assumed fully healthy. "
+    "Sportsbook totals or odds are never used to fit our predictions.")
 
 market_key = f"{target}-{schedule_key}"  # Current bookmaker lines are independent of RNG seed.
 run_key = f"{market_key}-{trials}-{seed_mode}-{selected_seed}"
@@ -137,18 +149,50 @@ if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_widt
             run_seed = int(selected_seed) if selected_seed is not None else secrets.randbelow(2147483647)
             with st.spinner("Loading recent NBA box scores, projecting minutes and simulating correlated stat lines…"):
                 history, provenance = cached_history(target.isoformat())
-                projections = build_projections(history, teams_map, target, min_minutes=12)
-                samples = simulate_stat_lines(projections, history, trials=trials, seed=run_seed)
+                # Verify official status BEFORE projecting an injured player's
+                # old points-per-minute. The schedule gives the exact game
+                # orientation used in the league's injury-report PDF.
+                slate_games=(
+                    {f"{g.away}@{g.home}" for g in selected.itertuples(index=False)}
+                    if selected is not None
+                    else {f"{manual_away}@{manual_home}"})
+                official_status,official_meta=fetch_current_official_injuries(
+                    target,target_games=slate_games)
+                unavailable,uncertain=injury_exclusions(
+                    official_status,teams_map)
+                excluded_ids,unmatched_out=match_excluded_ids(
+                    history,unavailable,teams_map,target)
+                projections = build_projections(
+                    history,teams_map,target,min_minutes=8,
+                    excluded=excluded_ids)
+                projections,minute_audit=normalize_team_minutes(projections)
+                projections["availability_status"]=[
+                    uncertain.get((str(r.team),normalize_person(r.player)),
+                                  "Not listed (active unverified)")
+                    for r in projections.itertuples(index=False)]
+                samples,game_audit=simulate_conserved_nba_games(
+                    projections,history,when=target,trials=trials,seed=run_seed)
             st.session_state["nba_auto_result"] = {
                 "run_key": run_key, "history":history, "provenance":provenance,
                 "original":projections, "projections":projections,
                 "samples":samples, "teams_map":teams_map, "seed":run_seed,
+                "game_audit":game_audit, "minute_audit":minute_audit,
+                "injury_status":official_status, "injury_meta":official_meta,
+                "official_excluded_ids":excluded_ids,
+                "official_out_not_in_history":unmatched_out,
             }
             st.session_state.pop("nba_auto_bets", None)
-            st.success(f"Engine complete: {len(projections)} player projections and {trials:,} simulations. Seed: {run_seed}.")
+            st.success(
+                f"NBA team-constrained game simulation complete: "
+                f"{len(projections)} available-player forecasts and "
+                f"{trials:,} shared scenarios. Seed: {run_seed}.")
         except Exception as exc:
-            st.error(f"NBA data or simulation failed: {exc}")
-            st.info("The public data feeds may be unavailable. No synthetic statistics will be substituted.")
+            st.session_state.pop("nba_auto_result",None)
+            st.error(f"NBA pregame injury check or game simulation failed: {exc}")
+            st.info(
+                "No unsupported points or injury statuses were substituted. "
+                "An incomplete current-game roster or unverifiable report "
+                "cannot be labeled as 10,000 simulated games.")
 
 run = st.session_state.get("nba_auto_result")
 if run is not None and run["run_key"] == run_key:
