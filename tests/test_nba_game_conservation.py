@@ -14,7 +14,7 @@ import pandas as pd
 from nba_engine.predictor import build_projections
 from nba_engine.game_conservation import (
     normalize_team_minutes,observed_complete_team_games,
-    simulate_conserved_nba_games)
+    calibrate_team_scoring_baselines,simulate_conserved_nba_games)
 from nba_engine.injury_report import (
     normalize_person, parse_official_injury_pdf,
     injury_exclusions, match_excluded_ids)
@@ -92,6 +92,27 @@ class NBAConservationTests(unittest.TestCase):
             self.assertTrue(reported.team_score_conservation_passed)
         self.assertLess(float(teams.mean_team_points.sum()),270.)
         self.assertTrue((teams.market_total_used_to_fit==False).all())
+
+    def test_independent_player_baselines_fit_realistic_team_total(self):
+        p,_=normalize_team_minutes(self.proj)
+        p.loc[p.team=="IND","pts"]*=1.6
+        original=float(p.loc[p.team=="IND","pts"].sum())
+        for market,parts in __import__(
+                "nba_engine.predictor",fromlist=["MARKETS"]).MARKETS.items():
+            p[market]=p[list(parts)].sum(axis=1)
+        adjusted,audit=calibrate_team_scoring_baselines(p,self.logs,WHEN)
+        self.assertGreater(original,100)
+        self.assertTrue((audit.constrained_player_baseline_points<=
+                         audit.expected_team_points_from_complete_history+0.02).all())
+        self.assertFalse(audit.uses_sportsbook_total.any())
+        self.assertNotEqual(original,
+            float(adjusted.loc[adjusted.team=="IND","pts"].sum()))
+        for team,g in adjusted.groupby("team"):
+            self.assertLess(float(g.Points.sum()),150)
+            self.assertAlmostEqual(
+                float(g.Points.sum()),
+                float(audit.loc[audit.team==team,
+                    "constrained_player_baseline_points"].iloc[0]),places=2)
 
     def test_same_seed_repeats_and_combo_points_reconciles(self):
         p,_=normalize_team_minutes(self.proj)
