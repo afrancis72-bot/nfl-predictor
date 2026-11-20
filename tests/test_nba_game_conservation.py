@@ -53,6 +53,22 @@ class NBAConservationTests(unittest.TestCase):
         self.proj=build_projections(
             self.logs,TEAMS,WHEN,min_minutes=8)
 
+    def test_rate_limited_index_can_find_actual_public_raw_logs(self):
+        import requests
+        from nba_engine.data_sources import discover_game_log_files
+        response=requests.Response()
+        response.status_code=403
+        error=requests.HTTPError("Rate limit",response=response)
+        class Head:
+            status_code=200
+        with patch("nba_engine.data_sources._get_json",side_effect=error),patch(
+                "nba_engine.data_sources.requests.head",
+                return_value=Head()) as heads:
+            chosen=discover_game_log_files(WHEN)
+        self.assertEqual(len(chosen),3)
+        self.assertTrue(heads.called)
+        self.assertTrue(all(row["as_of"]=="2026-11-20" for row in chosen))
+
     def test_prior_team_games_are_real_roster_scores_not_player_average_sums(self):
         g=observed_complete_team_games(self.logs,WHEN)
         self.assertEqual(set(g["team"]),set(TEAMS))
