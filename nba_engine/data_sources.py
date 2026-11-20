@@ -58,11 +58,37 @@ def scoreboard(when: date):
 
 def discover_game_log_files(when: date):
     """Find the newest public snapshot for the current and previous 2 seasons."""
-    payload = _get_json(GITHUB_LIST)
     matches = {}
     pattern = re.compile(r"^NBA_players_game_log_(\d{4}-\d{2})_as_of_(\d{4}-\d{2}-\d{2})\.csv$")
     begin = int(season_key(when)[:4])
     allowed = {f"{y}-{str(y+1)[-2:]}" for y in [begin-2, begin-1, begin]}
+    try:
+        payload = _get_json(GITHUB_LIST)
+    except requests.HTTPError as exc:
+        # Unauthenticated GitHub Contents API sometimes responds 403/429
+        # despite existing real, public raw CSVs. Discover only actual 200
+        # raw filenames, no fabricated stats or synthetic player rows.
+        if exc.response is None or exc.response.status_code not in (403,429):
+            raise
+        payload=[]
+        from datetime import timedelta
+        for season in sorted(allowed):
+            for age in range(0,15):
+                as_of=(when-timedelta(days=age)).isoformat()
+                name=f"NBA_players_game_log_{season}_as_of_{as_of}.csv"
+                try:
+                    response=requests.head(
+                        f"{RAW_ROOT}/{name}",timeout=5,
+                        headers={"User-Agent":"TeamAI2Pro/1.0"})
+                    if response.status_code==200:
+                        payload.append({"name":name})
+                        break
+                except requests.RequestException:
+                    continue
+        if not payload:
+            raise ValueError(
+                "NBA player-game source unavailable: GitHub directory listing "
+                "was rate-limited and no date-stamped public raw CSV existed") from exc
     for item in payload:
         name = str(item.get("name", ""))
         m = pattern.match(name)
