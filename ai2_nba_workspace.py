@@ -22,6 +22,12 @@ from nba_engine.predictor import (
     summarize_simulated_projections, build_prefilled_prop_worksheet,
 )
 from nba_engine.props_sim import expected_net_roi
+from nba_engine.game_conservation import (
+    normalize_team_minutes, calibrate_team_scoring_baselines,
+    simulate_conserved_nba_games)
+from nba_engine.injury_report import (
+    fetch_current_official_injuries, injury_exclusions,
+    match_excluded_ids, normalize_person)
 from nba_engine.odds_feed import BOOKMAKERS, load_current_props, normalize_csv_lines
 
 
@@ -73,10 +79,13 @@ with st.expander("Model transparency and source limitations"):
         "player-game logs: community-maintained NBA box-score-derived CSVs hosted on GitHub. "
         "The latest publicly available snapshot may lag the real NBA results. "
         "No sportsbook lines, odds, or injury statuses are invented. "
-        "Projections use observed player minutes, historical per-minute rates, "
-        "a capped opponent scoring proxy, and empirical joint-stat resampling. "
-        "The simulation correlation factors and reported probabilities are research estimates "
-        "**not yet calibrated** through a full historical betting-market backtest."
+        "Official NBA injury report is checked BEFORE modeling, removing "
+        "explicitly OUT/Doubtful players. Unknown is not certified active. "
+        "Actual prior full-team game scores provide team-level outcomes, "
+        "and player scoring must reconcile to those totals in each scenario. "
+        "Player rotation minutes are limited to 240 per team. "
+        "This is NOT a possession-by-possession or independently validated "
+        "sportsbook betting model. Bookmaker totals NEVER fit projections."
     )
     st.markdown("[Player stats provenance](https://github.com/xtheredshirtx/fanduel-player-data/tree/main/NBA/csv) · [ESPN](https://www.espn.com/nba/schedule)")
 
@@ -123,10 +132,15 @@ else:
     schedule_key = "-".join(sorted(teams_map))
     st.caption("Selected: " + ", ".join(selected["matchup"]))
 
-st.info("Injury availability is NOT automatically confirmed. Check official reports before evaluating bets; exclude OUT players and adjust teammates' minutes when their roles change.")
+st.caption(
+    "Automatic pregame check: official NBA injury reports. "
+    "Explicitly OUT/Doubtful players are removed before simulation; "
+    "questionable players remain uncertain, not assumed fully healthy. "
+    "Sportsbook totals or odds are never used to fit our predictions.")
 
 market_key = f"{target}-{schedule_key}"  # Current bookmaker lines are independent of RNG seed.
-run_key = f"{market_key}-{trials}-{seed_mode}-{selected_seed}"
+NBA_GAME_MODEL_VERSION="nba-conserved-team-scores-v1-20261120"
+run_key = f"{market_key}-{trials}-{seed_mode}-{selected_seed}-{NBA_GAME_MODEL_VERSION}"
 if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_width=True):
     if len(teams_map) != len(set(teams_map.values())) and len(teams_map) != 2:
         st.error("Please select a valid slate with one opponent per team.")
@@ -137,18 +151,53 @@ if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_widt
             run_seed = int(selected_seed) if selected_seed is not None else secrets.randbelow(2147483647)
             with st.spinner("Loading recent NBA box scores, projecting minutes and simulating correlated stat lines…"):
                 history, provenance = cached_history(target.isoformat())
-                projections = build_projections(history, teams_map, target, min_minutes=12)
-                samples = simulate_stat_lines(projections, history, trials=trials, seed=run_seed)
+                # Verify official status BEFORE projecting an injured player's
+                # old points-per-minute. The schedule gives the exact game
+                # orientation used in the league's injury-report PDF.
+                slate_games=(
+                    {f"{g.away}@{g.home}" for g in selected.itertuples(index=False)}
+                    if selected is not None
+                    else {f"{manual_away}@{manual_home}"})
+                official_status,official_meta=fetch_current_official_injuries(
+                    target,target_games=slate_games)
+                unavailable,uncertain=injury_exclusions(
+                    official_status,teams_map)
+                excluded_ids,unmatched_out=match_excluded_ids(
+                    history,unavailable,teams_map,target)
+                projections = build_projections(
+                    history,teams_map,target,min_minutes=8,
+                    excluded=excluded_ids)
+                projections,minute_audit=normalize_team_minutes(projections)
+                projections,baseline_audit=calibrate_team_scoring_baselines(
+                    projections,history,target)
+                projections["availability_status"]=[
+                    uncertain.get((str(r.team),normalize_person(r.player)),
+                                  "Not listed (active unverified)")
+                    for r in projections.itertuples(index=False)]
+                samples,game_audit=simulate_conserved_nba_games(
+                    projections,history,when=target,trials=trials,seed=run_seed)
             st.session_state["nba_auto_result"] = {
                 "run_key": run_key, "history":history, "provenance":provenance,
                 "original":projections, "projections":projections,
                 "samples":samples, "teams_map":teams_map, "seed":run_seed,
+                "game_audit":game_audit, "minute_audit":minute_audit,
+                "baseline_audit":baseline_audit,
+                "injury_status":official_status, "injury_meta":official_meta,
+                "official_excluded_ids":excluded_ids,
+                "official_out_not_in_history":unmatched_out,
             }
             st.session_state.pop("nba_auto_bets", None)
-            st.success(f"Engine complete: {len(projections)} player projections and {trials:,} simulations. Seed: {run_seed}.")
+            st.success(
+                f"NBA team-constrained game simulation complete: "
+                f"{len(projections)} available-player forecasts and "
+                f"{trials:,} shared scenarios. Seed: {run_seed}.")
         except Exception as exc:
-            st.error(f"NBA data or simulation failed: {exc}")
-            st.info("The public data feeds may be unavailable. No synthetic statistics will be substituted.")
+            st.session_state.pop("nba_auto_result",None)
+            st.error(f"NBA pregame injury check or game simulation failed: {exc}")
+            st.info(
+                "No unsupported points or injury statuses were substituted. "
+                "An incomplete current-game roster or unverifiable report "
+                "cannot be labeled as 10,000 simulated games.")
 
 run = st.session_state.get("nba_auto_result")
 if run is not None and run["run_key"] == run_key:
@@ -156,7 +205,24 @@ if run is not None and run["run_key"] == run_key:
     history = run["history"]
     provenance = run["provenance"]
     samples = run["samples"]
-    st.caption(f"Active simulation seed: {run['seed']} · Mode: {seed_mode} · {trials:,} scenarios. Reuse the same seed and inputs to reproduce the draws.")
+    st.caption(f"Active simulation seed: {run['seed']} · Mode: {seed_mode} · {trials:,} team-constrained scenarios. Reuse the same seed and inputs to reproduce the draws.")
+    meta=run.get("injury_meta") or {}
+    if meta:
+        st.caption(
+            "Official NBA injury report checked: "+str(meta.get("as_of_eastern","unknown"))+
+            " · "+str(meta.get("source_url","source unavailable")))
+        official_rows=run.get("injury_status")
+        if official_rows is not None and not official_rows.empty:
+            with st.expander("Official OUT, Doubtful, Questionable and Probable players"):
+                st.dataframe(
+                    official_rows[["team","player","status","game"]],
+                    hide_index=True,use_container_width=True)
+        uncertain_count=int(
+            (projections["availability_status"]=="Questionable").sum())
+        if uncertain_count:
+            st.warning(
+                f"{uncertain_count} QUESTIONABLE player(s) remain in the "
+                "projections; their status and minutes are not verified.")
     st.caption(f"Player data as of {provenance['snapshot']} | Latest observed game {provenance['latest_game_date']} | "
                f"{provenance['rows']:,} historical player-game records | {'/'.join(provenance['seasons'])}")
     age_days = (target - date.fromisoformat(provenance["latest_game_date"])).days
@@ -165,7 +231,52 @@ if run is not None and run["run_key"] == run_key:
 
     projection_tab, props_tab, adjustments_tab = st.tabs(["📊 Player projections", "🎯 Props & parlays", "⚙️ Injuries / minutes"])
     with projection_tab:
-        st.subheader("Simulation-based player projections")
+        st.subheader("Game scoring and minutes consistency")
+        game_table=run.get("game_audit")
+        minute_table=run.get("minute_audit")
+        if game_table is not None and not game_table.empty:
+            st.dataframe(
+                game_table[["game","team","mean_team_points",
+                            "p10_team_points","p90_team_points",
+                            "mean_modeled_player_points",
+                            "mean_unmodeled_bench_points",
+                            "mean_projected_minutes",
+                            "team_score_conservation_passed"]],
+                hide_index=True,use_container_width=True)
+            combined=game_table.groupby("game",as_index=False)[
+                "mean_team_points"].sum()
+            st.dataframe(
+                combined.rename(columns={
+                    "game":"Matchup",
+                    "mean_team_points":"Independent simulated combined points"}),
+                hide_index=True,use_container_width=True)
+            if len(combined)==1:
+                model_total=float(combined["mean_team_points"].iloc[0])
+                st.metric("Simulated combined game total",
+                          f"{model_total:.1f} points")
+                market_total=float(st.number_input(
+                    "Optional sportsbook game total (comparison only)",
+                    min_value=0.,max_value=450.,step=.5,
+                    value=0.,key=f"nba_book_total_compare_{run_key}"))
+                if market_total>0:
+                    st.write(
+                        f"Independent model minus listed market total: "
+                        f"{model_total-market_total:+.1f} points. "
+                        "Market prices were NOT used to construct scenarios.")
+        if minute_table is not None and not minute_table.empty:
+            with st.expander("Team minutes conservation and source baseline detail"):
+                st.dataframe(
+                    minute_table,hide_index=True,use_container_width=True)
+                score_bases=run.get("baseline_audit")
+                if score_bases is not None and not score_bases.empty:
+                    st.dataframe(
+                        score_bases,hide_index=True,use_container_width=True)
+        st.caption(
+            "Team points come from real previous full-team games and the "
+            "opponent's defensive allowance, not the sportsbook line. "
+            "Modeled player plus unmodeled bench scoring equals one team "
+            "score in every scenario. Not a possession-by-possession engine.")
+        st.subheader("Team-constrained player projections")
         st.caption(
             "Our historical/matchup baseline is calculated BEFORE simulation and should not change with the seed. "
             "The simulated averages, medians, P10 and P90 come from the actual sampled games and DO change across seeds."
@@ -186,16 +297,17 @@ if run is not None and run["run_key"] == run_key:
         })
         display = projections[[
             "player_id", "player", "team", "opponent",
-            "minutes", "Points", "sample_flag",
+            "minutes", "Points", "sample_flag", "availability_status",
         ]].copy().merge(means, on="player_id", how="left", validate="one_to_one")
         display = display[[
             "player", "team", "opponent", "minutes", "Points",
             "Sim PTS", "Sim REB", "Sim AST", "Sim 3PM", "Sim PRA",
-            "sample_flag",
+            "sample_flag","availability_status",
         ]].rename(columns={
             "player":"Player", "team":"Team", "opponent":"Opponent",
             "minutes":"Expected minutes", "Points":"Baseline PTS",
             "sample_flag":"Sample quality",
+            "availability_status":"Official game-day status",
         })
         for col in ("Baseline PTS", "Sim PTS", "Sim REB", "Sim AST",
                     "Sim 3PM", "Sim PRA", "Expected minutes"):
@@ -603,8 +715,9 @@ if run is not None and run["run_key"] == run_key:
                         key=f"nba_compare_go_{run_key}",
                     ):
                         with st.spinner("Running independent simulation using comparison seed…"):
-                            other_samples = simulate_stat_lines(
-                                projections, history, trials=int(trials), seed=compare_seed
+                            other_samples,_ = simulate_conserved_nba_games(
+                                projections, history, when=target,
+                                trials=int(trials), seed=compare_seed
                             )
                             other_report, _ = evaluate_bets(bets, other_samples)
                         sensitivity = report[["label", "player_id", "market", "side", "line",
@@ -696,7 +809,10 @@ if run is not None and run["run_key"] == run_key:
 
     with adjustments_tab:
         st.subheader("Manual availability and playing time")
-        st.write("Exclude confirmed OUT players. Adjust minutes for players whose roles change. No unsupported automatic injury redistribution is performed.")
+        st.write(
+            "Official OUT/Doubtful players are already excluded. You can "
+            "additionally exclude questionable players or adjust minutes. "
+            "Every re-simulation conserves team scoring and minutes.")
         original = run["original"]
         edit = original[["player_id","player","team","minutes"]].copy()
         edit["Exclude"] = False
@@ -710,12 +826,34 @@ if run is not None and run["run_key"] == run_key:
                 omit = edited.loc[edited["Exclude"],"player_id"].astype(str).tolist()
                 overrides = {str(r.player_id):float(r.minutes) for r in edited.itertuples(index=False)}
                 with st.spinner("Rebuilding player distributions with approved playing time assumptions…"):
-                    new_proj = build_projections(history,run["teams_map"],target,min_minutes=12,
-                                                 excluded=omit,minute_overrides=overrides)
-                    new_samples = simulate_stat_lines(new_proj,history,trials=trials,seed=int(run["seed"]))
+                    already_out=list(run.get("official_excluded_ids") or [])
+                    new_proj = build_projections(
+                        history,run["teams_map"],target,min_minutes=8,
+                        excluded=sorted(set(omit+already_out)),
+                        minute_overrides=overrides)
+                    new_proj,new_minutes=normalize_team_minutes(new_proj)
+                    new_proj,new_baselines=calibrate_team_scoring_baselines(
+                        new_proj,history,target)
+                    official=run.get("injury_status")
+                    pending={}
+                    if official is not None:
+                        _,pending=injury_exclusions(official,run["teams_map"])
+                    new_proj["availability_status"]=[
+                        pending.get((str(r.team),normalize_person(r.player)),
+                                    "Not listed (active unverified)")
+                        for r in new_proj.itertuples(index=False)]
+                    new_samples,new_games=simulate_conserved_nba_games(
+                        new_proj,history,when=target,
+                        trials=trials,seed=int(run["seed"]))
                 run["projections"] = new_proj
                 run["samples"] = new_samples
-                st.success("Updated projections and simulations. Review the other tabs before considering bets.")
+                run["game_audit"]=new_games
+                run["minute_audit"]=new_minutes
+                run["baseline_audit"]=new_baselines
+                st.success(
+                    "Re-simulated with team point/minute conservation and "
+                    "the original verified injury exclusions. Review the "
+                    "other tabs before considering any props.")
             except Exception as exc:
                 st.error(f"Adjustment could not be applied: {exc}")
 elif run is not None:
