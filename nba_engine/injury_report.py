@@ -80,13 +80,21 @@ def parse_official_injury_pdf(blob, *, target_games, document_date):
             pieces=[x.strip() for x in re.split(r" {3,}",line.strip()) if x.strip()]
             if not pieces:
                 continue
+            # PDF layout can separate the two words of a team name with
+            # several spaces. Identify the TEAM on the full visual row,
+            # not an arbitrary whitespace-fragmented cell.
+            normalized_line=" ".join(line.split())
+            for full_name,abbrev in sorted(
+                    TEAM_NAMES.items(),key=lambda item:-len(item[0])):
+                if re.search(
+                        r"(?<![A-Za-z])"+re.escape(full_name)+r"(?![A-Za-z])",
+                        normalized_line,re.I):
+                    current_team=abbrev
+                    break
             for seg in pieces:
                 m=re.search(r"\b([A-Z]{2,3}@[A-Z]{2,3})\b",seg)
                 if m:
                     current_game=m.group(1)
-                normalized=" ".join(seg.split())
-                if normalized in TEAM_NAMES:
-                    current_team=TEAM_NAMES[normalized]
             for i,item in enumerate(pieces):
                 if item not in STATUSES or i<1:
                     continue
