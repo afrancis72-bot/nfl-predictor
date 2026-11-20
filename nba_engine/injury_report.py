@@ -84,6 +84,13 @@ def parse_official_injury_pdf(blob, *, target_games, document_date):
             # several spaces. Identify the TEAM on the full visual row,
             # not an arbitrary whitespace-fragmented cell.
             normalized_line=" ".join(line.split())
+            for seg in pieces:
+                m=re.search(r"\b([A-Z]{2,3}@[A-Z]{2,3})\b",seg)
+                if m:
+                    new_game=m.group(1)
+                    if new_game!=current_game:
+                        current_team=None
+                        current_game=new_game
             for full_name,abbrev in sorted(
                     TEAM_NAMES.items(),key=lambda item:-len(item[0])):
                 if re.search(
@@ -91,10 +98,10 @@ def parse_official_injury_pdf(blob, *, target_games, document_date):
                         normalized_line,re.I):
                     current_team=abbrev
                     break
-            for seg in pieces:
-                m=re.search(r"\b([A-Z]{2,3}@[A-Z]{2,3})\b",seg)
-                if m:
-                    current_game=m.group(1)
+            if current_game in games and "NOT YET SUBMITTED" in normalized_line.upper():
+                raise ValueError(
+                    "Selected NBA team's official game-day injury report "
+                    "has not been submitted")
             for i,item in enumerate(pieces):
                 if item not in STATUSES or i<1:
                     continue
