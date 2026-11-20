@@ -99,6 +99,13 @@ def parse_official_injury_pdf(blob, *, target_games, document_date):
                 if item not in STATUSES or i<1:
                     continue
                 label=pieces[i-1]
+                # Source PDF's variable kerning can put three or more spaces
+                # BETWEEN last/first names, so column-based splitting may
+                # yield ["Mobley,", "Evan", "Out"]. Rejoin only the precise
+                # adjacent comma-terminated family-name token.
+                if ("," not in label and i>=2 and
+                        pieces[i-2].rstrip().endswith(",")):
+                    label=pieces[i-2]+" "+label
                 if "," not in label:
                     continue
                 if current_game is None or current_team is None:
