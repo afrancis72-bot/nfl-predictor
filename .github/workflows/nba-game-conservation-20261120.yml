@@ -5,6 +5,7 @@ on:
     paths:
       - 'ai2_nba_workspace.py'
       - 'nba_engine/game_conservation.py'
+      - 'nba_engine/data_sources.py'
       - 'nba_engine/injury_report.py'
       - 'nba_engine/live_game_smoke.py'
       - 'tests/test_nba_game_conservation.py'
@@ -27,7 +28,7 @@ jobs:
           python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Compile NBA sources and unified app
         run: |
-          python -m py_compile ai2_nba_workspace.py nba_engine/game_conservation.py nba_engine/injury_report.py nba_engine/live_game_smoke.py
+          python -m py_compile ai2_nba_workspace.py nba_engine/data_sources.py nba_engine/game_conservation.py nba_engine/injury_report.py nba_engine/live_game_smoke.py
       - name: Synthetic team-minute/scoring/injury regression
         env:
           PYTHONPATH: .:tests
