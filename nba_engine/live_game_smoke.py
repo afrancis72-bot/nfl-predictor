@@ -24,13 +24,6 @@ def main():
          "Injury-Report_2026-11-20_02_15PM.pdf")
     response=requests.get(url,timeout=20)
     response.raise_for_status()
-    from pypdf import PdfReader
-    for pageno,page in enumerate(PdfReader(BytesIO(response.content)).pages[:2]):
-        for line in page.extract_text(extraction_mode="layout").splitlines():
-            if any(x in line for x in (
-                    "Indiana", "Cleveland", "Haliburton",
-                    "Mobley", "Nembhard", "McConnell", "Diop")):
-                print("PDF LINE",pageno,repr(line[:240]))
     status=parse_official_injury_pdf(
         response.content,target_games={"IND@CLE"},document_date=when)
     now=datetime(2026,11,20,14,17,tzinfo=ZoneInfo("America/New_York"))
