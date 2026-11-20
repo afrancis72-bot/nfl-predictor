@@ -200,7 +200,24 @@ if run is not None and run["run_key"] == run_key:
     history = run["history"]
     provenance = run["provenance"]
     samples = run["samples"]
-    st.caption(f"Active simulation seed: {run['seed']} · Mode: {seed_mode} · {trials:,} scenarios. Reuse the same seed and inputs to reproduce the draws.")
+    st.caption(f"Active simulation seed: {run['seed']} · Mode: {seed_mode} · {trials:,} team-constrained scenarios. Reuse the same seed and inputs to reproduce the draws.")
+    meta=run.get("injury_meta") or {}
+    if meta:
+        st.caption(
+            "Official NBA injury report checked: "+str(meta.get("as_of_eastern","unknown"))+
+            " · "+str(meta.get("source_url","source unavailable")))
+        official_rows=run.get("injury_status")
+        if official_rows is not None and not official_rows.empty:
+            with st.expander("Official OUT, Doubtful, Questionable and Probable players"):
+                st.dataframe(
+                    official_rows[["team","player","status","game"]],
+                    hide_index=True,use_container_width=True)
+        uncertain_count=int(
+            (projections["availability_status"]=="Questionable").sum())
+        if uncertain_count:
+            st.warning(
+                f"{uncertain_count} QUESTIONABLE player(s) remain in the "
+                "projections; their status and minutes are not verified.")
     st.caption(f"Player data as of {provenance['snapshot']} | Latest observed game {provenance['latest_game_date']} | "
                f"{provenance['rows']:,} historical player-game records | {'/'.join(provenance['seasons'])}")
     age_days = (target - date.fromisoformat(provenance["latest_game_date"])).days
@@ -209,7 +226,35 @@ if run is not None and run["run_key"] == run_key:
 
     projection_tab, props_tab, adjustments_tab = st.tabs(["📊 Player projections", "🎯 Props & parlays", "⚙️ Injuries / minutes"])
     with projection_tab:
-        st.subheader("Simulation-based player projections")
+        st.subheader("Game scoring and minutes consistency")
+        game_table=run.get("game_audit")
+        minute_table=run.get("minute_audit")
+        if game_table is not None and not game_table.empty:
+            st.dataframe(
+                game_table[["game","team","mean_team_points",
+                            "p10_team_points","p90_team_points",
+                            "mean_modeled_player_points",
+                            "mean_unmodeled_bench_points",
+                            "mean_projected_minutes",
+                            "team_score_conservation_passed"]],
+                hide_index=True,use_container_width=True)
+            combined=game_table.groupby("game",as_index=False)[
+                "mean_team_points"].sum()
+            st.dataframe(
+                combined.rename(columns={
+                    "game":"Matchup",
+                    "mean_team_points":"Independent simulated combined points"}),
+                hide_index=True,use_container_width=True)
+        if minute_table is not None and not minute_table.empty:
+            with st.expander("Team minutes conservation detail"):
+                st.dataframe(
+                    minute_table,hide_index=True,use_container_width=True)
+        st.caption(
+            "Team points come from real previous full-team games and the "
+            "opponent's defensive allowance, not the sportsbook line. "
+            "Modeled player plus unmodeled bench scoring equals one team "
+            "score in every scenario. Not a possession-by-possession engine.")
+        st.subheader("Team-constrained player projections")
         st.caption(
             "Our historical/matchup baseline is calculated BEFORE simulation and should not change with the seed. "
             "The simulated averages, medians, P10 and P90 come from the actual sampled games and DO change across seeds."
@@ -230,16 +275,17 @@ if run is not None and run["run_key"] == run_key:
         })
         display = projections[[
             "player_id", "player", "team", "opponent",
-            "minutes", "Points", "sample_flag",
+            "minutes", "Points", "sample_flag", "availability_status",
         ]].copy().merge(means, on="player_id", how="left", validate="one_to_one")
         display = display[[
             "player", "team", "opponent", "minutes", "Points",
             "Sim PTS", "Sim REB", "Sim AST", "Sim 3PM", "Sim PRA",
-            "sample_flag",
+            "sample_flag","availability_status",
         ]].rename(columns={
             "player":"Player", "team":"Team", "opponent":"Opponent",
             "minutes":"Expected minutes", "Points":"Baseline PTS",
             "sample_flag":"Sample quality",
+            "availability_status":"Official game-day status",
         })
         for col in ("Baseline PTS", "Sim PTS", "Sim REB", "Sim AST",
                     "Sim 3PM", "Sim PRA", "Expected minutes"):
@@ -647,8 +693,9 @@ if run is not None and run["run_key"] == run_key:
                         key=f"nba_compare_go_{run_key}",
                     ):
                         with st.spinner("Running independent simulation using comparison seed…"):
-                            other_samples = simulate_stat_lines(
-                                projections, history, trials=int(trials), seed=compare_seed
+                            other_samples,_ = simulate_conserved_nba_games(
+                                projections, history, when=target,
+                                trials=int(trials), seed=compare_seed
                             )
                             other_report, _ = evaluate_bets(bets, other_samples)
                         sensitivity = report[["label", "player_id", "market", "side", "line",
