@@ -196,7 +196,7 @@ class NBAConservationTests(unittest.TestCase):
                     "                 Los Angeles Lakers"+
                     "      Reaves, Austin       Questionable",
                 ]
-                return "\\n".join(reversed(lines))
+                return "\n".join(reversed(lines))
         class Reader:
             def __init__(self,_):
                 self.pages=[Page()]
