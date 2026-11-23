@@ -182,6 +182,86 @@ class NBAConservationTests(unittest.TestCase):
         self.assertNotIn(("CLE_0","Points"),draws)
         self.assertLess(float(report.mean_team_points.sum()),270.)
 
+    def test_partial_report_skips_only_unsubmitted_team_game(self):
+        from nba_engine.injury_report import fetch_current_official_injuries
+        class Page:
+            def extract_text(self,extraction_mode="layout"):
+                # The official pypdf visual extraction is reverse row order.
+                lines=[
+                    "11/23/2026 07:30 (ET) IND@CLE Indiana Pacers"+
+                    "      Haliburton, Tyrese     Out",
+                    "                 Cleveland Cavaliers"+
+                    "      Mobley, Evan           Out",
+                    "10:00 (ET) UTA@LAL Utah Jazz     NOT   YET SUBMITTED",
+                    "                 Los Angeles Lakers"+
+                    "      Reaves, Austin       Questionable",
+                ]
+                return "\n".join(reversed(lines))
+        class Reader:
+            def __init__(self,_):
+                self.pages=[Page()]
+        games={"IND@CLE","UTA@LAL"}
+        with patch("nba_engine.injury_report.PdfReader",Reader):
+            table=parse_official_injury_pdf(
+                b"%PDF-1.4 fake",target_games=games,
+                document_date=date(2026,11,23),allow_partial=True)
+        self.assertEqual(table.attrs["submitted_games"],["IND@CLE"])
+        self.assertEqual(table.attrs["pending_games"],["UTA@LAL"])
+        self.assertEqual(table.attrs["unsubmitted_teams"],
+                         [("UTA@LAL","UTA")])
+        self.assertEqual(set(table.game),{"IND@CLE"})
+        self.assertNotIn("Austin Reaves",set(table.player))
+        with patch("nba_engine.injury_report.PdfReader",Reader):
+            with self.assertRaisesRegex(ValueError,"not been submitted"):
+                parse_official_injury_pdf(
+                    b"%PDF-1.4 fake",target_games=games,
+                    document_date=date(2026,11,23))
+        class Response:
+            status_code=200
+            content=b"%PDF-1.4 fake"
+        with patch("nba_engine.injury_report.PdfReader",Reader):
+            rows,meta=fetch_current_official_injuries(
+                date(2026,11,23),target_games=games,
+                now=datetime(2026,11,23,14,47,
+                             tzinfo=ZoneInfo("America/New_York")),
+                get=lambda *args,**kwargs:Response())
+        self.assertEqual(meta["games_reported"],["IND@CLE"])
+        self.assertEqual(meta["games_pending"],["UTA@LAL"])
+        self.assertEqual(meta["status"],"PARTIAL_NBA_REPORT")
+        self.assertTrue((rows.game=="IND@CLE").all())
+
+    def test_per_game_runner_keeps_complete_game_when_another_missing_data(self):
+        from nba_engine.slate_runner import run_verified_slate
+        status=pd.DataFrame([
+            {"game":"IND@CLE","team":"IND","player":"Tyrese Haliburton",
+             "player_key":normalize_person("Tyrese Haliburton"),
+             "status":"Out"},
+            {"game":"IND@CLE","team":"CLE","player":"Evan Mobley",
+             "player_key":normalize_person("Evan Mobley"),
+             "status":"Out"},
+        ])
+        opponents={"IND":"CLE","CLE":"IND","BOS":"NYK","NYK":"BOS"}
+        a=run_verified_slate(
+            self.logs,opponents,status,{"IND@CLE","NYK@BOS"},
+            when=WHEN,trials=1000,seed=89)
+        self.assertEqual(a["games_completed"],["IND@CLE"])
+        self.assertIn("NYK@BOS",a["games_failed"])
+        self.assertEqual(set(a["teams_map"]),{"IND","CLE"})
+        self.assertTrue(
+            (a["game_audit"]["team_score_conservation_passed"]).all())
+        self.assertEqual(len(a["projections"]["team"].unique()),2)
+        self.assertNotIn("Tyrese Haliburton",set(a["projections"]["player"]))
+        self.assertNotIn("Evan Mobley",set(a["projections"]["player"]))
+        replay=run_verified_slate(
+            self.logs,opponents,status,{"IND@CLE"},
+            when=WHEN,trials=1000,seed=89)
+        for key in a["samples"]:
+            np.testing.assert_array_equal(a["samples"][key],replay["samples"][key])
+        with self.assertRaisesRegex(ValueError,"None of the selected"):
+            run_verified_slate(
+                self.logs,opponents,status,{"NYK@BOS"},
+                when=WHEN,trials=1000,seed=89)
+
     def test_fake_official_pdf_layout_carries_team_across_page(self):
         class Page:
             def __init__(self,lines):self.lines=lines

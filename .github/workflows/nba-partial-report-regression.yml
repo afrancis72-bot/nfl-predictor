@@ -1,0 +1,38 @@
+name: NBA partial official injury report must not block verified games
+on:
+  push:
+    branches: [fix/nba-unsubmitted-game-skip-per-matchup-20261123, feature/unified-ai2-platform]
+    paths:
+      - 'ai2_nba_workspace.py'
+      - 'nba_engine/injury_report.py'
+      - 'nba_engine/slate_runner.py'
+      - 'nba_engine/live_partial_report_smoke.py'
+      - 'tests/test_nba_game_conservation.py'
+      - '.github/workflows/nba-partial-report-regression.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  partial-report-slate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install -r requirements.txt
+      - name: Compile new NBA source and unified app
+        run: python -m compileall -q ai2_nba_workspace.py nba_engine tests/test_nba_game_conservation.py
+      - name: Regression - official incomplete reports and independent games
+        env:
+          PYTHONPATH: .:tests
+        run: |
+          python -m unittest discover -s tests -p 'test_nba_game_conservation.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nba_integration.py' -v
+          python -m unittest discover -s tests -p 'test_ai2_nba_odds.py' -v
+      - name: Reproduce Nov 23 2026 actual 2:45 PM report + 10K team games
+        env:
+          PYTHONPATH: .:tests
+        run: python -m nba_engine.live_partial_report_smoke

@@ -54,7 +54,8 @@ def _name_from_pdf(label):
     return " ".join((first.strip(),family.strip()))
 
 
-def parse_official_injury_pdf(blob, *, target_games, document_date):
+def parse_official_injury_pdf(blob, *, target_games, document_date,
+                              allow_partial=False):
     """Read genuine league table columns; never guess a player's team.
 
     pypdf's layout extraction returns visual lines bottom-first for this
@@ -70,6 +71,9 @@ def parse_official_injury_pdf(blob, *, target_games, document_date):
     all_records=[]
     current_game=None
     current_team=None
+    observed_games=set()
+    observed_teams=set()
+    unsubmitted_teams=set()
     for page in reader.pages:
         content=page.extract_text(extraction_mode="layout")
         if not content:
@@ -98,10 +102,20 @@ def parse_official_injury_pdf(blob, *, target_games, document_date):
                         normalized_line,re.I):
                     current_team=abbrev
                     break
-            if current_game in games and "NOT YET SUBMITTED" in normalized_line.upper():
-                raise ValueError(
-                    "Selected NBA team's official game-day injury report "
-                    "has not been submitted")
+            if current_game in games:
+                observed_games.add(current_game)
+                if current_team:
+                    observed_teams.add((current_game,current_team))
+                if re.search(r"\bNOT\s+YET\s+SUBMITTED\b",
+                             normalized_line,re.I):
+                    # One unsubmitted team is not a reason to discard OTHER
+                    # games with complete official source records.
+                    unsubmitted_teams.add((current_game,current_team))
+                    if not allow_partial:
+                        raise ValueError(
+                            "Selected NBA team's official game-day injury "
+                            "report has not been submitted")
+                    continue
             for i,item in enumerate(pieces):
                 if item not in STATUSES or i<1:
                     continue
@@ -131,8 +145,9 @@ def parse_official_injury_pdf(blob, *, target_games, document_date):
                     "player":player,"player_key":normalize_person(player),
                     "status":item,
                 })
-    records=pd.DataFrame(all_records)
-    if records.empty:
+    records=pd.DataFrame(
+        all_records,columns=["game","team","player","player_key","status"])
+    if records.empty and not allow_partial:
         raise ValueError("No matching player injury rows found in official NBA PDF")
     if records.duplicated(["game","team","player_key"]).any():
         combined=records.groupby(["game","team","player_key"])["status"].nunique()
@@ -142,7 +157,27 @@ def parse_official_injury_pdf(blob, *, target_games, document_date):
     actual_games=set(records["game"].astype(str))
     if not actual_games.issubset(games):
         raise ValueError("Cross-game injury rows must not enter this slate")
-    return records.reset_index(drop=True)
+    incomplete={game for game,_ in unsubmitted_teams}
+    submitted={
+        game for game in games
+        if (game in observed_games and game not in incomplete
+            and all((game,team) in observed_teams
+                    for team in game.split("@")))}
+    pending=games-submitted
+    if not allow_partial and pending:
+        raise ValueError(
+            "Incomplete official NBA injury status for selected matchups: "+
+            ", ".join(sorted(pending)))
+    # A team with no listed injuries still counts as reported when the
+    # official document explicitly names both teams and neither is marked
+    # unsubmitted. Return only fully verified matchups.
+    records=records.loc[records["game"].isin(submitted)].reset_index(drop=True)
+    records.attrs["submitted_games"]=sorted(submitted)
+    records.attrs["pending_games"]=sorted(pending)
+    records.attrs["unsubmitted_teams"]=sorted(
+        (game,team or "UNKNOWN") for game,team in unsubmitted_teams)
+    records.attrs["unseen_games"]=sorted(games-observed_games)
+    return records
 
 
 def fetch_current_official_injuries(when:date, *, target_games,
@@ -181,14 +216,24 @@ def fetch_current_official_injuries(when:date, *, target_games,
             document=r.content
             statuses=parse_official_injury_pdf(
                 document,target_games=target_games,
-                document_date=instant.date())
+                document_date=instant.date(),allow_partial=True)
             if not (statuses["game"].isin(target_games)).all():
                 raise ValueError("Other NBA game injury records leaked into slate")
+            submitted_games=statuses.attrs.get("submitted_games",[])
+            pending_games=statuses.attrs.get("pending_games",[])
+            if not submitted_games and not pending_games:
+                raise ValueError(
+                    "Official NBA injury document did not contain the "
+                    "selected matchups")
             return statuses,{
                 "source_url":url,
                 "as_of_eastern":instant.isoformat(),
-                "status":"OFFICIAL_NBA_REPORT_PARSED",
-                "games_reported":sorted(set(statuses["game"])),
+                "status":("PARTIAL_NBA_REPORT" if pending_games
+                          else "OFFICIAL_NBA_REPORT_PARSED"),
+                "games_reported":sorted(submitted_games),
+                "games_pending":sorted(pending_games),
+                "teams_unsubmitted":statuses.attrs.get("unsubmitted_teams",[]),
+                "games_unseen":statuses.attrs.get("unseen_games",[]),
                 "rows":len(statuses),
                 "excluded_statuses":sorted(EXCLUDE),
                 "uncertain_statuses":["Questionable","Probable"],
