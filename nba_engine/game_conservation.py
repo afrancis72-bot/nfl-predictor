@@ -188,6 +188,7 @@ def calibrate_team_scoring_baselines(projections:pd.DataFrame,
         score_budget=expected-bench
         if score_budget<0:
             raise ValueError(f"{team}: invalid team-score projection")
+        contested_role_baseline=False
         if modeled>score_budget+1e-8:
             # A uniform second haircut to every scorer would force
             # 25-point players down just because reserves were overcounted.
@@ -199,6 +200,14 @@ def calibrate_team_scoring_baselines(projections:pd.DataFrame,
                 np.where((minutes>=22)&(baseline>=8),
                          baseline*.67,0.))
             priority=.20+(minutes/23.)**3*(1+baseline/18.)
+            if floors.sum()>score_budget+1e-7:
+                # This roster claims more independently protected scoring
+                # than the TEAM can actually score. It is still physically
+                # possible to reconcile points, but the conflicting role
+                # assumptions must be flagged rather than silently failing
+                # every game or claiming all players reach their floors.
+                contested_role_baseline=True
+                floors*=score_budget/max(1e-8,float(floors.sum()))*.99
             adjusted=_weighted_budget(
                 baseline,floors,priority,score_budget)
         else:
@@ -219,6 +228,7 @@ def calibrate_team_scoring_baselines(projections:pd.DataFrame,
             "points_scaling_factor":round(
                 float(score_budget/max(modeled,1e-8)),4),
             "scoring_method":"core-usage-protected/team-conserved",
+            "scoring_role_conflict":contested_role_baseline,
             "uses_sportsbook_total":False,
         })
     return x.reset_index(drop=True),pd.DataFrame(audit)
