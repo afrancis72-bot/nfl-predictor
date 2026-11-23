@@ -13,6 +13,7 @@ from hashlib import sha256
 import pandas as pd
 
 from nba_engine.predictor import build_projections
+from nba_engine.rotation_model import select_plausible_rotation
 from nba_engine.injury_report import (
     injury_exclusions,match_excluded_ids,normalize_person)
 from nba_engine.game_conservation import (
@@ -30,6 +31,7 @@ def run_verified_slate(logs:pd.DataFrame,team_opponents:dict,
     frames=[]
     minute_frames=[]
     baseline_frames=[]
+    rotation_frames=[]
     score_frames=[]
     samples={}
     excluded_ids=set()
@@ -56,6 +58,8 @@ def run_verified_slate(logs:pd.DataFrame,team_opponents:dict,
                 logs,excluded,pair,when)
             forecast=build_projections(
                 logs,pair,when,min_minutes=8,excluded=omissions)
+            forecast,rotation_audit=select_plausible_rotation(
+                forecast,logs,when,uncertain_status=uncertain)
             forecast,mins=normalize_team_minutes(forecast)
             forecast,baselines=calibrate_team_scoring_baselines(
                 forecast,logs,when)
@@ -77,6 +81,7 @@ def run_verified_slate(logs:pd.DataFrame,team_opponents:dict,
             frames.append(forecast)
             minute_frames.append(mins)
             baseline_frames.append(baselines)
+            rotation_frames.append(rotation_audit)
             score_frames.append(score)
             excluded_ids.update(omissions)
             unmatched_out.update(unmatched)
@@ -99,6 +104,7 @@ def run_verified_slate(logs:pd.DataFrame,team_opponents:dict,
         "game_audit":pd.concat(score_frames,ignore_index=True),
         "minute_audit":pd.concat(minute_frames,ignore_index=True),
         "baseline_audit":pd.concat(baseline_frames,ignore_index=True),
+        "rotation_audit":pd.concat(rotation_frames,ignore_index=True),
         "teams_map":{team:team_opponents[team]
                      for team in available_keys},
         "games_completed":completed,
