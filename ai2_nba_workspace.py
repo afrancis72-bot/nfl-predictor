@@ -310,6 +310,17 @@ if run is not None and run["run_key"] == run_key:
                 if score_bases is not None and not score_bases.empty:
                     st.dataframe(
                         score_bases,hide_index=True,use_container_width=True)
+        score_bases=run.get("baseline_audit")
+        if (score_bases is not None and not score_bases.empty
+                and "scoring_role_conflict" in score_bases
+                and score_bases["scoring_role_conflict"].any()):
+            st.warning(
+                "Some teams have conflicting historical scorer roles: "
+                "individually protected point opportunities exceeded "
+                "the expected team total. The model reconciled them "
+                "using the available minutes and points budget; treat "
+                "those teams' player prop probabilities as especially "
+                "uncertain until roles are independently reviewed.")
         st.caption(
             "Team points come from real previous full-team games and the "
             "opponent's defensive allowance, not the sportsbook line. "
@@ -328,7 +339,7 @@ if run is not None and run["run_key"] == run_key:
                     rotation_checks,hide_index=True,use_container_width=True)
         st.subheader("Team-constrained player projections")
         st.caption(
-            "Our historical/matchup baseline is calculated BEFORE simulation and should not change with the seed. "
+            "Our role-adjusted historical/matchup baseline is calculated BEFORE simulation and should not change with the seed. "
             "The simulated averages, medians, P10 and P90 come from the actual sampled games and DO change across seeds."
         )
         visible_markets = ("Points", "Rebounds", "Assists", "Threes", "PRA")
