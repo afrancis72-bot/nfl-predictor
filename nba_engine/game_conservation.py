@@ -19,6 +19,45 @@ import pandas as pd
 from nba_engine.predictor import MARKETS, STATS, simulate_stat_lines
 
 
+def _weighted_budget(initial, floor, priority, budget):
+    """Conserve a hard team budget while minimizing changes to core roles.
+
+    This deterministic bounded water-fill is generic for player minutes and
+    scoring opportunity. No player names, betting prices or market lines.
+    """
+    initial=np.asarray(initial,dtype=float)
+    floor=np.asarray(floor,dtype=float)
+    priority=np.asarray(priority,dtype=float)
+    if (initial.ndim!=1 or len(initial)==0 or not
+            (np.isfinite(initial).all() and np.isfinite(floor).all() and
+             np.isfinite(priority).all())):
+        raise ValueError("Invalid NBA player budget assumptions")
+    if ((initial<0).any() or (floor<0).any() or
+            (priority<=0).any() or budget<0):
+        raise ValueError("Invalid NBA player budget constraints")
+    if float(initial.sum())<=budget:
+        return initial.copy()
+    floor=np.minimum(floor,initial)
+    if floor.sum()>budget+1e-6:
+        raise ValueError(
+            "Too many full-minute players for the available NBA team budget; "
+            "rotation needs independent availability review")
+    lo=0.
+    hi=float(np.max((initial-floor)*priority))+1.
+    for _ in range(80):
+        midpoint=(lo+hi)/2.
+        proposal=np.maximum(
+            floor,initial-midpoint/priority)
+        if proposal.sum()>budget:
+            lo=midpoint
+        else:
+            hi=midpoint
+    planned=np.maximum(floor,initial-hi/priority)
+    if not np.isclose(planned.sum(),budget,atol=.005):
+        raise ValueError("Could not conserve NBA player opportunity budget")
+    return planned
+
+
 def normalize_team_minutes(projections: pd.DataFrame, *, coverage_floor=195.0):
     """Make active, non-OUT player minutes fit one 240-minute team budget.
 
@@ -49,14 +88,26 @@ def normalize_team_minutes(projections: pd.DataFrame, *, coverage_floor=195.0):
             raise ValueError(
                 f"{team}: only {before:.1f} documented rotation minutes. "
                 "Insufficient roster coverage; do not simulate a full game.")
-        scale=min(1.0,240.0/before)
-        reduced=minutes*scale
+        # The previous proportional shrink reduced 35-minute starters to
+        # ~22 whenever a 15-player season roster summed above 350.
+        # Recent full-game rotation evidence must be selected upstream.
+        # Here we protect established high-minute roles *generically*,
+        # and remove overbooked opportunity primarily from reserves.
+        floor=np.where(
+            minutes>=30,minutes*.93,
+            np.where(minutes>=24,minutes*.84,
+                     np.where(minutes>=18,minutes*.55,0.)))
+        priority=np.maximum(.15,(minutes/18.)**3+.15)
+        reduced=_weighted_budget(minutes,floor,priority,240.)
+        ratios=np.divide(
+            reduced,minutes,out=np.zeros(len(minutes)),where=minutes>0)
         x.loc[indices,"minutes"]=reduced
         x.loc[indices,"minutes_sd"]=np.maximum(
-            1.0,np.minimum(rows["minutes_sd"].to_numpy(dtype=float),
-                           np.maximum(1.8,reduced*0.30)))
+            1.,np.minimum(
+                rows["minutes_sd"].to_numpy(dtype=float)*ratios,
+                np.maximum(1.8,reduced*0.30)))
         for stat in STATS:
-            x.loc[indices,stat]=rows[stat].to_numpy(dtype=float)*scale
+            x.loc[indices,stat]=rows[stat].to_numpy(dtype=float)*ratios
         for market,parts in MARKETS.items():
             x.loc[indices,market]=x.loc[indices,list(parts)].sum(axis=1)
         after=float(reduced.sum())
@@ -67,6 +118,12 @@ def normalize_team_minutes(projections: pd.DataFrame, *, coverage_floor=195.0):
             "projected_minutes_after":round(after,2),
             "unmodeled_bench_minutes":round(max(0.,240.-after),2),
             "minute_conservation_applied":bool(before>240.000001),
+            "rotation_method":"recent-participants/core-role-protected",
+            "core_players_30plus":int((minutes>=30).sum()),
+            "core_minutes_prior":round(
+                float(minutes[minutes>=30].sum()),2),
+            "core_minutes_after":round(
+                float(reduced[minutes>=30].sum()),2),
         })
         if after>240.00001:
             raise ValueError(f"{team}: impossible projected team minute budget")
