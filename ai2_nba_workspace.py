@@ -25,6 +25,7 @@ from nba_engine.props_sim import expected_net_roi
 from nba_engine.game_conservation import (
     normalize_team_minutes, calibrate_team_scoring_baselines,
     simulate_conserved_nba_games)
+from nba_engine.slate_runner import run_verified_slate
 from nba_engine.injury_report import (
     fetch_current_official_injuries, injury_exclusions,
     match_excluded_ids, normalize_person)
@@ -171,38 +172,26 @@ if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_widt
                         ", ".join(pending_games)+
                         ". Try another reported matchup or check again when "
                         "the missing team publishes its status.")
-                verified_teams_map={}
-                for game in sorted(ready_games):
-                    away,home=game.split("@")
-                    if (teams_map.get(away)!=home or
-                            teams_map.get(home)!=away):
-                        raise ValueError(
-                            "NBA game/team mapping disagreement; cannot "
-                            "verify reports for "+game)
-                    verified_teams_map[away]=home
-                    verified_teams_map[home]=away
-                unavailable,uncertain=injury_exclusions(
-                    official_status,verified_teams_map)
-                excluded_ids,unmatched_out=match_excluded_ids(
-                    history,unavailable,verified_teams_map,target)
-                projections = build_projections(
-                    history,verified_teams_map,target,min_minutes=8,
-                    excluded=excluded_ids)
-                projections,minute_audit=normalize_team_minutes(projections)
-                projections,baseline_audit=calibrate_team_scoring_baselines(
-                    projections,history,target)
-                projections["availability_status"]=[
-                    uncertain.get((str(r.team),normalize_person(r.player)),
-                                  "Not listed (active unverified)")
-                    for r in projections.itertuples(index=False)]
-                samples,game_audit=simulate_conserved_nba_games(
-                    projections,history,when=target,trials=trials,seed=run_seed)
+                finished=run_verified_slate(
+                    history,teams_map,official_status,ready_games,
+                    when=target,trials=trials,seed=run_seed)
+                projections=finished["projections"]
+                samples=finished["samples"]
+                game_audit=finished["game_audit"]
+                minute_audit=finished["minute_audit"]
+                baseline_audit=finished["baseline_audit"]
+                excluded_ids=finished["official_excluded_ids"]
+                unmatched_out=finished["official_out_not_in_history"]
+                verified_teams_map=finished["teams_map"]
+                completed_games=finished["games_completed"]
+                failed_games=finished["games_failed"]
             st.session_state["nba_auto_result"] = {
                 "run_key": run_key, "history":history, "provenance":provenance,
                 "original":projections, "projections":projections,
                 "samples":samples, "teams_map":verified_teams_map,
                 "seed":run_seed,"games_skipped":pending_games,
-                "games_verified":sorted(ready_games),
+                "games_verified":completed_games,
+                "games_failed":failed_games,
                 "game_audit":game_audit, "minute_audit":minute_audit,
                 "baseline_audit":baseline_audit,
                 "injury_status":official_status, "injury_meta":official_meta,
@@ -212,15 +201,20 @@ if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_widt
             st.session_state.pop("nba_auto_bets", None)
             st.success(
                 f"NBA team-constrained simulation complete for "
-                f"{len(ready_games)} verified matchup(s): "
+                f"{len(completed_games)} fully simulated matchup(s): "
                 f"{len(projections)} available-player forecasts and "
                 f"{trials:,} shared scenarios. Seed: {run_seed}.")
             if pending_games:
                 st.warning(
                     "Skipped matchups awaiting complete official team "
                     "injury reports: "+", ".join(pending_games)+
-                    ". The remaining games were simulated normally; "
-                    "skipped players are NOT included in prop results.")
+                    ". Skipped players are NOT included in prop results.")
+            if failed_games:
+                st.warning(
+                    "Additional reported games could not be simulated "
+                    "from available player data: "+
+                    "; ".join(f"{game}: {reason}"
+                              for game,reason in sorted(failed_games.items())))
         except Exception as exc:
             st.session_state.pop("nba_auto_result",None)
             st.error(f"NBA pregame injury check or game simulation failed: {exc}")
@@ -242,6 +236,12 @@ if run is not None and run["run_key"] == run_key:
             "Injury report pending — no forecasts or bets for: "+
             ", ".join(skipped_games)+
             ". Other games have current official reports and are available.")
+    failed_games=run.get("games_failed") or {}
+    if failed_games:
+        st.warning(
+            "Verified reports but player-data simulation unavailable: "+
+            "; ".join(f"{game}: {reason}"
+                      for game,reason in sorted(failed_games.items())))
     meta=run.get("injury_meta") or {}
     if meta:
         st.caption(
