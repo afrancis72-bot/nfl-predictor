@@ -183,8 +183,30 @@ def calibrate_team_scoring_baselines(projections:pd.DataFrame,
         bench=(residual/240.)*expected
         if not np.isfinite([modeled,bench,expected]).all() or modeled<=0:
             raise ValueError(f"{team}: no plausible active team scoring shares")
-        scale=expected/(modeled+bench)
-        x.loc[rows.index,"pts"]=rows["pts"].to_numpy(dtype=float)*scale
+        baseline=rows["pts"].to_numpy(dtype=float)
+        minutes=rows["minutes"].to_numpy(dtype=float)
+        score_budget=expected-bench
+        if score_budget<0:
+            raise ValueError(f"{team}: invalid team-score projection")
+        if modeled>score_budget+1e-8:
+            # A uniform second haircut to every scorer would force
+            # 25-point players down just because reserves were overcounted.
+            # Keep the primary scorers near empirically observed usage;
+            # use the lower-priority reserve opportunity to reconcile
+            # team points. No individual sportsbook lines are referenced.
+            floors=np.where(
+                (minutes>=28)&(baseline>=12),baseline*.88,
+                np.where((minutes>=22)&(baseline>=8),
+                         baseline*.67,0.))
+            priority=.20+(minutes/23.)**3*(1+baseline/18.)
+            adjusted=_weighted_budget(
+                baseline,floors,priority,score_budget)
+        else:
+            # Upside after a teammate is removed is distributed by observed
+            # remaining-player scoring opportunity, never invented punts.
+            weights=np.maximum(.01,baseline)
+            adjusted=baseline+(score_budget-modeled)*weights/weights.sum()
+        x.loc[rows.index,"pts"]=adjusted
         for market,parts in MARKETS.items():
             x.loc[rows.index,market]=x.loc[rows.index,list(parts)].sum(axis=1)
         audit.append({
@@ -193,8 +215,10 @@ def calibrate_team_scoring_baselines(projections:pd.DataFrame,
             "unconstrained_player_baseline_points":round(modeled,2),
             "constrained_player_baseline_points":round(
                 float(x.loc[rows.index,"pts"].sum()),2),
-            "reserve_bench_points":round(bench*scale,2),
-            "points_scaling_factor":round(float(scale),4),
+            "reserve_bench_points":round(bench,2),
+            "points_scaling_factor":round(
+                float(score_budget/max(modeled,1e-8)),4),
+            "scoring_method":"core-usage-protected/team-conserved",
             "uses_sportsbook_total":False,
         })
     return x.reset_index(drop=True),pd.DataFrame(audit)
