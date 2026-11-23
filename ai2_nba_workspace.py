@@ -26,6 +26,7 @@ from nba_engine.game_conservation import (
     normalize_team_minutes, calibrate_team_scoring_baselines,
     simulate_conserved_nba_games)
 from nba_engine.slate_runner import run_verified_slate
+from nba_engine.rotation_model import select_plausible_rotation
 from nba_engine.injury_report import (
     fetch_current_official_injuries, injury_exclusions,
     match_excluded_ids, normalize_person)
@@ -142,7 +143,7 @@ st.caption(
     "used to fit our predictions.")
 
 market_key = f"{target}-{schedule_key}"  # Current bookmaker lines are independent of RNG seed.
-NBA_GAME_MODEL_VERSION="nba-conserved-team-scores-v2-per-game-availability-20261123"
+NBA_GAME_MODEL_VERSION="nba-conserved-team-scores-v3-role-safe-rotation-20261123"
 run_key = f"{market_key}-{trials}-{seed_mode}-{selected_seed}-{NBA_GAME_MODEL_VERSION}"
 if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_width=True):
     if len(teams_map) != len(set(teams_map.values())) and len(teams_map) != 2:
@@ -180,6 +181,7 @@ if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_widt
                 game_audit=finished["game_audit"]
                 minute_audit=finished["minute_audit"]
                 baseline_audit=finished["baseline_audit"]
+                rotation_audit=finished["rotation_audit"]
                 excluded_ids=finished["official_excluded_ids"]
                 unmatched_out=finished["official_out_not_in_history"]
                 verified_teams_map=finished["teams_map"]
@@ -194,6 +196,7 @@ if st.button("▶ Run NBA Prediction Engine", type="primary", use_container_widt
                 "games_failed":failed_games,
                 "game_audit":game_audit, "minute_audit":minute_audit,
                 "baseline_audit":baseline_audit,
+                "rotation_audit":rotation_audit,
                 "injury_status":official_status, "injury_meta":official_meta,
                 "official_excluded_ids":excluded_ids,
                 "official_out_not_in_history":unmatched_out,
@@ -307,14 +310,36 @@ if run is not None and run["run_key"] == run_key:
                 if score_bases is not None and not score_bases.empty:
                     st.dataframe(
                         score_bases,hide_index=True,use_container_width=True)
+        score_bases=run.get("baseline_audit")
+        if (score_bases is not None and not score_bases.empty
+                and "scoring_role_conflict" in score_bases
+                and score_bases["scoring_role_conflict"].any()):
+            st.warning(
+                "Some teams have conflicting historical scorer roles: "
+                "individually protected point opportunities exceeded "
+                "the expected team total. The model reconciled them "
+                "using the available minutes and points budget; treat "
+                "those teams' player prop probabilities as especially "
+                "uncertain until roles are independently reviewed.")
         st.caption(
             "Team points come from real previous full-team games and the "
             "opponent's defensive allowance, not the sportsbook line. "
             "Modeled player plus unmodeled bench scoring equals one team "
             "score in every scenario. Not a possession-by-possession engine.")
+        rotation_checks=run.get("rotation_audit")
+        if rotation_checks is not None and not rotation_checks.empty:
+            with st.expander("Players outside the current evidence-based rotation"):
+                st.caption(
+                    "These players were in historical season logs but have "
+                    "not appeared in the last two documented team games; "
+                    "they are not assumed healthy or projected unless the "
+                    "current official report marks a possible return. "
+                    "This is a roster-inference safeguard, not a diagnosis.")
+                st.dataframe(
+                    rotation_checks,hide_index=True,use_container_width=True)
         st.subheader("Team-constrained player projections")
         st.caption(
-            "Our historical/matchup baseline is calculated BEFORE simulation and should not change with the seed. "
+            "Our role-adjusted historical/matchup baseline is calculated BEFORE simulation and should not change with the seed. "
             "The simulated averages, medians, P10 and P90 come from the actual sampled games and DO change across seeds."
         )
         visible_markets = ("Points", "Rebounds", "Assists", "Threes", "PRA")
@@ -867,13 +892,16 @@ if run is not None and run["run_key"] == run_key:
                         history,run["teams_map"],target,min_minutes=8,
                         excluded=sorted(set(omit+already_out)),
                         minute_overrides=overrides)
-                    new_proj,new_minutes=normalize_team_minutes(new_proj)
-                    new_proj,new_baselines=calibrate_team_scoring_baselines(
-                        new_proj,history,target)
                     official=run.get("injury_status")
                     pending={}
                     if official is not None:
-                        _,pending=injury_exclusions(official,run["teams_map"])
+                        _,pending=injury_exclusions(
+                            official,run["teams_map"])
+                    new_proj,new_rotation=select_plausible_rotation(
+                        new_proj,history,target,uncertain_status=pending)
+                    new_proj,new_minutes=normalize_team_minutes(new_proj)
+                    new_proj,new_baselines=calibrate_team_scoring_baselines(
+                        new_proj,history,target)
                     new_proj["availability_status"]=[
                         pending.get((str(r.team),normalize_person(r.player)),
                                     "Not listed (active unverified)")
@@ -886,6 +914,7 @@ if run is not None and run["run_key"] == run_key:
                 run["game_audit"]=new_games
                 run["minute_audit"]=new_minutes
                 run["baseline_audit"]=new_baselines
+                run["rotation_audit"]=new_rotation
                 st.success(
                     "Re-simulated with team point/minute conservation and "
                     "the original verified injury exclusions. Review the "

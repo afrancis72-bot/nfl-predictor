@@ -15,6 +15,7 @@ from nba_engine.predictor import build_projections
 from nba_engine.game_conservation import (
     normalize_team_minutes,observed_complete_team_games,
     calibrate_team_scoring_baselines,simulate_conserved_nba_games)
+from nba_engine.rotation_model import select_plausible_rotation
 from nba_engine.injury_report import (
     normalize_person, parse_official_injury_pdf,
     injury_exclusions, match_excluded_ids)
@@ -76,18 +77,61 @@ class NBAConservationTests(unittest.TestCase):
         self.assertEqual(set(g.loc[g.team=="IND","pts"]),{111})
         self.assertEqual(set(g.loc[g.team=="CLE","pts"]),{121})
 
-    def test_overbooked_rotation_normalized_to_240_minutes(self):
+    def test_overbooked_rotation_preserves_core_and_reduces_reserves(self):
         before=self.proj.copy()
-        for key in ("minutes",):
-            before[key]=36.
+        team_minutes=np.array([35,35,31,28,26,24,22,18,15,12.],dtype=float)
+        for _,rows in before.groupby("team"):
+            before.loc[rows.index,"minutes"]=team_minutes
         before["minutes_sd"]=4.
         rotated,audit=normalize_team_minutes(before)
-        self.assertTrue((audit["projected_minutes_before"]==360).all())
         self.assertTrue((audit["projected_minutes_after"]==240).all())
+        self.assertTrue(
+            (audit["rotation_method"]=="recent-participants/core-role-protected").all())
         for team,g in rotated.groupby("team"):
+            original=before.loc[before.team==team].reset_index(drop=True)
+            g=g.reset_index(drop=True)
             self.assertAlmostEqual(float(g.minutes.sum()),240.)
-            self.assertAlmostEqual(float(g.pts.sum()),
-                float(before.loc[before.team==team,"pts"].sum())*240/360)
+            core=original.minutes>=30
+            self.assertTrue((g.loc[core,"minutes"]>=
+                             original.loc[core,"minutes"]*.93-1e-5).all())
+            bench=original.minutes<20
+            self.assertLess(
+                float(g.loc[bench,"minutes"].sum()),
+                float(original.loc[bench,"minutes"].sum()))
+            for stat in ("pts","reb","ast"):
+                np.testing.assert_allclose(
+                    g[stat].to_numpy(),
+                    original[stat].to_numpy()*
+                    g["minutes"].to_numpy()/original["minutes"].to_numpy(),
+                    rtol=1e-7,atol=1e-5)
+
+    def test_all_players_claim_36_minutes_fails_closed(self):
+        invalid=self.proj.copy()
+        invalid["minutes"]=36.
+        with self.assertRaisesRegex(ValueError,"Too many full-minute"):
+            normalize_team_minutes(invalid)
+
+    def test_recent_rotations_do_not_sum_incompatible_squads(self):
+        # Simulate a key player missing two of the last completed games.
+        truncated=self.logs.loc[
+            ~((self.logs.team=="IND")&
+              (self.logs.player_id=="IND_0")&
+              (self.logs.date>=pd.Timestamp("2026-11-15")))].copy()
+        candidate=build_projections(
+            truncated,TEAMS,WHEN,min_minutes=8)
+        fresh,audit=select_plausible_rotation(
+            candidate,truncated,WHEN)
+        self.assertNotIn("IND_0",set(fresh.player_id))
+        self.assertIn("Tyrese Haliburton",set(audit.player))
+        # An official Probable status restores CONDITIONAL playing baseline.
+        returning={("IND",normalize_person("Tyrese Haliburton")):"Probable"}
+        candidate=build_projections(
+            truncated,TEAMS,WHEN,min_minutes=8)
+        assumed,review=select_plausible_rotation(
+            candidate,truncated,WHEN,uncertain_status=returning)
+        self.assertIn("IND_0",set(assumed.player_id))
+        self.assertIn("returning player modeled conditionally",
+                      set(review.status))
 
     def test_points_plus_bench_exactly_conserve_historical_team_score(self):
         rotated,audit=normalize_team_minutes(self.proj)
