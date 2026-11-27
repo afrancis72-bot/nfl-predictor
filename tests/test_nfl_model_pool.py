@@ -48,6 +48,11 @@ class ModelPoolTests(unittest.TestCase):
         self.assertEqual(float(unmodified_rates.loc[unmodified_rates.player.eq("Backup RB"),"carries_pg"].iloc[0]),6.0)
         self.assertEqual(pool.loc[pool.Name.eq("Backup RB"),"projected_touches"].iloc[0],10.0)
         self.assertEqual(audit["complete_games"],1)
+        coverage={r["ID"]:r for r in audit["player_pool_coverage"]}
+        self.assertEqual(len(coverage),len(base))
+        self.assertEqual(coverage["4"]["Pool reason"],"confirmed unavailable")
+        self.assertTrue(coverage["3"]["In simulation pool"])
+        self.assertFalse(coverage["4"]["In simulation pool"])
 
 if __name__=="__main__":
     unittest.main()
