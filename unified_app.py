@@ -196,7 +196,7 @@ else:
             st.caption(
                 "Bentley forecasting validation continues separately. "
                 "NFL Showdown has not been cleared for certified recommendations.")
-        st.caption("NFL Classic · Upload DraftKings salaries, then select 15, 20, 50, or 150 lineups. No projections upload required.")
+        st.caption("NFL Classic · Upload DraftKings salaries, then select 14, 15, 20, 40, 50, or 150 lineups. No projections upload required.")
         st.caption("NFL prebuild intelligence • repeated carry/target consistency gate before simulation • risk and stack evaluation • human approval required")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
         saved_one = get_upload("NFL", "DraftKings salaries")
@@ -213,7 +213,7 @@ else:
         seed_one = st.number_input("Simulation seed (optional)", min_value=0,
                                    max_value=2147483647, value=42, step=1,
                                    key="nfl_one_seed")
-        requested_count = st.selectbox("Number of lineups", [15, 20, 40, 50, 150], index=1, key="nfl_one_count")
+        requested_count = st.selectbox("Number of lineups", [14, 15, 20, 40, 50, 150], index=0, key="nfl_one_count")
         # One button / one engine. Official game-day data are automatically
         # added only when independently verified for THIS slate.
         # With no additional evidence the original engine runs unchanged.
@@ -223,6 +223,13 @@ else:
             "The NFL engine automatically checks verified game-day availability "
             "when building. If no relevant additional status is found, the "
             "original lineup calculations are used. No mode selection needed.")
+        if requested_count==14:
+            st.caption("14 additional drafts: each player may appear in at most four generated entries, leaving one appearance for your existing manual entry within the 35% total cap. Compare the final 15 for duplicates and overlap.")
+        role_strength=0.0
+        if not release_ready:
+            matchup_mode=st.radio("Draft defensive intelligence",["Role-specific matchup adjusted (experimental)","Neutral benchmark"],horizontal=True,key="nfl_draft_matchup_mode")
+            role_strength=.25 if matchup_mode.startswith("Role-specific") else 0.0
+            st.caption("Experimental strength 0.25 uses source-dated stat-channel evidence; both adjusted and neutral player forecasts are generated with the same seed for review. Not certified.")
         if requested_count == 40:
             st.caption("40-entry contest plan: four $3, sixteen $0.50, twenty $0.10. "
                        "Automatically simulates three different seeds and selects "
@@ -278,7 +285,8 @@ else:
                             salaries_one,seed=seed,count=50,
                             simulation_mode=nfl_engine_mode,
                             availability_context=new_source_context,
-                            draft_manual_review=not release_ready)
+                            draft_manual_review=not release_ready,
+                            draft_role_defense_strength=role_strength)
                             for seed in source_seeds]
                         roles={
                             str(row.get("Player",""))
@@ -290,6 +298,7 @@ else:
                             [source["ranked"] for source in sources],
                             role_anomalies=roles)
                         output_one=dict(sources[0])
+                        output_one["paired_matchup_projections"]=[row for source in sources for row in source.get("paired_matchup_projections",[])]
                         output_one["ranked"]=diversified
                         output_one["core_diversification_diagnostics"]=coverage
                         output_one["core_diversification_seeds"]=source_seeds
@@ -319,7 +328,8 @@ else:
                             salaries_one,seed=int(seed_one),count=int(requested_count),
                             simulation_mode=nfl_engine_mode,
                             availability_context=new_source_context,
-                            draft_manual_review=not release_ready)
+                            draft_manual_review=not release_ready,
+                            draft_role_defense_strength=role_strength)
                 # Explicitly describe which current-slate source facts
                 # actually changed player availability / internal receivers.
                 # No changes means no separate engine advantage to claim.
@@ -376,6 +386,9 @@ else:
                     "experimental_status_intelligence":output_one.get(
                         "availability_intelligence",{}),
                     "player_universe_accuracy_independently_validated":False,
+                    "draft_role_defense_strength":output_one.get("draft_role_defense_strength",0.),
+                    "claude_mip_candidate_report":output_one.get("claude_mip_candidate_report",{}),
+                    "paired_matchup_projections":output_one.get("paired_matchup_projections",[]),
                     "approved_lineups_untouched":True,
                     "portfolio_mode":(
                         "BENTLEY_CERTIFIED" if release_ready
@@ -894,6 +907,13 @@ else:
                 if changed:
                     st.dataframe(_ai2_pd.DataFrame(changed),hide_index=True,
                                  use_container_width=True)
+                paired=output_one.get("paired_matchup_projections") or []
+                if paired:
+                    st.markdown("**Same-seed neutral versus role-adjusted forecasts**")
+                    st.caption("Differences show simulator sensitivity, not predictive accuracy. Actuals are not available before kickoff.")
+                    paired_frame=_ai2_pd.DataFrame(paired)
+                    st.dataframe(paired_frame,hide_index=True,use_container_width=True)
+                    st.download_button("Download paired forecasts for postgame audit",paired_frame.to_csv(index=False).encode("utf-8-sig"),"ai2_nfl_paired_matchup_forecasts.csv","text/csv",key="nfl_paired_matchup_forecast_csv")
                 stats_profiles=output_one.get("opponent_role_stat_profiles") or []
                 if stats_profiles:
                     with st.expander("Underlying defense x role x stat evidence"):

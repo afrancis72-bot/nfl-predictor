@@ -50,8 +50,10 @@ def _slate_week(saved_salaries):
 
 def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
                              simulation_mode="existing", availability_context=None,
-                             draft_manual_review=False):
+                             draft_manual_review=False, draft_role_defense_strength=0.0):
     """Build from the salary file; legacy projections argument is ignored."""
+    from ai2_nfl_draft_matchup import review_strength, paired_projection_rows, draft_exposure_limit
+    role_defense_strength=review_strength(draft_role_defense_strength,draft_manual_review)
     if not isinstance(draft_manual_review,bool):
         raise ValueError("Draft manual review flag must be boolean")
     if simulation_mode not in {"existing","availability_aware"}:
@@ -60,8 +62,9 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         raise ValueError("Availability-aware NFL builds require the verified official-source prebuild check")
     if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed < 2**31:
         raise ValueError("Simulation seed must be an integer from 0 to 2147483647")
-    if count not in (15, 20, 50, 150):
-        raise ValueError("Choose 15, 20, 50, or 150 lineups")
+    if count not in (14, 15, 20, 50, 150):
+        raise ValueError("Choose 14, 15, 20, 50, or 150 lineups")
+    exposure_limit=draft_exposure_limit(count)
     if not salaries:
         raise ValueError("Upload a DraftKings salary CSV to build lineups")
     season, week = _slate_week(salaries)
@@ -168,7 +171,9 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
     # We can display measured matchup evidence independently while the
     # unvalidated scoring coefficient stays neutral (0). Research-specific
     # validation can explicitly use the experimental adapter elsewhere.
-    role_defense_strength = 0.0
+    # Explicit draft-only strength; neutral remains the certified/default API path.
+    if role_defense_strength and (not isinstance(research.get('opponent_role_stat_profiles'),pd.DataFrame) or research['opponent_role_stat_profiles'].empty):
+        raise ValueError('Role-adjusted draft requested but dated role/stat evidence is missing. Select neutral benchmark or refresh sources.')
 
     # The game-level simulator already redistributes OUT-player touches and
     # targets. Use unmodified rates with outs to avoid double counting.
@@ -180,18 +185,22 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
             football_availability_snapshots=source_snapshots,
             football_availability_as_of_utc=availability_report.get("as_of_utc"),
         ) if simulation_mode=="availability_aware" else {})
-    players, draws, stat_draws = run_verified_stat_simulation(
-        pool, raw_rates, n_sims=10000, seed=seed, out_players=outs,
+    sim_kwargs=dict(n_sims=10000, seed=seed, out_players=outs,
         team_environment=research.get("team_environment"),
         snap_profiles=research.get("snap_profiles"),
         injury_presence=research.get("injury_presence", {}),
         defense_profiles=defense_profiles, defense_weight=defense_weight,
         role_defense_profiles=research.get("opponent_role_stat_profiles"),
         role_defense_assignments=research.get("opponent_role_slate"),
-        role_defense_strength=role_defense_strength,
         role_defense_target_season=season,
         role_defense_target_week=week,
         **availability_options)
+    players, draws, stat_draws = run_verified_stat_simulation(pool,raw_rates,role_defense_strength=role_defense_strength,**sim_kwargs)
+    paired_matchup_rows=[]
+    if role_defense_strength:
+        neutral_players,neutral_draws,neutral_stats=run_verified_stat_simulation(pool,raw_rates,role_defense_strength=0.,**sim_kwargs)
+        require_reconciled_player_audit(neutral_players,neutral_draws,summarize_simulated_players(neutral_players,neutral_draws,neutral_stats))
+        paired_matchup_rows=paired_projection_rows(players,draws,neutral_players,neutral_draws,seed=seed,season=season,week=week)
     if simulation_mode=="availability_aware":
         simulation_ledger=stat_draws.get("__FOOTBALL_PLAYER_UNIVERSE__") or {}
         actual_added=int(simulation_ledger.get("historical_football_only_players",0))
@@ -284,8 +293,12 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         prepared.append(player)
     candidates = build_classic_candidates(
         prepared, count=(1200 if count <= 20 else 2000), attempts=200000, seed=seed,
-        salary_floor=49600, salary_cap=50000, max_exposure=0.28,
+        salary_floor=49600, salary_cap=50000, max_exposure=exposure_limit,
         min_wr_salary=4000, min_rb_salary=4500, require_opportunity=True)
+    mip_report={'enabled':False,'added_candidates':0}
+    if draft_manual_review:
+        from ai2_nfl_claude_candidates import supplemental_candidates
+        candidates,mip_report=supplemental_candidates(prepared,candidates,players,selection_draws,seed=seed)
     if len(candidates) < count:
         raise ValueError(
             f"Only {len(candidates)} legal candidates under role and salary rules. "
@@ -297,7 +310,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         try:
             ranked = select_simulated_portfolio(
                 candidates, players, selection_draws, count=count,
-                max_exposure=0.28, upside_share=0.25,
+                max_exposure=exposure_limit, upside_share=0.25,
                 premium_count=(5 if count == 20 else 0), min_wr_salary=4000, min_rb_salary=4500,
                 value_salary_ceiling=5000, value_max_appearances=(2 if count <= 20 else max(2, int(count*0.35))),
                 premium_value_max_appearances=1, require_opportunity=True,
@@ -553,6 +566,9 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         "opponent_role_defense_report": role_profile_report,
         "opponent_role_prior_opponents": role_detail_report,
         "opponent_role_stat_scoring_audit": role_defense_ledger,
+        "draft_role_defense_strength": role_defense_strength,
+        "paired_matchup_projections": paired_matchup_rows,
+        "claude_mip_candidate_report": mip_report,
         "opponent_role_stat_profiles": (
             research.get("opponent_role_stat_profiles").to_dict("records")
             if isinstance(research.get("opponent_role_stat_profiles"),pd.DataFrame)
@@ -562,8 +578,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
             "Check the official NFL game-status list and every late inactive; "
             "depth charts, routes and individual coverage may be incomplete. "
             "No automatic DraftKings submission. "
-            "Legacy opponent-position yard multiplier is OFF. "
-            "Unvalidated role-defense projection adjustments are OFF. "
+            "Legacy opponent-position yard multiplier is OFF. " +
+            ("Role-defense draft adjustments are ON; same-seed neutral comparison included. " if role_defense_strength else "Role-defense projection adjustments are OFF. ") +
             "Bentley certification has NOT passed."+
             (" Official injury feed could NOT be retrieved; "
              "all unsourced statuses require manual verification."
