@@ -2,8 +2,8 @@
 import numpy as np
 
 def review_strength(strength, draft):
-    if isinstance(strength,bool) or not isinstance(strength,(int,float)) or strength not in (0.,.25):
-        raise ValueError("Choose neutral 0 or experimental .25")
+    if isinstance(strength,bool) or not isinstance(strength,(int,float)) or strength not in (0.,.25,.5):
+        raise ValueError("Choose neutral 0 or experimental .25/.50")
     if strength and draft is not True:
         raise ValueError("Role adjustments are allowed only for manual-review drafts")
     return float(strength)

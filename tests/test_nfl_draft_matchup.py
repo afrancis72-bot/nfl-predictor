@@ -6,6 +6,7 @@ from ai2_nfl_draft_matchup import review_strength, paired_projection_rows, draft
 class DraftMatchupTests(unittest.TestCase):
     def test_strength(self):
         self.assertEqual(review_strength(.25,True),.25)
+        self.assertEqual(review_strength(.5,True),.5)
         self.assertEqual(review_strength(0,False),0)
         with self.assertRaises(ValueError): review_strength(.25,False)
         with self.assertRaises(ValueError): review_strength(1,True)

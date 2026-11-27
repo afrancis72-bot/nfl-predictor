@@ -27,12 +27,20 @@ UNAVAILABLE = frozenset({"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI"
 
 def collect_automatic_baselines(salaries, season, week, *, history=None, injury_fetcher=None,
                                 snap_history=None, snap_fetcher=None,
-                                roster_history=None, roster_fetcher=None):
+                                roster_history=None, roster_fetcher=None, draft_redzone=False):
     salary_rows = parse_csv_payload(salaries[1])
     if not salary_rows:
         raise ValueError("Salary slate contains no players")
     history = fetch_weekly([season - 1, season]) if history is None else history
     baseline = build_historical_baselines(salary_rows, history, season, week)
+    redzone_profiles=None
+    redzone_issue=None
+    if draft_redzone:
+        try:
+            from ai2_nfl_live_redzone import load_draft_redzone
+            redzone_profiles=load_draft_redzone(history,season,week)
+        except Exception as exc:
+            redzone_issue=f"{type(exc).__name__}: {exc}"
     fetcher = injury_fetcher or fetch_official_injury_statuses
     overrides = {}
     injury_meta = {"source": "unavailable", "checked_utc": None}
@@ -201,6 +209,7 @@ def collect_automatic_baselines(salaries, season, week, *, history=None, injury_
         blockers.append("Official NFL injury feed unavailable: " + injury_issue)
     return {
         "players": baseline, "raw_rates": rates, "adjusted_rates": adjusted_rates,
+        "draft_redzone_profiles":redzone_profiles,"draft_redzone_issue":redzone_issue,
         "opponent_allowances": opponent_allowances, "opponent_history_issue": opponent_issue,
         "opponent_relative_profiles": relative_opponent,
         "opponent_relative_issue": relative_issue,

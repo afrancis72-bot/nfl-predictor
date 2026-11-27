@@ -53,6 +53,10 @@ def create_observed_model_pool(research):
                str(rate["position"]).upper())
         adjusted_lookup[key] = rate
     excluded, prepared, outs = [], [], []
+    excluded_by_id={}
+    def reject(ident,name,reason):
+        excluded.append((name,reason))
+        excluded_by_id[str(ident)]=reason
     for _, row in baseline.iterrows():
         ident = str(row["ID"]).strip()
         name = str(row["Name"]).strip()
@@ -62,21 +66,23 @@ def create_observed_model_pool(research):
         if status in {"OUT", "O", "IR", "INACTIVE", "SUSPENDED", "PUP", "NFI", "DOUBTFUL", "D"}:
             if pos in {"QB", "RB", "WR", "TE"}:
                 outs.append({"player": name, "team": team})
-            excluded.append((name, "confirmed unavailable"))
+            reject(ident,name, "confirmed unavailable")
             continue
         if status in {"Q", "QUESTIONABLE"}:
-            excluded.append((name, "questionable without verified availability"))
+            reject(ident,name, "questionable without verified availability")
             continue
         match = MATCHUP.match(str(row["Game Info"] or ""))
         opponent = opponent_from_game_info(team, row["Game Info"])
         if not ident or not name or not match or not opponent:
-            excluded.append((name, "missing roster identity or game matchup"))
+            reject(ident,name, "missing roster identity or game matchup")
             continue
         game = "@".join(_norm_team(x) for x in match.groups())
         salary = _num(row["Salary"])
         if salary <= 0:
+            reject(ident,name,'Invalid salary')
             continue
         if pos == "WR" and salary < 4000 or pos == "RB" and salary < 4500:
+            reject(ident,name,"Below configured optimizer salary floor")
             continue
         # Cheap players need repeated REAL opportunity before they can even
         # enter the football simulator; inflated simulated targets cannot
@@ -87,9 +93,9 @@ def create_observed_model_pool(research):
         from ai2_nfl_pregame_consistency import LOW_PRICE
         cheap = pos in LOW_PRICE and salary < LOW_PRICE[pos]
         if cheap and (not evidence or evidence.get("Role gate") not in ("PASS","EMERGING_LIMITED")):
-            excluded.append((name, "prebuild recurring-opportunity gate: " +
+            reject(ident,name, "prebuild recurring-opportunity gate: " +
                             str((evidence or {}).get("Role rationale",
-                                                   "No matching individual pregame usage evidence"))))
+                                                   "No matching individual pregame usage evidence")))
             continue
         key = (_norm_name(name), team, pos)
         r = lookup.get(key)
@@ -103,34 +109,34 @@ def create_observed_model_pool(research):
             source = "Team game-script simulation, neutral DST prior (uncalibrated)"
         else:
             if row["match_status"] != "matched" or r is None or a is None:
-                excluded.append((name, "no unique observed NFL statistical identity"))
+                reject(ident,name, "no unique observed NFL statistical identity")
                 continue
             last_season = int(_num(r.get("latest_observed_season")))
             last_week = int(_num(r.get("latest_observed_week")))
             games = int(_num(r.get("games_played")))
             # Do not rank a player on stale previous-season usage.
             if last_season != season or week - last_week > 3 or games < 2:
-                excluded.append((name, "insufficient recent in-season observations"))
+                reject(ident,name, "insufficient recent in-season observations")
                 continue
             carries = _num(a.get("carries_pg"))
             targets = _num(a.get("targets_pg"))
             touches = carries + targets
             passing = _num(r.get("pass_attempts_pg"))
             if pos == "QB" and passing < 18:
-                excluded.append((name, "not a regular observed primary passer"))
+                reject(ident,name, "not a regular observed primary passer")
                 continue
             if pos == "RB" and touches < 6:
-                excluded.append((name, "insufficient observed or redistributed RB volume"))
+                reject(ident,name, "insufficient observed or redistributed RB volume")
                 continue
             if pos == "WR" and targets < 3.5:
-                excluded.append((name, "insufficient observed or redistributed WR targets"))
+                reject(ident,name, "insufficient observed or redistributed WR targets")
                 continue
             if pos == "TE" and targets < 2.3:
-                excluded.append((name, "insufficient observed or redistributed TE targets"))
+                reject(ident,name, "insufficient observed or redistributed TE targets")
                 continue
             proj = _num(row["historical_partial_dk"])
             if proj <= 0:
-                excluded.append((name, "incomplete observed fantasy-stat baseline"))
+                reject(ident,name, "incomplete observed fantasy-stat baseline")
                 continue
             source = (f"Own nflverse pregame statistical model; {games} observed games, "
                       f"{last_season} W{last_week}; injury-conditioned opportunities")
@@ -166,6 +172,9 @@ def create_observed_model_pool(research):
         if r["TeamAbbrev"] not in best_qbs or passing > best_qbs[r["TeamAbbrev"]][0]:
             best_qbs[r["TeamAbbrev"]] = (passing, r["ID"])
     qb_ids = {v[1] for v in best_qbs.values()}
+    for r in prepared:
+        if r["Position"]=="QB" and r["ID"] not in qb_ids:
+            reject(r["ID"],r["Name"],"Another same-team QB has stronger observed passing role")
     prepared = [r for r in prepared if r["Position"] != "QB" or r["ID"] in qb_ids]
     # Reject incomplete contests rather than simulating zero scoring for a side.
     complete = set()
@@ -176,15 +185,38 @@ def create_observed_model_pool(research):
             offensive = set(group[group["Position"].ne("DST")]["TeamAbbrev"])
             if sides == offensive:
                 complete.add(game)
+        for r in prepared:
+            if r["game"] not in complete:
+                reject(r["ID"],r["Name"],"Incomplete simulated game: one side has no observed offense")
         frame = frame[frame["game"].isin(complete)].reset_index(drop=True)
     if frame.empty or not {"QB", "RB", "WR", "TE", "DST"}.issubset(set(frame["Position"])):
         raise ValueError("Not enough observed, currently eligible players to simulate this slate")
+    included=set(frame["ID"].astype(str))
+    coverage=[]
+    for row in baseline.to_dict("records"):
+        ident=str(row["ID"]).strip()
+        evidence=pregame_role.get(ident) or {}
+        def numeric(key):
+            value=_num(row.get(key),float("nan"))
+            return value if math.isfinite(value) else None
+        coverage.append({"ID":ident,"Player":str(row["Name"]),"Team":str(row["Team"]),
+                         "Position":str(row["Position"]),"Salary":numeric("Salary"),
+                         "DK status":str(row.get("DK Status","")),"Official status":str(row.get("official_game_status","")),
+                         "Effective status":str(row.get("current_status","")),
+                         "Historical identity":str(row.get("match_status","")),
+                         "Observed games":numeric("games_observed"),"Last observed week":numeric("latest_observed_week"),
+                         "Observed carries/game":numeric("carries_pg"),"Observed targets/game":numeric("targets_pg"),
+                         "Observed pass attempts/game":numeric("pass_attempts_pg"),
+                         "Role gate":str(evidence.get("Role gate","")),"Role rationale":str(evidence.get("Role rationale","")),
+                         "In simulation pool":ident in included,
+                         "Pool reason":"Included" if ident in included else excluded_by_id.get(ident,"Unclassified exclusion - investigate")})
     return frame, raw_rates, outs, {
         "eligible_player_count": len(frame),
         "pregame_consistency_blocked": sum(
             "prebuild recurring-opportunity gate" in str(r) for _, r in excluded),
         "excluded_player_count": len(excluded),
         "excluded_examples": excluded[:12],
+        "player_pool_coverage":coverage,
         "complete_games": len(complete),
         "research_source": research["source"],
         "limitations": ("Projection outputs are experimental; no independent "
