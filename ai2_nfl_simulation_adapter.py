@@ -27,7 +27,8 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
                                  football_universe_target_season=None,
                                  football_universe_target_week=None,
                                  football_availability_snapshots=None,
-                                 football_availability_as_of_utc=None):
+                                 football_availability_as_of_utc=None,
+                                 draft_personnel=False):
     """Run the existing game-level engine only on explicitly verified inputs.
 
     Returns the engine's (players, points matrix, stat draws) without marking
@@ -209,6 +210,8 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
     if redzone_strength:
         football_options.update(redzone_profiles=redzone_profiles,redzone_strength=redzone_strength,
             redzone_target_season=redzone_target_season,redzone_target_week=redzone_target_week)
+    if draft_personnel:
+        football_options["draft_personnel"]=True
     players,scores,stat_draws=simulate_stat_driven_dfs(
                                     active, role_rates, n_sims=int(n_sims),
                                     seed=int(seed), out_players=out_players,

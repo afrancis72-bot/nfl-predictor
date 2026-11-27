@@ -390,6 +390,8 @@ else:
                     "player_universe_accuracy_independently_validated":False,
                     "draft_role_defense_strength":output_one.get("draft_role_defense_strength",0.),
                     "draft_role_first":output_one.get("draft_role_first",False),
+                    "draft_personnel_report":output_one.get("draft_personnel_report",[]),
+                    "draft_rush_efficiency_report":output_one.get("draft_rush_efficiency_report",[]),
                     "draft_individual_salary_floors":output_one.get("draft_individual_salary_floors",{}),
                     "claude_mip_candidate_report":output_one.get("claude_mip_candidate_report",{}),
                     "player_pool_coverage":output_one.get("audit",{}).get("player_pool_coverage",[]),

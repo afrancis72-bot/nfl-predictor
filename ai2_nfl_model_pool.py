@@ -78,7 +78,7 @@ def create_observed_model_pool(research, *, draft_role_first=False):
                 outs.append({"player": name, "team": team})
             reject(ident,name, "confirmed unavailable")
             continue
-        if status in {"Q", "QUESTIONABLE"}:
+        if status in {"Q", "QUESTIONABLE"} and not (draft_role_first and pos in {"RB","WR","TE"}):
             reject(ident,name, "questionable without verified availability")
             continue
         match = MATCHUP.match(str(row["Game Info"] or ""))

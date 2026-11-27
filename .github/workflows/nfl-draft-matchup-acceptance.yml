@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [feature/unified-ai2-platform]
   push:
-    branches: [feature/nfl-draft-role-intelligence, feature/nfl-classic-no-opposing-dst, feature/nfl-batch-intelligence-audit, feature/nfl-role-first-draft]
+    branches: [feature/nfl-draft-role-intelligence, feature/nfl-classic-no-opposing-dst, feature/nfl-batch-intelligence-audit, feature/nfl-role-first-draft, feature/nfl-personnel-scenario-draft]
 jobs:
   focused:
     runs-on: ubuntu-latest
@@ -14,4 +14,4 @@ jobs:
           python-version: '3.11'
       - run: pip install numpy pandas scipy pytest streamlit beautifulsoup4 requests
       - run: python -m compileall -q unified_app.py ai2_nfl_oneclick.py ai2_nfl_draft_matchup.py ai2_nfl_claude_candidates.py
-      - run: python -m pytest -q tests/test_nfl_draft_matchup.py tests/test_nfl_role_defense_stat_engine.py tests/test_nfl_claude_candidates.py tests/test_ai2_nfl_lineup.py tests/test_ai2_nfl_correlation_guard.py tests/test_ai2_nfl_feasibility.py tests/test_nfl_model_pool.py tests/test_nfl_emerging_opportunity.py tests/test_nfl_role_plausibility.py tests/test_nfl_redzone_usage.py tests/test_nfl_role_first_draft.py
+      - run: python -m pytest -q tests/test_nfl_draft_matchup.py tests/test_nfl_role_defense_stat_engine.py tests/test_nfl_claude_candidates.py tests/test_ai2_nfl_lineup.py tests/test_ai2_nfl_correlation_guard.py tests/test_ai2_nfl_feasibility.py tests/test_nfl_model_pool.py tests/test_nfl_emerging_opportunity.py tests/test_nfl_role_plausibility.py tests/test_nfl_redzone_usage.py tests/test_nfl_role_first_draft.py tests/test_nfl_draft_personnel.py

@@ -276,7 +276,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                              football_universe_target_season=None,
                              football_universe_target_week=None,
                              football_availability_snapshot=None,
-                             football_availability_as_of_utc=None):
+                             football_availability_as_of_utc=None,
+                             draft_personnel=False):
     """Return (sim_players, dk_points, stat_draws).
 
     rates is the pregame player baseline produced by props_data.make_rates().
@@ -285,6 +286,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
     are also shared between offense and DST.
     """
     out_players=out_players or []
+    if draft_personnel:
+        from ai2_nfl_draft_personnel import shrink_efficiency, personnel_factors, availability_masks, scenario_allocation
     # Research knob: exactly .5 reproduces the existing released forecast.
     # Alternate values are used only in explicitly isolated historical A/B.
     if (isinstance(team_pass_env_weight,bool) or
@@ -888,13 +891,34 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'other_carry_allocation_budget_pg':float(carry_other)}
 
             tprob=np.append(np.maximum(target_rates,0),leftover); tprob=tprob/tprob.sum()
-            targ=_multinomial_rows(rng,attempts,tprob,concentration=role_share_concentration)
+            if draft_personnel and len(skill):
+                question=skill.get("dk_status",pd.Series("",index=skill.index)).astype(str).str.upper().isin(["Q","QUESTIONABLE"]).tolist()
+                masks=availability_masks(question,ns,rng)
+                targ=scenario_allocation(rng,attempts,tprob,masks,_multinomial_rows,role_share_concentration)
+            else:
+                masks=np.ones((ns,len(skill)),dtype=bool)
+                targ=_multinomial_rows(rng,attempts,tprob,concentration=role_share_concentration)
             # Carry allocation includes QB and an unmodeled bucket.
             qb_carry=_safe(qr.get('carries_pg') if qr is not None else np.nan,3.0)
             cbase=np.append(np.maximum(carry_rates,0),[max(qb_carry,0),carry_other])
-            cprob=cbase/cbase.sum(); carr=_multinomial_rows(rng,rushes,cprob,concentration=role_share_concentration)
+            cprob=cbase/cbase.sum()
+            carr=(scenario_allocation(rng,rushes,cprob,masks,_multinomial_rows,role_share_concentration)
+                  if draft_personnel and len(skill) else _multinomial_rows(rng,rushes,cprob,concentration=role_share_concentration))
             oth_carries=carr[:,-1].copy()
 
+            personnel_y=np.ones(ns); personnel_td=np.ones(ns)
+            if draft_personnel:
+                def observed_receiver(z,weight=1.):
+                    if z is None: return (0.,0.,0.,0.,0.)
+                    return tuple(max(0.,_safe(z.get(k),0.))*weight for k in ("targets_pg","receptions_pg","receiving_yards_pg","receiving_tds_pg"))+ (max(0.,_safe(z.get("games_played"),0.)),)
+                absent=[observed_receiver(row,float(row["_missing_fraction"])) for _,row in out_hist.iterrows()]
+                named=[observed_receiver(z) for z in rr]
+                for mask in np.unique(masks,axis=0):
+                    which=np.all(masks==mask,axis=1)
+                    py,pt=personnel_factors([z for z,on in zip(named,mask) if on],absent+[z for z,on in zip(named,mask) if not on])
+                    personnel_y[which]=py; personnel_td[which]=pt
+                stat_draws[f"__DRAFT_PERSONNEL__|{team}"]={"team":team,"questionable_worlds":[{"player":str(p["Name"]),"active_world_fraction":float(masks[:,j].mean())} for j,(_,p) in enumerate(skill.iterrows()) if not masks[:,j].all()],
+                    "named_receivers":list(skill["Name"].astype(str)), "mean_ypa_factor":float(personnel_y.mean()),"mean_pass_td_factor":float(personnel_td.mean()),"ypa_factor_range":[float(personnel_y.min()),float(personnel_y.max())],"pass_td_factor_range":[float(personnel_td.min()),float(personnel_td.max())],"availability_assumption":"Equal-weight sensitivity, not calibrated injury probabilities","calibrated":False}
             team_rec_yd=np.zeros(ns); team_comp=np.zeros(ns); player_rec={}; player_rush={}
             for j,(_,p) in enumerate(skill.iterrows()):
                 z=rr[j]; tt=targ[:,j]
@@ -906,6 +930,10 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 cc=carr[:,j]
                 cpg=max(_safe(z.get('carries_pg') if z is not None else np.nan,0),.1)
                 ypc=_safe(z.get('rushing_yards_pg') if z is not None else np.nan,cpg*4.1)/cpg
+                if draft_personnel and str(p["Position"])=="RB":
+                    raw_ypc=ypc
+                    ypc=shrink_efficiency(_safe(z.get('rushing_yards_pg') if z is not None else np.nan,cpg*4.1),cpg,_safe(z.get('games_played') if z is not None else 0,0),4.3,40.)
+                    stat_draws.setdefault("__DRAFT_RUSH_EFFICIENCY__",[]).append({"player":str(p["Name"]),"team":team,"raw_ypc":float(raw_ypc),"shrunk_ypc":float(ypc),"prior_ypc":4.3,"prior_carries":40,"calibrated":False})
                 rushyd=np.where(cc>0,rng.normal(cc*ypc,np.sqrt(np.maximum(cc,1))*max(1.8,abs(ypc)*.75),ns),0.)
                 if str(p["Position"])=="RB":
                     rushyd*=defense_factors[j]*rush_eff[j]
@@ -952,12 +980,12 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # allocation first absorbs limited yards on REAL other catches.
             # This cannot create new targets, catches or touchdowns.
             hist_ypa=pass_yd_pg/max(pass_pg,1)
-            desired_team_yards=hist_ypa*attempts
+            desired_team_yards=hist_ypa*personnel_y*attempts
             oth_y,team_rec_yd,other_yd_shift=reconcile_other_yards(
                 oth_y,oth_c,team_rec_yd,desired_team_yards,
                 strength=other_yard_strength)
             generated_ypa=team_rec_yd/np.maximum(attempts,1)
-            scale=np.clip(hist_ypa/np.maximum(generated_ypa,.1),.72,1.35)
+            scale=np.clip(hist_ypa*personnel_y/np.maximum(generated_ypa,.1),.72,1.35)
             stat_draws[f'__YARD_RECONCILIATION__|{team}']={
                 'other_receiver_yards_adjustment':other_yd_shift,
                 'yards_scale_factor':scale,
@@ -1037,6 +1065,10 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             # produced 10-11 offensive TDs while keeping a plausible high-scoring tail.
             # Eight is a conservative guardrail, not a claim of a fitted NFL maximum.
             td_probability=float(np.clip(expected_td/max(expected_plays,1.),.002,.095))
+            if draft_personnel:
+                # Change the shared team TD budget, not just the QB fantasy score.
+                pass_td_fraction=float(np.clip(pass_td_pg/max(pass_td_pg+rush_td_prior,.1),.35,.78))
+                td_probability=np.clip(td_probability*(1+pass_td_fraction*(personnel_td-1)),.002,.095)
             total_td=np.minimum(rng.binomial(team_plays,td_probability),8)
             fgs=rng.poisson(fg_mean,size=ns)
             if possession_world is not None:
@@ -1064,7 +1096,7 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 'market_total_line':market_line,
                 'market_weight':float(market_weight) if market_line is not None else 0.,
                 'market_scored':bool(market_weight and market_line is not None),
-                'td_probability_per_team_play':td_probability,
+                'td_probability_per_team_play':float(np.mean(td_probability)),
                 'expected_field_goals':float(fg_mean),
                 'simulated_offensive_tds':total_td,
                 'simulated_field_goals':fgs,
@@ -1077,6 +1109,8 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
                 observed_share=observed_pass/max(observed_pass+observed_rush,.10)
                 pass_share=float(np.clip(
                     .65*pass_share+.35*observed_share,.35,.78))
+            if draft_personnel:
+                pass_share=np.clip(pass_share*personnel_td/(1-pass_share+pass_share*personnel_td),.25,.85)
             pass_td=rng.binomial(total_td,pass_share)
             if possession_world is not None:
                 pass_td=possession_world['pass_tds'].astype(np.int32)
@@ -1229,6 +1263,20 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             if not np.array_equal(rush_td,np.sum(rush_td_alloc,axis=1)+qb_rush_td+oth_rush_td):
                 raise ValueError(f'V3.4 rushing-TD conservation failed for {team}')
 
+            if draft_personnel:
+                ledger=stat_draws[f"__DRAFT_PERSONNEL__|{team}"]
+                ledger["mean_other_targets"]=float(oth_t.mean())
+                ledger["mean_other_receiving_yards"]=float(oth_y.mean())
+                ledger["mean_other_receiving_tds"]=float(oth_rec_td.mean())
+                ledger["named_target_means"]={str(p["Name"]):float(targ[:,j].mean()) for j,(_,p) in enumerate(skill.iterrows())}
+                ledger["mean_passing_yards"]=float(team_rec_yd.mean())
+                ledger["mean_passing_tds"]=float(pass_td.mean())
+                for entry in ledger["questionable_worlds"]:
+                    j=skill["Name"].astype(str).tolist().index(entry["player"])
+                    for label,which in (("active",masks[:,j]),("inactive",~masks[:,j])):
+                        entry[label]={"mean_passing_yards":float(team_rec_yd[which].mean()),
+                            "mean_passing_tds":float(pass_td[which].mean()),
+                            "named_target_means":{str(p["Name"]):float(targ[which,k].mean()) for k,(_,p) in enumerate(skill.iterrows())}}
             # Record team passing even if DraftKings has no eligible QB for this
             # team. This is accounting only, never a selectable DFS player.
             # Receiver TDs and opposing DST scores depend on these team events.
