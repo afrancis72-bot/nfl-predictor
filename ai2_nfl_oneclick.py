@@ -198,6 +198,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         role_defense_target_season=season,
         role_defense_target_week=week,
         **availability_options)
+    if draft_manual_review:
+        sim_kwargs["draft_personnel"]=True
     redzone_profile=research.get("draft_redzone_profiles")
     if redzone_profile and redzone_profile.get("players"):
         sim_kwargs.update(redzone_profiles=redzone_profile,redzone_strength=.5,
@@ -589,6 +591,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         "opponent_role_stat_scoring_audit": role_defense_ledger,
         "draft_role_defense_strength": role_defense_strength,
         "draft_role_first":bool(draft_manual_review),
+        "draft_personnel_report":[v for k,v in stat_draws.items() if k.startswith("__DRAFT_PERSONNEL__|")],
+        "draft_rush_efficiency_report":stat_draws.get("__DRAFT_RUSH_EFFICIENCY__",[]),
         "draft_individual_salary_floors":{"WR":min_wr,"RB":min_rb},
         "paired_matchup_projections": paired_matchup_rows,
         "claude_mip_candidate_report": mip_report,

@@ -24,6 +24,8 @@ def player_opportunity_evidence(row, *, value_ceiling=5000):
     except (ValueError, TypeError):
         return False, "Missing salary"
     if row.get("draft_role_first") is True and position in {"WR","RB","TE"}:
+        if str(row.get("dk_status","")).upper() in {"Q","QUESTIONABLE"}:
+            return False,"Questionable: simulated in availability scenarios but not selectable until cleared"
         if row.get("opportunity_verified") is not True:
             return False,"Missing observed statistical role"
         games=_number(row,("observed_games",)) or 0
