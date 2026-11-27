@@ -1263,6 +1263,20 @@ def simulate_stat_driven_dfs(pool, rates, n_sims=10000, seed=20261009, out_playe
             if not np.array_equal(rush_td,np.sum(rush_td_alloc,axis=1)+qb_rush_td+oth_rush_td):
                 raise ValueError(f'V3.4 rushing-TD conservation failed for {team}')
 
+            if draft_personnel:
+                ledger=stat_draws[f"__DRAFT_PERSONNEL__|{team}"]
+                ledger["mean_other_targets"]=float(oth_t.mean())
+                ledger["mean_other_receiving_yards"]=float(oth_y.mean())
+                ledger["mean_other_receiving_tds"]=float(oth_rec_td.mean())
+                ledger["named_target_means"]={str(p["Name"]):float(targ[:,j].mean()) for j,(_,p) in enumerate(skill.iterrows())}
+                ledger["mean_passing_yards"]=float(team_rec_yd.mean())
+                ledger["mean_passing_tds"]=float(pass_td.mean())
+                for entry in ledger["questionable_worlds"]:
+                    j=skill["Name"].astype(str).tolist().index(entry["player"])
+                    for label,which in (("active",masks[:,j]),("inactive",~masks[:,j])):
+                        entry[label]={"mean_passing_yards":float(team_rec_yd[which].mean()),
+                            "mean_passing_tds":float(pass_td[which].mean()),
+                            "named_target_means":{str(p["Name"]):float(targ[which,k].mean()) for k,(_,p) in enumerate(skill.iterrows())}}
             # Record team passing even if DraftKings has no eligible QB for this
             # team. This is accounting only, never a selectable DFS player.
             # Receiver TDs and opposing DST scores depend on these team events.

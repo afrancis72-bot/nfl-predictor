@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [feature/unified-ai2-platform]
   push:
-    branches: [feature/nfl-draft-role-intelligence, feature/nfl-classic-no-opposing-dst, feature/nfl-batch-intelligence-audit, feature/nfl-role-first-draft]
+    branches: [feature/nfl-draft-role-intelligence, feature/nfl-classic-no-opposing-dst, feature/nfl-batch-intelligence-audit, feature/nfl-role-first-draft, feature/nfl-personnel-scenario-draft]
 jobs:
   focused:
     runs-on: ubuntu-latest
