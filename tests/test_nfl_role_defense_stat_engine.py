@@ -153,12 +153,20 @@ class RoleDefenseStatEngineTests(unittest.TestCase):
         one=(root/"ai2_nfl_oneclick.py").read_text()
         adapter=(root/"ai2_nfl_simulation_adapter.py").read_text()
         ui=(root/"unified_app.py").read_text()
-        self.assertIn('role_defense_strength = 0.5',one)
+        from ai2_nfl_draft_matchup import review_strength
+        from ai2_nfl_release_gate import nfl_classic_release_status
+        self.assertEqual(review_strength(0.,False),0.)
+        self.assertEqual(review_strength(.25,True),.25)
+        with self.assertRaises(ValueError):
+            review_strength(.25,False)
+        self.assertFalse(nfl_classic_release_status()['ready_for_entries'])
+        self.assertIn('role_defense_strength=review_strength(draft_role_defense_strength,draft_manual_review)',one)
         self.assertIn('role_defense_profiles=research.get("opponent_role_stat_profiles")',one)
         self.assertIn('role_rates,role_ledger=apply_role_defense_to_rates',adapter)
         self.assertIn('active, role_rates, n_sims=',adapter)
         self.assertIn('stat_draws["__ROLE_DEFENSE_STAT_CHANNELS__"]',adapter)
-        self.assertIn('disabled=not release_ready',ui)
+        self.assertIn('draft_manual_review=not release_ready',ui)
+        self.assertIn('draft_role_defense_strength=role_strength',ui)
         self.assertIn('assert_nfl_classic_ready_for_entries()',ui)
         self.assertIn('independent_simulator_accuracy_validated":False',adapter)
 
