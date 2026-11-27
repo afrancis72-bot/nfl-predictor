@@ -28,3 +28,11 @@ def paired_projection_rows(players, draws, neutral_players, neutral_draws, *, se
                          delta_mean=m-n,neutral_p90=float(np.percentile(y[:,j],90)),
                          adjusted_p90=float(np.percentile(x[:,i],90))))
     return rows
+
+
+def draft_exposure_limit(count):
+    """14 new entries leave room for one manually selected entry.
+    At most four generated appearances plus one manual = 5/15 (33.33%).
+    Other contest plans retain the existing 28% policy.
+    """
+    return .35 if count==14 else .28

@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 import pandas as pd
-from ai2_nfl_draft_matchup import review_strength, paired_projection_rows
+from ai2_nfl_draft_matchup import review_strength, paired_projection_rows, draft_exposure_limit
 
 class DraftMatchupTests(unittest.TestCase):
     def test_strength(self):
@@ -16,3 +16,8 @@ class DraftMatchupTests(unittest.TestCase):
         rows=paired_projection_rows(p,draws,p.iloc[::-1],neutral,seed=47,season=2026,week=12)
         self.assertEqual([r["delta_mean"] for r in rows],[2.,1.])
         with self.assertRaises(ValueError): paired_projection_rows(p,draws,p.iloc[:1],neutral,seed=47,season=2026,week=12)
+
+    def test_fourteen_plus_manual_exposure(self):
+        self.assertEqual(int(14*draft_exposure_limit(14)),4)
+        self.assertLessEqual((4+1)/15,.35)
+        self.assertEqual(draft_exposure_limit(20),.28)

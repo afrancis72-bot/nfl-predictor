@@ -52,7 +52,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
                              simulation_mode="existing", availability_context=None,
                              draft_manual_review=False, draft_role_defense_strength=0.0):
     """Build from the salary file; legacy projections argument is ignored."""
-    from ai2_nfl_draft_matchup import review_strength, paired_projection_rows
+    from ai2_nfl_draft_matchup import review_strength, paired_projection_rows, draft_exposure_limit
     role_defense_strength=review_strength(draft_role_defense_strength,draft_manual_review)
     if not isinstance(draft_manual_review,bool):
         raise ValueError("Draft manual review flag must be boolean")
@@ -62,8 +62,9 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         raise ValueError("Availability-aware NFL builds require the verified official-source prebuild check")
     if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed < 2**31:
         raise ValueError("Simulation seed must be an integer from 0 to 2147483647")
-    if count not in (15, 20, 50, 150):
-        raise ValueError("Choose 15, 20, 50, or 150 lineups")
+    if count not in (14, 15, 20, 50, 150):
+        raise ValueError("Choose 14, 15, 20, 50, or 150 lineups")
+    exposure_limit=draft_exposure_limit(count)
     if not salaries:
         raise ValueError("Upload a DraftKings salary CSV to build lineups")
     season, week = _slate_week(salaries)
@@ -292,7 +293,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         prepared.append(player)
     candidates = build_classic_candidates(
         prepared, count=(1200 if count <= 20 else 2000), attempts=200000, seed=seed,
-        salary_floor=49600, salary_cap=50000, max_exposure=0.28,
+        salary_floor=49600, salary_cap=50000, max_exposure=exposure_limit,
         min_wr_salary=4000, min_rb_salary=4500, require_opportunity=True)
     mip_report={'enabled':False,'added_candidates':0}
     if draft_manual_review:
@@ -309,7 +310,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         try:
             ranked = select_simulated_portfolio(
                 candidates, players, selection_draws, count=count,
-                max_exposure=0.28, upside_share=0.25,
+                max_exposure=exposure_limit, upside_share=0.25,
                 premium_count=(5 if count == 20 else 0), min_wr_salary=4000, min_rb_salary=4500,
                 value_salary_ceiling=5000, value_max_appearances=(2 if count <= 20 else max(2, int(count*0.35))),
                 premium_value_max_appearances=1, require_opportunity=True,

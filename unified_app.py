@@ -196,7 +196,7 @@ else:
             st.caption(
                 "Bentley forecasting validation continues separately. "
                 "NFL Showdown has not been cleared for certified recommendations.")
-        st.caption("NFL Classic · Upload DraftKings salaries, then select 15, 20, 50, or 150 lineups. No projections upload required.")
+        st.caption("NFL Classic · Upload DraftKings salaries, then select 14, 15, 20, 40, 50, or 150 lineups. No projections upload required.")
         st.caption("NFL prebuild intelligence • repeated carry/target consistency gate before simulation • risk and stack evaluation • human approval required")
         upload_one = st.file_uploader("DraftKings salary CSV", type=["csv"], key="nfl_one_upload")
         saved_one = get_upload("NFL", "DraftKings salaries")
@@ -213,7 +213,7 @@ else:
         seed_one = st.number_input("Simulation seed (optional)", min_value=0,
                                    max_value=2147483647, value=42, step=1,
                                    key="nfl_one_seed")
-        requested_count = st.selectbox("Number of lineups", [15, 20, 40, 50, 150], index=1, key="nfl_one_count")
+        requested_count = st.selectbox("Number of lineups", [14, 15, 20, 40, 50, 150], index=0, key="nfl_one_count")
         # One button / one engine. Official game-day data are automatically
         # added only when independently verified for THIS slate.
         # With no additional evidence the original engine runs unchanged.
@@ -223,6 +223,8 @@ else:
             "The NFL engine automatically checks verified game-day availability "
             "when building. If no relevant additional status is found, the "
             "original lineup calculations are used. No mode selection needed.")
+        if requested_count==14:
+            st.caption("14 additional drafts: each player may appear in at most four generated entries, leaving one appearance for your existing manual entry within the 35% total cap. Compare the final 15 for duplicates and overlap.")
         role_strength=0.0
         if not release_ready:
             matchup_mode=st.radio("Draft defensive intelligence",["Role-specific matchup adjusted (experimental)","Neutral benchmark"],horizontal=True,key="nfl_draft_matchup_mode")
