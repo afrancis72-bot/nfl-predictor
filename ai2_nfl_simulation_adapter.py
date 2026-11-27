@@ -21,6 +21,8 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
                                  role_defense_strength=0.,
                                  role_defense_target_season=None,
                                  role_defense_target_week=None,
+                                 redzone_profiles=None, redzone_strength=0.,
+                                 redzone_target_season=None, redzone_target_week=None,
                                  football_only_players=None,
                                  football_universe_target_season=None,
                                  football_universe_target_week=None,
@@ -204,6 +206,9 @@ def run_verified_stat_simulation(pool, rates, *, n_sims=10000, seed=20261022, ou
         season=role_defense_target_season,
         week=role_defense_target_week,
         strength=role_defense_strength)
+    if redzone_strength:
+        football_options.update(redzone_profiles=redzone_profiles,redzone_strength=redzone_strength,
+            redzone_target_season=redzone_target_season,redzone_target_week=redzone_target_week)
     players,scores,stat_draws=simulate_stat_driven_dfs(
                                     active, role_rates, n_sims=int(n_sims),
                                     seed=int(seed), out_players=out_players,

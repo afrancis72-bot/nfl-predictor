@@ -76,7 +76,7 @@ def supplemental_candidates(prepared,candidates,players,selection_draws,*,seed,n
         sig=tuple(sorted(str(p['ID']) for p in lineup))
         if sig in seen: continue
         seen.add(sig)
-        combined.append(dict(players=lineup,projected_points=round(sum(float(p['proj']) for p in lineup),2),
+        combined.append(dict(candidate_origin="CLAUDE_MIP",players=lineup,projected_points=round(sum(float(p['proj']) for p in lineup),2),
                              salary=int(sum(float(p['Salary']) for p in lineup))))
     return combined,dict(enabled=True,method='Claude player-slot MILP adapted to Team AI2 coherent draws',
                          attempted=len(scores),feasible=solved,added_candidates=len(combined)-len(candidates),

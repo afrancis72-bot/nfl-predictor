@@ -68,7 +68,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
     if not salaries:
         raise ValueError("Upload a DraftKings salary CSV to build lineups")
     season, week = _slate_week(salaries)
-    research = collect_automatic_baselines(salaries, season, week)
+    research = (collect_automatic_baselines(salaries, season, week, draft_redzone=True)
+                if draft_manual_review and role_defense_strength else collect_automatic_baselines(salaries, season, week))
     missing_official_status=any(
         "Official NFL injury feed unavailable" in issue
         for issue in research["blockers"])
@@ -195,6 +196,10 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         role_defense_target_season=season,
         role_defense_target_week=week,
         **availability_options)
+    redzone_profile=research.get("draft_redzone_profiles")
+    if redzone_profile and redzone_profile.get("players"):
+        sim_kwargs.update(redzone_profiles=redzone_profile,redzone_strength=.5,
+                          redzone_target_season=season,redzone_target_week=week)
     players, draws, stat_draws = run_verified_stat_simulation(pool,raw_rates,role_defense_strength=role_defense_strength,**sim_kwargs)
     paired_matchup_rows=[]
     if role_defense_strength:
@@ -323,6 +328,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
             errors.append(str(exc))
     else:
         raise ValueError("The model could not produce qualifying lineups: " + errors[-1])
+    mip_report["selected_candidates"]=sum(x["candidate"].get("candidate_origin")=="CLAUDE_MIP" for x in ranked)
+    mip_report["selected_lineup_numbers"]=[i for i,x in enumerate(ranked,1) if x["candidate"].get("candidate_origin")=="CLAUDE_MIP"]
     # Explain every verified QB's journey from salary slate / eligible WR-TE
     # partners to legal candidates, simulated P90 filter, and FINAL exposure.
     # This report is a diagnosis, not a request to force a particular QB.
@@ -490,6 +497,18 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         "questionable_count": int(research.get("questionable_count", 0)),
         "excluded_count": int(research.get("excluded_count", 0)),
         "news_feed": "No verified late-breaking news feed connected. Official game designations and published practice reports are checked; Sunday inactives and workload limits require a fresh check."}
+    sim_ids=set(players["ID"].astype(str))
+    from ai2_nfl_role_evidence import player_opportunity_evidence
+    prepared_by_id={str(x["ID"]):x for x in prepared}
+    selected_counts=Counter(str(p["ID"]) for x in ranked for p in x["candidate"]["players"])
+    candidate_counts=Counter(str(p["ID"]) for x in candidates for p in x["players"])
+    for row in audit.get("player_pool_coverage",[]):
+        ident=row["ID"]
+        player=prepared_by_id.get(ident)
+        row["Simulated"]=ident in sim_ids
+        row["Candidate appearances"]=candidate_counts[ident]
+        row["Selected appearances"]=selected_counts[ident]
+        row["Post-simulation candidate reason"]=(player_opportunity_evidence(player)[1] if player else "Not in prepared candidate pool")
     summary = []
     for index, entry in enumerate(ranked, 1):
         roster = entry["candidate"]["players"]
@@ -569,6 +588,13 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         "draft_role_defense_strength": role_defense_strength,
         "paired_matchup_projections": paired_matchup_rows,
         "claude_mip_candidate_report": mip_report,
+        "redzone_intelligence":{"applied":bool(sim_kwargs.get("redzone_strength",0)),
+            "profile_count":len((redzone_profile or {}).get("players",{})),
+            "strength":sim_kwargs.get("redzone_strength",0),
+            "source":(redzone_profile or {}).get("source"),
+            "issue":research.get("draft_redzone_issue"),
+            "last_observed_week":(redzone_profile or {}).get("last_observed_week"),
+            "note":"Paired defensive forecasts both use the same red-zone allocation settings."},
         "opponent_role_stat_profiles": (
             research.get("opponent_role_stat_profiles").to_dict("records")
             if isinstance(research.get("opponent_role_stat_profiles"),pd.DataFrame)

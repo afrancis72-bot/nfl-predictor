@@ -229,7 +229,9 @@ else:
         if not release_ready:
             matchup_mode=st.radio("Draft defensive intelligence",["Role-specific matchup adjusted (experimental)","Neutral benchmark"],horizontal=True,key="nfl_draft_matchup_mode")
             role_strength=.25 if matchup_mode.startswith("Role-specific") else 0.0
-            st.caption("Experimental strength 0.25 uses source-dated stat-channel evidence; both adjusted and neutral player forecasts are generated with the same seed for review. Not certified.")
+            if role_strength:
+                role_strength=st.selectbox("Experimental matchup strength",[.25,.5],index=0,key="nfl_draft_role_strength")
+            st.caption("Experimental strength 0.25 or 0.50 uses source-dated stat-channel evidence; both adjusted and neutral player forecasts are generated with the same seed for review. Not certified.")
         if requested_count == 40:
             st.caption("40-entry contest plan: four $3, sixteen $0.50, twenty $0.10. "
                        "Automatically simulates three different seeds and selects "
@@ -388,6 +390,8 @@ else:
                     "player_universe_accuracy_independently_validated":False,
                     "draft_role_defense_strength":output_one.get("draft_role_defense_strength",0.),
                     "claude_mip_candidate_report":output_one.get("claude_mip_candidate_report",{}),
+                    "player_pool_coverage":output_one.get("audit",{}).get("player_pool_coverage",[]),
+                    "redzone_intelligence":output_one.get("redzone_intelligence",{}),
                     "paired_matchup_projections":output_one.get("paired_matchup_projections",[]),
                     "approved_lineups_untouched":True,
                     "portfolio_mode":(
@@ -676,6 +680,13 @@ else:
                     file_name="team_ai2_nfl_defense_correlation_audit.csv",
                     mime="text/csv", key="ai2_nfl_correlation_audit_download",
                     on_click="ignore")
+            with st.expander("Full salary slate eligibility and optimizer audit", expanded=False):
+                coverage=_ai2_pd.DataFrame(output_one.get("audit",{}).get("player_pool_coverage",[]))
+                if not coverage.empty:
+                    st.dataframe(coverage,hide_index=True,use_container_width=True)
+                    st.download_button("Download every player eligibility and selection reason",coverage.to_csv(index=False).encode("utf-8-sig"),file_name="team_ai2_nfl_full_player_pool_audit.csv",mime="text/csv",key="nfl_full_pool_download")
+                st.write(output_one.get("claude_mip_candidate_report",{}))
+                st.write(output_one.get("redzone_intelligence",{}))
             with st.expander("Model inputs & workload plausibility reports", expanded=False):
                 st.caption("SCORED = changes the forecast; OPTIMIZER_ONLY = changes selection; "
                            "ELIGIBILITY_ONLY = roster gate; RESEARCH_ONLY = collected but NOT scored; "

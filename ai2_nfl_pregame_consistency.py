@@ -183,7 +183,7 @@ def build_pregame_role_evidence(history, salary_rows, season, week):
         trend_note=teammate_context(team,position,_norm_name(name))
         latest_team_weeks=team_games.get(team,[])[-2:]
         reentry_recent=(
-            position=="RB" and not ambiguous and len(rows)>=2
+            position in POSITIONS and not ambiguous and len(rows)>=2
             and len(latest_team_weeks)==2
             and [int(r["week"]) for r in rows[-2:]]==latest_team_weeks
             and len(available)>=2 and all(v>=threshold for v in observed[-2:])
@@ -203,7 +203,7 @@ def build_pregame_role_evidence(history, salary_rows, season, week):
                       if sustained_scores else "Three consecutive recent team games with verified opportunity")
         elif reentry_recent:
             status = "EMERGING_LIMITED"
-            reason = ("Two most recent team games show meaningful rushing involvement, "
+            reason = ("Two most recent team games show meaningful positional involvement, "
                       "with a same-position teammate's observed workload declining; "
                       "current-week starter, injury and snap role NOT verified")
         elif spike:

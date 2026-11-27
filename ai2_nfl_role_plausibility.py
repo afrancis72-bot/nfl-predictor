@@ -98,7 +98,7 @@ def compare_simulated_role_to_history(audits, historical_rates, injury_context=N
                 ("Receiving yards per target", "Mean targets", "Mean receiving yards",
                  "targets_pg", "receiving_yards_pg", 4., 2.5),
                 ("Rushing yards per carry", "Mean carries", "Mean rushing yards",
-                 "carries_pg", "rushing_yards_pg", 8., 1.6),
+                 "carries_pg", "rushing_yards_pg", 4., 1.6),
             ):
                 sim_count = _number(audit.get(sim_count_key))
                 sim_yards = _number(audit.get(sim_yards_key))
@@ -110,7 +110,8 @@ def compare_simulated_role_to_history(audits, historical_rates, injury_context=N
                     continue
                 simulated_efficiency = sim_yards / sim_count
                 historic_efficiency = obs_yards / obs_count
-                if (historic_efficiency <= 0
+                extreme_rush=(label=="Rushing yards per carry" and simulated_efficiency>=8.)
+                if not extreme_rush and (historic_efficiency <= 0
                         or simulated_efficiency < 1.35 * historic_efficiency
                         or simulated_efficiency - historic_efficiency < extra):
                     continue
@@ -120,7 +121,7 @@ def compare_simulated_role_to_history(audits, historical_rates, injury_context=N
                     "Observed yards/opportunity": round(historic_efficiency, 2),
                     "Simulated yards/opportunity": round(simulated_efficiency, 2),
                     "Increase %": round(100. * (
-                        simulated_efficiency / historic_efficiency - 1.), 1),
+                        simulated_efficiency / historic_efficiency - 1.), 1) if historic_efficiency>0 else None,
                     "Prior player-games": n,
                     "Current-week injury context": ", ".join(
                         str(x["player"]) + " (" + str(x["incremental_pct"]) +
