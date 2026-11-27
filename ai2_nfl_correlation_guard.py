@@ -1,14 +1,9 @@
-"""NFL Classic portfolio guard for negatively correlated DST/pass-catcher pairings.
-
-A receiver facing the rostered DST is not an illegal DraftKings lineup, but
-mass-producing that combination creates avoidable portfolio concentration.
-Restrict it at final portfolio selection; retain rare lineup-level exceptions.
-Unknown opponent metadata is not silently treated as a verified matchup.
-"""
+"""Classic-only policy: no offensive player may face the rostered DST."""
 from ai2_nfl_matchups import canonical_team, opponent_from_game_info
 
+OFFENSE = frozenset(("QB", "RB", "WR", "TE"))
 PASS_CATCHERS = frozenset(("WR", "TE"))
-MAX_OPPOSING_PASS_CATCHER_DST_SHARE = 0.04
+MAX_OPPOSING_PASS_CATCHER_DST_SHARE = 0.0
 
 
 def _opponent(player):
@@ -19,8 +14,8 @@ def _opponent(player):
                                    player.get("Game Info") or player.get("game") or "")
 
 
-def opposing_pass_catcher_dst_pairs(roster):
-    """Return validated opposing WR/TE vs DST conflicts, with names and IDs."""
+def opposing_offense_dst_pairs(roster):
+    """Return QB/RB/WR/TE vs DST conflicts, including FLEX, in Classic."""
     dsts = [p for p in roster if str(p.get("Position", "")).upper() == "DST"]
     if not dsts:
         return []
@@ -31,7 +26,7 @@ def opposing_pass_catcher_dst_pairs(roster):
         if not defense:
             continue
         for player in roster:
-            if str(player.get("Position", "")).upper() not in PASS_CATCHERS:
+            if str(player.get("Position", "")).upper() not in OFFENSE:
                 continue
             offense = canonical_team(player.get("TeamAbbrev"))
             if not offense or offense == defense:
@@ -39,6 +34,7 @@ def opposing_pass_catcher_dst_pairs(roster):
             if (opposing_team and offense == opposing_team) or (
                     _opponent(player) and _opponent(player) == defense):
                 pairs.append({
+                    "position": str(player.get("Position", "")).upper(),
                     "player_id": str(player.get("ID", "")),
                     "player": str(player.get("Name", player.get("ID", "Unknown"))),
                     "offense_team": offense,
@@ -48,12 +44,14 @@ def opposing_pass_catcher_dst_pairs(roster):
     return pairs
 
 
-def opposing_dst_lineup_budget(lineups):
-    """No more than 4% of a Classic portfolio may have a DST/WR-TE conflict.
+def opposing_pass_catcher_dst_pairs(roster):
+    """Legacy narrow diagnostic retained for compatibility only."""
+    return [p for p in opposing_offense_dst_pairs(roster) if p["position"] in PASS_CATCHERS]
 
-    For small portfolios (e.g. 15 or 20) that permits none; at 50, two.
-    """
-    return max(0, int(int(lineups) * MAX_OPPOSING_PASS_CATCHER_DST_SHARE))
+
+def opposing_dst_lineup_budget(lineups):
+    """User policy: zero opposing offensive players at every portfolio size."""
+    return 0
 
 
 def correlation_audit_rows(ranked):
@@ -61,11 +59,11 @@ def correlation_audit_rows(ranked):
     rows = []
     for position, entry in enumerate(ranked, 1):
         roster = entry.get("candidate", entry).get("players", [])
-        pairs = opposing_pass_catcher_dst_pairs(roster)
+        pairs = opposing_offense_dst_pairs(roster)
         rows.append({
             "Lineup": position,
             "Conflicted": bool(pairs),
-            "Opposing WR/TE vs DST pairs": len(pairs),
+            "Opposing offense vs DST pairs": len(pairs),
             "Players facing rostered DST": "; ".join(
                 f"{p['player']} ({p['offense_team']}) vs {p['defense']} ({p['defense_team']})"
                 for p in pairs),

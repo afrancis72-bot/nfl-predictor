@@ -1,6 +1,7 @@
 """NFL Classic roster feasibility checks; not an optimizer or release approval."""
 from collections import Counter
 from ai2_nfl_matchups import canonical_team
+from ai2_nfl_correlation_guard import opposing_offense_dst_pairs
 
 ROSTER = {"QB": 1, "RB": 2, "WR": 3, "TE": 1, "DST": 1}
 FLEX = {"RB", "WR", "TE"}
@@ -31,9 +32,8 @@ def check_classic_lineup(players, *, salary_cap=50000, salary_floor=47500):
     if len(rb_teams) != len(set(rb_teams)):
         issues.append("Multiple running backs from same team")
     qbs = [p for p in players if str(p.get("Position", "")).upper() == "QB"]
-    dsts = [p for p in players if str(p.get("Position", "")).upper() == "DST"]
     if qbs and not str(qbs[0].get("opponent") or "").strip():
         issues.append("Quarterback opponent is missing")
-    if qbs and dsts and canonical_team(qbs[0].get("opponent")) == canonical_team(dsts[0].get("TeamAbbrev")) and qbs[0].get("opponent"):
-        issues.append("Quarterback against opposing defense")
+    for conflict in opposing_offense_dst_pairs(players):
+        issues.append(f"{conflict['position']} {conflict['player']} against opposing defense {conflict['defense']}")
     return issues

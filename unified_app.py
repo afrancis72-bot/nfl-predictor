@@ -663,11 +663,11 @@ else:
             correlations = correlation_audit_rows(ranked)
             conflict_count = sum(int(row["Conflicted"]) for row in correlations)
             correlation_cap = opposing_dst_lineup_budget(len(ranked))
-            st.info(f"Opposing WR/TE against rostered defense: "
+            st.info(f"Opposing QB/RB/WR/TE against rostered defense: "
                     f"{conflict_count} of {len(ranked)} lineups; "
                     f"portfolio maximum {correlation_cap}. "
                     "This applies to Classic only; Showdown is unchanged.")
-            with st.expander("Defense versus opposing pass catcher audit"):
+            with st.expander("Defense versus opposing offense audit"):
                 st.dataframe(_ai2_pd.DataFrame(correlations), hide_index=True,
                              use_container_width=True)
                 st.download_button(
