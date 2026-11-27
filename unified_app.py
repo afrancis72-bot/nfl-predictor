@@ -385,6 +385,7 @@ else:
                         "availability_intelligence",{}),
                     "player_universe_accuracy_independently_validated":False,
                     "draft_role_defense_strength":output_one.get("draft_role_defense_strength",0.),
+                    "claude_mip_candidate_report":output_one.get("claude_mip_candidate_report",{}),
                     "paired_matchup_projections":output_one.get("paired_matchup_projections",[]),
                     "approved_lineups_untouched":True,
                     "portfolio_mode":(

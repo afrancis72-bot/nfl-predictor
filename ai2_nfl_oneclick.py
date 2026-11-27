@@ -294,6 +294,10 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         prepared, count=(1200 if count <= 20 else 2000), attempts=200000, seed=seed,
         salary_floor=49600, salary_cap=50000, max_exposure=0.28,
         min_wr_salary=4000, min_rb_salary=4500, require_opportunity=True)
+    mip_report={'enabled':False,'added_candidates':0}
+    if draft_manual_review:
+        from ai2_nfl_claude_candidates import supplemental_candidates
+        candidates,mip_report=supplemental_candidates(prepared,candidates,players,selection_draws,seed=seed)
     if len(candidates) < count:
         raise ValueError(
             f"Only {len(candidates)} legal candidates under role and salary rules. "
@@ -563,6 +567,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         "opponent_role_stat_scoring_audit": role_defense_ledger,
         "draft_role_defense_strength": role_defense_strength,
         "paired_matchup_projections": paired_matchup_rows,
+        "claude_mip_candidate_report": mip_report,
         "opponent_role_stat_profiles": (
             research.get("opponent_role_stat_profiles").to_dict("records")
             if isinstance(research.get("opponent_role_stat_profiles"),pd.DataFrame)
