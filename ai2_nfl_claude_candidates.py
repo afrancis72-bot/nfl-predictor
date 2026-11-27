@@ -8,6 +8,7 @@ from scipy.optimize import Bounds, LinearConstraint, milp
 from scipy.sparse import lil_matrix
 from ai2_nfl_lineup import check_classic_lineup
 from ai2_nfl_matchups import canonical_team
+from ai2_nfl_correlation_guard import _opponent
 from ai2_nfl_role_evidence import player_opportunity_evidence
 
 SLOTS=(('QB',('QB',),1),('RB',('RB',),2),('WR',('WR',),3),
@@ -18,7 +19,7 @@ def optimize_slot_lineup(pool,score,*,previous=(),time_limit=.8):
     if not pool: return None
     pos=np.array([p['Position'] for p in pool])
     team=np.array([canonical_team(p.get('TeamAbbrev','')) for p in pool])
-    opp=np.array([canonical_team(p.get('opponent','')) for p in pool])
+    opp=np.array([_opponent(p) or '' for p in pool])
     sal=np.array([float(p['Salary']) for p in pool])
     pairs=[(i,j) for j,(_,eligible,_) in enumerate(SLOTS) for i in range(len(pool)) if pos[i] in eligible]
     if not pairs or not np.isfinite(score).all(): return None
@@ -35,8 +36,9 @@ def optimize_slot_lineup(pool,score,*,previous=(),time_limit=.8):
     for i in np.flatnonzero(pos=='QB'):
         mates=(team==team[i])&np.isin(pos,['WR','TE'])
         add(Y[mates].sum(0)-Y[i],0,np.inf)
-        for d in np.flatnonzero((pos=='DST')&(team==opp[i])):
-            add(Y[i]+Y[d],0,1)
+    for i in np.flatnonzero(np.isin(pos,['QB','RB','WR','TE'])):
+        for d in np.flatnonzero((pos=='DST')&((team==opp[i])|(opp==team[i]))):
+            if team[d]!=team[i]: add(Y[i]+Y[d],0,1)
     for prev in previous: add(Y[list(prev)].sum(0),0,8)
     result=milp(c=-(np.asarray(score,float)@Y),integrality=np.ones(len(pairs)),
                 bounds=Bounds(0,1),constraints=LinearConstraint(np.vstack(rows),lo,hi),

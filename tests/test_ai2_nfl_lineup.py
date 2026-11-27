@@ -27,6 +27,29 @@ class TestClassicLineup(unittest.TestCase):
         players[0]["opponent"] = players[7]["TeamAbbrev"]
         self.assertTrue(any("opposing defense" in x for x in check_classic_lineup(players)))
 
+    def test_every_offensive_position_against_dst(self):
+        for i in (0,1,2,3,4,5,6,8):
+            players=sample()
+            players[i]["opponent"]=players[7]["TeamAbbrev"]
+            self.assertTrue(any("opposing defense" in x for x in check_classic_lineup(players)))
+
+    def test_same_team_rb_dst_allowed(self):
+        players=sample()
+        players[1]["TeamAbbrev"]=players[7]["TeamAbbrev"]
+        self.assertEqual(check_classic_lineup(players),[])
+
+    def test_dst_opponent_reverse_lookup(self):
+        players=sample()
+        players[7]["opponent"]=players[1]["TeamAbbrev"]
+        self.assertTrue(any("RB" in x and "opposing defense" in x for x in check_classic_lineup(players)))
+
+    def test_export_rejects_conflict(self):
+        from ai2_nfl_export import export_classic_candidates
+        players=sample()
+        players[1]["opponent"]=players[7]["TeamAbbrev"]
+        with self.assertRaisesRegex(ValueError,"opposing defense"):
+            export_classic_candidates([{"players":players}])
+
     def test_salary_floor(self):
         players = sample()
         players[0]["Salary"] = 1000

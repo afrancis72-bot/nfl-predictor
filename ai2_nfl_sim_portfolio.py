@@ -11,7 +11,7 @@ from ai2_nfl_role_evidence import player_opportunity_evidence
 from ai2_nfl_qb_audit import qb_and_partners
 from ai2_nfl_qb_counterfactual import quarterback_counterfactuals
 from ai2_nfl_stack_intelligence import score_stack_lift
-from ai2_nfl_correlation_guard import (opposing_pass_catcher_dst_pairs,
+from ai2_nfl_correlation_guard import (opposing_offense_dst_pairs,
                                        opposing_dst_lineup_budget)
 from ai2_nfl_portfolio_risk import (
     maximum_player_appearances, uncertain_running_back_reason,
@@ -87,7 +87,7 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
     # occasionally be viable, but may not dominate the portfolio. This is a
     # whole-portfolio constraint, enforced even if greedy selection fails.
     conflicted = [i for i, item in enumerate(scored)
-                  if opposing_pass_catcher_dst_pairs(item["candidate"]["players"])]
+                  if opposing_offense_dst_pairs(item["candidate"]["players"])]
     if conflicted:
         add_constraint([(i, 1) for i in conflicted] +
                        [(n + i, 1) for i in conflicted],
@@ -127,7 +127,7 @@ def _solve_joint_portfolio(scored, *, count, premium_count, max_exposure,
     # worlds, not a categorical bonus for simply having teammates.
     # Simulated co-ceiling frequency is NOT historically verified DFS ROI.
     opposing_dst = np.array([
-        bool(opposing_pass_catcher_dst_pairs(item["candidate"]["players"]))
+        bool(opposing_offense_dst_pairs(item["candidate"]["players"]))
         for item in scored], dtype=float)
     regular = (.65 * scaled(means) + .25 * scaled(p90) +
                .10 * scaled(p99) + .02 * stack_lifts - .35 * opposing_dst)
@@ -238,7 +238,7 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
                            simulated_p90=float(np.percentile(scores, 90)),
                            simulated_p99=float(np.percentile(scores, 99)),
                            stack_lift=score_stack_lift(roster,index,matrix),
-                           opposing_dst_conflicts=len(opposing_pass_catcher_dst_pairs(roster))))
+                           opposing_dst_conflicts=len(opposing_offense_dst_pairs(roster))))
     if not scored:
         raise ValueError("No simulated candidates available")
     all_scored=list(scored)  # Preserve pre-efficiency counterfactual opportunities.
@@ -480,10 +480,10 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
            for i in range(len(final_rosters))
            for j in range(i+1,len(final_rosters))):
         raise ValueError("NFL portfolio has near-duplicate lineups; no export")
-    final_opposing_dst = sum(bool(opposing_pass_catcher_dst_pairs(
+    final_opposing_dst = sum(bool(opposing_offense_dst_pairs(
         item["candidate"]["players"])) for item in chosen)
     if final_opposing_dst > opposing_dst_budget:
-        raise ValueError("Opposing WR/TE versus DST portfolio safety cap violated; no export")
+        raise ValueError("Opposing offense versus DST portfolio safety cap violated; no export")
     final_qbs=Counter()
     final_stacks=Counter()
     for item in chosen:
@@ -557,6 +557,6 @@ def select_simulated_portfolio(candidates, players, draws, count=20,
             "player_opportunity_evidence": evidence,
             "simulated_p90_per_1000": item["p90_per_1000"],
             "simulated_qb_receiver_upper_tail_lift": item.get("stack_lift",0.),
-            "opposing_pass_catchers_vs_dst": opposing_pass_catcher_dst_pairs(roster),
+            "opposing_offense_vs_dst": opposing_offense_dst_pairs(roster),
         }
     return sorted(chosen, key=lambda x: (x["contest_tier"] != "$3", -x["simulated_p99"]))

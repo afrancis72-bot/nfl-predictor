@@ -1,7 +1,7 @@
 """Find strongest legal NFL Classic QB stacks using the ACTUAL eligible slate.
 
 This is a candidate-generation cross-check, not a mandate to roster a QB.
-It uses the same salary, opportunity, roster, RB-team and QB-vs-DST rules as
+It uses the same salary, opportunity, roster, RB-team and offense-vs-DST rules as
 the live Classic builder. A missing feasible solution is reported as missing,
 never as zero projected upside or proof that a team is unattractive.
 """
@@ -11,6 +11,7 @@ import numpy as np
 
 from ai2_nfl_lineup import check_classic_lineup
 from ai2_nfl_matchups import canonical_team
+from ai2_nfl_correlation_guard import opposing_offense_dst_pairs
 
 
 def anchored_qb_stack(pools, quarterback, *, min_receivers=1,
@@ -74,6 +75,11 @@ def anchored_qb_stack(pools, quarterback, *, min_receivers=1,
     for team in teams:
         constrain([i for i,p in enumerate(roster) if p.get("Position")=="RB"
                    and canonical_team(p.get("TeamAbbrev",""))==team],0,1)
+    for d,dst in enumerate(roster):
+        if dst.get("Position")!="DST": continue
+        for i,p in enumerate(roster):
+            if opposing_offense_dst_pairs([p,dst]):
+                constrain([i,d],0,1)
     rows.append(salaries);lows.append(salary_floor);highs.append(salary_cap)
     result=milp(c=c, integrality=np.ones(n,dtype=int),
                 bounds=Bounds(lb,ub),

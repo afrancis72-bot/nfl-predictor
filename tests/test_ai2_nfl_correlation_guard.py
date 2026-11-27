@@ -2,7 +2,7 @@
 import unittest
 from ai2_nfl_sim_portfolio import _solve_joint_portfolio
 from ai2_nfl_correlation_guard import (
-    opposing_pass_catcher_dst_pairs, opposing_dst_lineup_budget,
+    opposing_pass_catcher_dst_pairs, opposing_offense_dst_pairs, opposing_dst_lineup_budget,
     correlation_audit_rows,
 )
 
@@ -30,8 +30,8 @@ class CorrelationGuardTests(unittest.TestCase):
     def test_budget_is_floor_not_round_up(self):
         self.assertEqual(opposing_dst_lineup_budget(15), 0)
         self.assertEqual(opposing_dst_lineup_budget(20), 0)
-        self.assertEqual(opposing_dst_lineup_budget(50), 2)
-        self.assertEqual(opposing_dst_lineup_budget(150), 6)
+        self.assertEqual(opposing_dst_lineup_budget(50), 0)
+        self.assertEqual(opposing_dst_lineup_budget(150), 0)
 
     def test_joint_solver_cannot_select_correlated_receivers(self):
         def candidate(label, mean, bad):
@@ -59,6 +59,15 @@ class CorrelationGuardTests(unittest.TestCase):
         self.assertEqual(len(chosen), 2)
         self.assertTrue(all(not opposing_pass_catcher_dst_pairs(x["candidate"]["players"])
                             for x in chosen))
+
+    def test_jets_gordon_and_colts_skattebo(self):
+        for offense,defense,name in [("MIA","NYJ","Ollie Gordon II"),("NYG","IND","Cam Skattebo")]:
+            roster=[{"ID":"rb","Name":name,"Position":"RB","TeamAbbrev":offense,"opponent":defense},{"ID":"dst","Position":"DST","TeamAbbrev":defense,"opponent":offense}]
+            self.assertEqual(len(opposing_offense_dst_pairs(roster)),1)
+            self.assertTrue(correlation_audit_rows([{"players":roster}])[0]["Conflicted"])
+            roster[0]["TeamAbbrev"]=defense
+            roster[0]["opponent"]=offense
+            self.assertEqual(opposing_offense_dst_pairs(roster),[])
 
     def test_audit_exposes_exact_pair(self):
         ranked = [{"candidate": {"players": [
