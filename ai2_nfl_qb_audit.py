@@ -37,7 +37,7 @@ def _eligible_pass_partner(p, *, min_wr_salary=4000):
 
 
 def qb_selection_report(pool,candidates,ranked,*,diagnostics=None,
-                        team_environment=None):
+                        team_environment=None,min_wr_salary=4000):
     """One row per source-eligible quarterback: from field to final 20/150.
 
     All reports identify why a QB disappears; they never imply selection
@@ -52,7 +52,7 @@ def qb_selection_report(pool,candidates,ranked,*,diagnostics=None,
           and player_opportunity_evidence(p)[0])]
     teammates=defaultdict(list)
     for p in records:
-        if _eligible_pass_partner(p):
+        if _eligible_pass_partner(p,min_wr_salary=min_wr_salary):
             teammates[canonical_team(p.get("TeamAbbrev",""))].append(p)
     candidate_counts=Counter()
     candidate_stacks=Counter()

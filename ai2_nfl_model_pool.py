@@ -22,7 +22,7 @@ def _num(value, fallback=0.0):
     except (TypeError, ValueError):
         return fallback
 
-def create_observed_model_pool(research):
+def create_observed_model_pool(research, *, draft_role_first=False):
     """Return (pool, unmodified rates, confirmed out players, diagnostics).
 
     The game-level simulator redistributes OUT players *once* using raw rates.
@@ -57,6 +57,16 @@ def create_observed_model_pool(research):
     def reject(ident,name,reason):
         excluded.append((name,reason))
         excluded_by_id[str(ident)]=reason
+    vacancy={}
+    if draft_role_first:
+        for item in baseline.to_dict('records'):
+            if str(item.get('current_status')).upper().strip() not in {'OUT','O','IR','INACTIVE','PUP','NFI','SUSPENDED'}: continue
+            team=_norm_team(item['Team']); pos=str(item['Position']).upper()
+            rate=lookup.get((_norm_name(item['Name']),team,pos))
+            if rate is None or int(_num(rate.get('latest_observed_season')))!=season or not 0<week-int(_num(rate.get('latest_observed_week')))<=3: continue
+            volume=_num(rate.get('carries_pg'))+_num(rate.get('targets_pg')) if pos=='RB' else _num(rate.get('targets_pg'))
+            if (pos=='RB' and volume>=8) or (pos in {'WR','TE'} and volume>=4):
+                vacancy.setdefault((team,pos),[]).append(f"{item['Name']} ({volume:.1f} observed opportunities/game; unavailable designation)")
     for _, row in baseline.iterrows():
         ident = str(row["ID"]).strip()
         name = str(row["Name"]).strip()
@@ -81,7 +91,7 @@ def create_observed_model_pool(research):
         if salary <= 0:
             reject(ident,name,'Invalid salary')
             continue
-        if pos == "WR" and salary < 4000 or pos == "RB" and salary < 4500:
+        if not draft_role_first and ((pos == "WR" and salary < 4000) or (pos == "RB" and salary < 4500)):
             reject(ident,name,"Below configured optimizer salary floor")
             continue
         # Cheap players need repeated REAL opportunity before they can even
@@ -92,7 +102,7 @@ def create_observed_model_pool(research):
         # backup must not bypass the gate because one CSV ID failed to join.
         from ai2_nfl_pregame_consistency import LOW_PRICE
         cheap = pos in LOW_PRICE and salary < LOW_PRICE[pos]
-        if cheap and (not evidence or evidence.get("Role gate") not in ("PASS","EMERGING_LIMITED")):
+        if not draft_role_first and cheap and (not evidence or evidence.get("Role gate") not in ("PASS","EMERGING_LIMITED")):
             reject(ident,name, "prebuild recurring-opportunity gate: " +
                             str((evidence or {}).get("Role rationale",
                                                    "No matching individual pregame usage evidence")))
@@ -125,13 +135,13 @@ def create_observed_model_pool(research):
             if pos == "QB" and passing < 18:
                 reject(ident,name, "not a regular observed primary passer")
                 continue
-            if pos == "RB" and touches < 6:
+            if pos == "RB" and touches < (.5 if draft_role_first else 6):
                 reject(ident,name, "insufficient observed or redistributed RB volume")
                 continue
-            if pos == "WR" and targets < 3.5:
+            if pos == "WR" and targets < (.5 if draft_role_first else 3.5):
                 reject(ident,name, "insufficient observed or redistributed WR targets")
                 continue
-            if pos == "TE" and targets < 2.3:
+            if pos == "TE" and targets < (.5 if draft_role_first else 2.3):
                 reject(ident,name, "insufficient observed or redistributed TE targets")
                 continue
             proj = _num(row["historical_partial_dk"])
@@ -142,6 +152,8 @@ def create_observed_model_pool(research):
                       f"{last_season} W{last_week}; injury-conditioned opportunities")
         prepared.append({
             "ID": ident, "Name": name, "Position": pos, "TeamAbbrev": team,
+            "draft_role_first":bool(draft_role_first),
+            "draft_vacancy_reason":"; ".join(vacancy.get((team,pos),[])),
             "pregame_role_gate": (evidence or {}).get("Role gate", "UNAVAILABLE"),
             "emerging_role_limited": (evidence or {}).get("Role gate") == "EMERGING_LIMITED",
             "emerging_role_evidence": ((evidence or {}).get("Role rationale", "")

@@ -389,6 +389,8 @@ else:
                         "availability_intelligence",{}),
                     "player_universe_accuracy_independently_validated":False,
                     "draft_role_defense_strength":output_one.get("draft_role_defense_strength",0.),
+                    "draft_role_first":output_one.get("draft_role_first",False),
+                    "draft_individual_salary_floors":output_one.get("draft_individual_salary_floors",{}),
                     "claude_mip_candidate_report":output_one.get("claude_mip_candidate_report",{}),
                     "player_pool_coverage":output_one.get("audit",{}).get("player_pool_coverage",[]),
                     "redzone_intelligence":output_one.get("redzone_intelligence",{}),
@@ -418,6 +420,7 @@ else:
                 output_one["bentley_certified"] = bool(release_ready)
                 st.session_state["ai2_oneclick_result"] = output_one
                 st.session_state["ai2_oneclick_seed"] = int(seed_one)
+                st.session_state["ai2_oneclick_role_strength"] = float(role_strength)
                 st.session_state["ai2_oneclick_count"] = int(requested_count)
                 st.session_state["ai2_oneclick_engine_mode"] = nfl_engine_mode
                 st.session_state["ai2_oneclick_digest"] = _ai2_sha256(salaries_one[1]).hexdigest()
@@ -440,6 +443,7 @@ else:
         if (not current_digest or
                 st.session_state.get("ai2_oneclick_seed") != int(seed_one) or
                 st.session_state.get("ai2_oneclick_count") != int(requested_count) or
+                st.session_state.get("ai2_oneclick_role_strength") != float(role_strength) or
                 st.session_state.get("ai2_oneclick_engine_mode") != nfl_engine_mode or
                 st.session_state.get("ai2_oneclick_digest") != current_digest):
             output_one = None
