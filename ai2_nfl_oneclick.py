@@ -82,7 +82,9 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
     # injuries stay UNKNOWN and require manual injury verification before use.
     if not research.get("pregame_role_evidence"):
         raise ValueError("Pregame consistency evidence unavailable; refusing to build from historical averages alone")
-    pool, raw_rates, outs, audit = create_observed_model_pool(research)
+    pool, raw_rates, outs, audit = (create_observed_model_pool(research,draft_role_first=True)
+        if draft_manual_review else create_observed_model_pool(research))
+    min_wr,min_rb=(0,0) if draft_manual_review else (4000,4500)
     # A stale source week or an uncertain returning high-volume teammate must
     # not let the optimization treat a reserve RB as the unquestioned starter.
     # Review only documented pregame rates + currently surfaced designations.
@@ -299,11 +301,11 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
     candidates = build_classic_candidates(
         prepared, count=(1200 if count <= 20 else 2000), attempts=200000, seed=seed,
         salary_floor=49600, salary_cap=50000, max_exposure=exposure_limit,
-        min_wr_salary=4000, min_rb_salary=4500, require_opportunity=True)
+        min_wr_salary=min_wr, min_rb_salary=min_rb, require_opportunity=True)
     mip_report={'enabled':False,'added_candidates':0}
     if draft_manual_review:
         from ai2_nfl_claude_candidates import supplemental_candidates
-        candidates,mip_report=supplemental_candidates(prepared,candidates,players,selection_draws,seed=seed)
+        candidates,mip_report=supplemental_candidates(prepared,candidates,players,selection_draws,seed=seed,min_wr_salary=min_wr,min_rb_salary=min_rb)
     if len(candidates) < count:
         raise ValueError(
             f"Only {len(candidates)} legal candidates under role and salary rules. "
@@ -316,8 +318,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
             ranked = select_simulated_portfolio(
                 candidates, players, selection_draws, count=count,
                 max_exposure=exposure_limit, upside_share=0.25,
-                premium_count=(5 if count == 20 else 0), min_wr_salary=4000, min_rb_salary=4500,
-                value_salary_ceiling=5000, value_max_appearances=(2 if count <= 20 else max(2, int(count*0.35))),
+                premium_count=(5 if count == 20 else 0), min_wr_salary=min_wr, min_rb_salary=min_rb,
+                value_salary_ceiling=(0 if draft_manual_review else 5000), value_max_appearances=(2 if count <= 20 else max(2, int(count*0.35))),
                 premium_value_max_appearances=1, require_opportunity=True,
                 p90_efficiency_retention=efficiency,
                 premium_excluded_ids=premium_excluded_ids,
@@ -335,7 +337,7 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
     # This report is a diagnosis, not a request to force a particular QB.
     qb_audit=qb_selection_report(
         prepared,candidates,ranked,diagnostics=qb_selection_diagnostics,
-        team_environment=research.get("team_environment"))
+        team_environment=research.get("team_environment"),min_wr_salary=min_wr)
     qb_missing_stacks=[
         r for r in qb_audit
         if r["Eligible passing partners"] and not r["Stacked QB candidates"]]
@@ -586,6 +588,8 @@ def build_oneclick_portfolio(salaries, projections=None, *, seed=42, count=20,
         "opponent_role_prior_opponents": role_detail_report,
         "opponent_role_stat_scoring_audit": role_defense_ledger,
         "draft_role_defense_strength": role_defense_strength,
+        "draft_role_first":bool(draft_manual_review),
+        "draft_individual_salary_floors":{"WR":min_wr,"RB":min_rb},
         "paired_matchup_projections": paired_matchup_rows,
         "claude_mip_candidate_report": mip_report,
         "redzone_intelligence":{"applied":bool(sim_kwargs.get("redzone_strength",0)),

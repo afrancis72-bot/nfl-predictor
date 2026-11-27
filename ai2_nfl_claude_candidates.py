@@ -52,14 +52,14 @@ def optimize_slot_lineup(pool,score,*,previous=(),time_limit=.8):
     if not any(p['Position'] in ('WR','TE') and canonical_team(p['TeamAbbrev'])==canonical_team(qb['TeamAbbrev']) for p in lineup): return None
     return indices
 
-def supplemental_candidates(prepared,candidates,players,selection_draws,*,seed,n_worlds=12):
+def supplemental_candidates(prepared,candidates,players,selection_draws,*,seed,n_worlds=12,min_wr_salary=4000,min_rb_salary=4500):
     ids=players.ID.astype(str).tolist()
     if len(ids)!=len(set(ids)): raise ValueError('Duplicate scenario IDs')
     idx={ident:i for i,ident in enumerate(ids)}
     pool=[p for p in prepared if str(p.get('ID')) in idx and
           p.get('opportunity_verified') is True and player_opportunity_evidence(p)[0] and
-          (p['Position']!='WR' or float(p['Salary'])>=4000) and
-          (p['Position']!='RB' or float(p['Salary'])>=4500)]
+          (p['Position']!='WR' or float(p['Salary'])>=min_wr_salary) and
+          (p['Position']!='RB' or float(p['Salary'])>=min_rb_salary)]
     x=np.asarray(selection_draws)
     if x.ndim!=2 or x.shape[1]!=len(ids) or not np.isfinite(x).all(): raise ValueError('Invalid candidate simulation matrix')
     cols=[idx[str(p['ID'])] for p in pool]

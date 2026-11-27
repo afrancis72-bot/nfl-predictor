@@ -53,6 +53,13 @@ class ModelPoolTests(unittest.TestCase):
         self.assertEqual(coverage["4"]["Pool reason"],"confirmed unavailable")
         self.assertTrue(coverage["3"]["In simulation pool"])
         self.assertFalse(coverage["4"]["In simulation pool"])
+        base.loc[base.ID.eq("5"),"Salary"]=3400
+        draft_pool,_,_,draft_audit=create_observed_model_pool(intel,draft_role_first=True)
+        self.assertIn("Receiver WR",draft_pool.Name.tolist())
+        self.assertNotIn("Starter RB",draft_pool.Name.tolist())
+        from ai2_nfl_role_evidence import player_opportunity_evidence
+        player=draft_pool.loc[draft_pool.Name.eq("Receiver WR")].iloc[0].to_dict()
+        self.assertTrue(player_opportunity_evidence(player)[0])
 
 if __name__=="__main__":
     unittest.main()

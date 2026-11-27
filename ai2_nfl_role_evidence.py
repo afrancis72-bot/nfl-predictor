@@ -23,6 +23,25 @@ def player_opportunity_evidence(row, *, value_ceiling=5000):
         salary = float(row.get("Salary", 0))
     except (ValueError, TypeError):
         return False, "Missing salary"
+    if row.get("draft_role_first") is True and position in {"WR","RB","TE"}:
+        if row.get("opportunity_verified") is not True:
+            return False,"Missing observed statistical role"
+        games=_number(row,("observed_games",)) or 0
+        targets=_number(row,("observed_targets_pg",)) or 0
+        carries=_number(row,("observed_carries_pg",)) or 0
+        simulated=_number(row,("projected_touches",)) if position=="RB" else _number(row,("projected_targets",))
+        observed=targets+carries if position=="RB" else targets
+        minimum={"RB":6.,"WR":3.5,"TE":2.3}[position]
+        replacement={"RB":3.,"WR":2.,"TE":1.5}[position]
+        if games>=2 and simulated is not None and simulated>=minimum:
+            if observed>=minimum:
+                return True,f"Observed {observed:.1f} and simulated {simulated:.1f} opportunities/game (salary independent)"
+            reason=str(row.get("draft_vacancy_reason") or "")
+            if observed>=replacement and reason:
+                return True,f"Observed replacement role {observed:.1f}, simulated {simulated:.1f}; vacancy: {reason}"
+            if row.get("pregame_role_gate") in {"PASS","EMERGING_LIMITED"} and observed>=replacement:
+                return True,f"Repeated/emerging observed role; simulated {simulated:.1f} opportunities/game"
+        return False,"Simulated for team accounting, but insufficient observed/current projected opportunity for selection"
     if position not in {"WR", "RB"} or salary >= value_ceiling:
         return True, "Not a low-cost RB/WR"
     if row.get("opportunity_verified") is not True:
